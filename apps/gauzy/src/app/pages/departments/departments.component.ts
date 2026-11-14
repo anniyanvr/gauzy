@@ -1,273 +1,357 @@
-import { Component, OnDestroy, OnInit, ViewChild } from '@angular/core';
+import { AfterViewInit, Component, OnDestroy, OnInit, TemplateRef, ViewChild, ChangeDetectionStrategy } from '@angular/core';
+import { ActivatedRoute } from '@angular/router';
+import { HttpClient } from '@angular/common/http';
+import { NbDialogRef, NbDialogService } from '@nebular/theme';
+import { TranslateService } from '@ngx-translate/core';
+import { filter, tap } from 'rxjs/operators';
+import { debounceTime, firstValueFrom, Subject } from 'rxjs';
+import { Cell } from 'angular2-smart-table';
+import { UntilDestroy, untilDestroyed } from '@ngneat/until-destroy';
 import {
 	IEmployee,
 	IOrganizationDepartment,
 	IOrganizationDepartmentCreateInput,
-	ITag,
-	ComponentLayoutStyleEnum
+	ComponentLayoutStyleEnum,
+	IOrganization,
+	ITag
 } from '@gauzy/contracts';
-import { NbDialogService } from '@nebular/theme';
-import { EmployeesService } from 'apps/gauzy/src/app/@core/services';
-import { OrganizationDepartmentsService } from 'apps/gauzy/src/app/@core/services/organization-departments.service';
-import { TranslateService } from '@ngx-translate/core';
-import { filter, tap } from 'rxjs/operators';
-import { firstValueFrom } from 'rxjs';
-import { TranslationBaseComponent } from 'apps/gauzy/src/app/@shared/language-base/translation-base.component';
-import { Store } from '../../@core/services/store.service';
-import { ComponentEnum } from '../../@core/constants/layout.constants';
-import { LocalDataSource, Ng2SmartTableComponent } from 'ng2-smart-table';
-import { NotesWithTagsComponent } from '../../@shared/table-components/notes-with-tags/notes-with-tags.component';
-import { DeleteConfirmationComponent } from '../../@shared/user/forms/delete-confirmation/delete-confirmation.component';
-import { EmployeeWithLinksComponent } from '../../@shared/table-components/employee-with-links/employee-with-links.component';
-import { UntilDestroy, untilDestroyed } from '@ngneat/until-destroy';
-import { ToastrService } from '../../@core/services/toastr.service';
+import { API_PREFIX, ComponentEnum, distinctUntilChange, validateUniqueString } from '@gauzy/ui-core/common';
+import { OrganizationDepartmentsService, ServerDataSource, Store, ToastrService } from '@gauzy/ui-core/core';
+import {
+	DeleteConfirmationComponent,
+	EmployeeWithLinksComponent,
+	IPaginationBase,
+	InputFilterComponent,
+	NotesWithTagsComponent,
+	PaginationFilterBaseComponent,
+	TagsColorFilterComponent
+} from '@gauzy/ui-core/shared';
+
 @UntilDestroy({ checkProperties: true })
 @Component({
-	selector: 'ga-departments',
-	templateUrl: './departments.component.html',
-	styleUrls: ['./departments.component.scss']
+    selector: 'ga-departments',
+    templateUrl: './departments.component.html',
+    styleUrls: ['./departments.component.scss'],
+    changeDetection: ChangeDetectionStrategy.Eager,
+    standalone: false
 })
-export class DepartmentsComponent
-	extends TranslationBaseComponent
-	implements OnInit, OnDestroy {
-	organizationId: string;
-	tenantId: string;
-	showAddCard: boolean;
+export class DepartmentsComponent extends PaginationFilterBaseComponent implements AfterViewInit, OnInit, OnDestroy {
+	@ViewChild('addEditTemplate')
+	addEditTemplate: TemplateRef<any>;
+	addEditDialogRef: NbDialogRef<any>;
+	smartTableSettings: object;
 	departments: IOrganizationDepartment[];
 	employees: IEmployee[] = [];
-	departmentToEdit: IOrganizationDepartment;
-	tags: ITag[];
-	isGridEdit: boolean;
+	selectedDepartment: IOrganizationDepartment;
 	disableButton: boolean;
-	selectedDepartment: any;
 	viewComponentName: ComponentEnum;
 	dataLayoutStyle = ComponentLayoutStyleEnum.TABLE;
+	componentLayoutStyleEnum = ComponentLayoutStyleEnum;
 	settingsSmartTable: object;
-	smartTableSource = new LocalDataSource();
-	loading: boolean;
+	loading: boolean = false;
+	smartTableSource: ServerDataSource;
+	selected = {
+		department: null,
+		state: false
+	};
 
-	departmentsTable: Ng2SmartTableComponent;
-	@ViewChild('departmentsTable') set content(
-		content: Ng2SmartTableComponent
-	) {
-		if (content) {
-			this.departmentsTable = content;
-			this.onChangedSource();
-		}
-	}
+	public organization: IOrganization;
+	public departments$: Subject<boolean> = this.subject$;
+	private _refresh$: Subject<any> = new Subject();
 
 	constructor(
 		private readonly organizationDepartmentsService: OrganizationDepartmentsService,
 		private readonly toastrService: ToastrService,
-		private readonly employeesService: EmployeesService,
-		readonly translateService: TranslateService,
-		private dialogService: NbDialogService,
-		private store: Store
+		public readonly translateService: TranslateService,
+		private readonly dialogService: NbDialogService,
+		private readonly store: Store,
+		private readonly httpClient: HttpClient,
+		private readonly route: ActivatedRoute
 	) {
 		super(translateService);
 		this.setView();
 	}
 
 	ngOnInit() {
-		this.cancel();
+		this._loadSettingsSmartTable();
 		this._applyTranslationOnSmartTable();
-		this.store.selectedOrganization$
+		this.departments$
 			.pipe(
-				filter((organization) => !!organization),
+				debounceTime(100),
+				tap(() => this._clearItem()),
+				tap(() => this.getDepartments()),
 				untilDestroyed(this)
 			)
-			.subscribe((organization) => {
-				if (organization) {
-					const { tenantId } = this.store.user;
-					this.tenantId = tenantId;
-					this.organizationId = organization.id;
-					this.loadDepartments();
-					this.loadEmployees();
-					this.loadSmartTable();
-				}
-			});
+			.subscribe();
+		this.pagination$
+			.pipe(
+				debounceTime(100),
+				distinctUntilChange(),
+				tap(() => this.departments$.next(true)),
+				untilDestroyed(this)
+			)
+			.subscribe();
+		this.store.selectedOrganization$
+			.pipe(
+				debounceTime(300),
+				distinctUntilChange(),
+				filter((organization: IOrganization) => !!organization),
+				tap((organization: IOrganization) => (this.organization = organization)),
+				tap(() => this._refresh$.next(true)),
+				tap(() => this.departments$.next(true)),
+				untilDestroyed(this)
+			)
+			.subscribe();
+		this.route.queryParamMap
+			.pipe(
+				filter((params) => !!params && params.get('openAddDialog') === 'true'),
+				debounceTime(1000),
+				tap(() => this.openDialog(this.addEditTemplate, false)),
+				untilDestroyed(this)
+			)
+			.subscribe();
+		this._refresh$
+			.pipe(
+				filter(() => this.dataLayoutStyle === ComponentLayoutStyleEnum.CARDS_GRID),
+				tap(() => this.refreshPagination()),
+				tap(() => (this.departments = [])),
+				untilDestroyed(this)
+			)
+			.subscribe();
 	}
-	ngOnDestroy() { }
-	cancel() {
-		this.departmentToEdit = null;
-		this.showAddCard = false;
-		this.clearItem();
+
+	ngOnDestroy() {}
+
+	ngAfterViewInit() {}
+
+	selectDepartment(department: any) {
+		if (department.data) department = department.data;
+		const res =
+			this.selected.department && department.id === this.selected.department.id
+				? { state: !this.selected.state }
+				: { state: true };
+		this.disableButton = !res.state;
+		this.selected.state = res.state;
+		this.selected.department = department;
+		this.selectedDepartment = this.selected.department;
 	}
-	selectDepartment({ isSelected, data }) {
-		this.disableButton = !isSelected;
-		this.selectedDepartment = isSelected ? data : null;
-	}
-	async loadSmartTable() {
-		this.settingsSmartTable = {
+
+	/**
+	 * Load smart table columns settings
+	 */
+	private _loadSettingsSmartTable() {
+		const pagination: IPaginationBase = this.getPagination();
+		this.smartTableSettings = {
 			actions: false,
+			editable: true,
+			noDataMessage: this.getTranslation('SM_TABLE.NO_DATA.DEPARTMENT'),
+			pager: {
+				display: false,
+				perPage: pagination ? pagination.itemsPerPage : 10
+			},
 			columns: {
-				department_name: {
+				name: {
 					title: this.getTranslation('ORGANIZATIONS_PAGE.NAME'),
-					type: 'string'
+					type: 'string',
+					filter: {
+						type: 'custom',
+						component: InputFilterComponent
+					},
+					filterFunction: (name: string) => {
+						this.setFilter({ field: 'name', search: name });
+					}
 				},
 				members: {
-					title: this.getTranslation(
-						'ORGANIZATIONS_PAGE.EDIT.TEAMS_PAGE.MEMBERS'
-					),
+					title: this.getTranslation('ORGANIZATIONS_PAGE.EDIT.TEAMS_PAGE.MEMBERS'),
 					type: 'custom',
+					isFilterable: false,
 					renderComponent: EmployeeWithLinksComponent,
-					filter: false
+					componentInitFunction: (instance: EmployeeWithLinksComponent, cell: Cell) => {
+						instance.rowData = cell.getRow().getData();
+						instance.value = cell.getRawValue();
+					}
 				},
 				notes: {
 					title: this.getTranslation('MENU.TAGS'),
 					type: 'custom',
 					class: 'align-row',
-					renderComponent: NotesWithTagsComponent
+					renderComponent: NotesWithTagsComponent,
+					componentInitFunction: (instance: EmployeeWithLinksComponent, cell: Cell) => {
+						instance.rowData = cell.getRow().getData();
+						instance.value = cell.getRawValue();
+					},
+					filter: {
+						type: 'custom',
+						component: TagsColorFilterComponent
+					},
+					filterFunction: (tags: ITag[]) => {
+						const tagIds = [];
+						for (const tag of tags) {
+							tagIds.push(tag.id);
+						}
+						this.setFilter({ field: 'tags', search: tagIds });
+					}
 				}
 			}
 		};
-	}
-	private async loadEmployees() {
-		this.loading = true;
-		if (!this.organizationId) {
-			return;
-		}
-		const { items } = await firstValueFrom(this.employeesService
-			.getAll(['user'], {
-				organization: {
-					id: this.organizationId,
-					tenantId: this.tenantId
-				}
-			})
-		);
-
-		this.employees = items;
-		this.loading = false;
 	}
 
 	setView() {
 		this.viewComponentName = ComponentEnum.DEPARTMENTS;
 		this.store
 			.componentLayout$(this.viewComponentName)
-			.pipe(untilDestroyed(this))
-			.subscribe((componentLayout) => {
-				this.dataLayoutStyle = componentLayout;
-				this.selectedDepartment =
-					this.dataLayoutStyle === 'CARDS_GRID'
-						? null
-						: this.selectedDepartment;
-			});
+			.pipe(
+				distinctUntilChange(),
+				tap((componentLayout) => (this.dataLayoutStyle = componentLayout)),
+				tap(() => this.refreshPagination()),
+				filter((componentLayout) => componentLayout === ComponentLayoutStyleEnum.CARDS_GRID),
+				tap(() => (this.departments = [])),
+				tap(() => this.departments$.next(true)),
+				untilDestroyed(this)
+			)
+			.subscribe();
 	}
+
 	async removeDepartment(id?: string, name?: string) {
-		const result = await firstValueFrom(this.dialogService
-			.open(DeleteConfirmationComponent, {
+		const result = await firstValueFrom(
+			this.dialogService.open(DeleteConfirmationComponent, {
 				context: {
 					recordType: 'Department'
 				}
-			})
-			.onClose);
+			}).onClose
+		);
 
 		if (result) {
-			await this.organizationDepartmentsService.delete(
-				this.selectedDepartment ? this.selectedDepartment.id : id
-			);
-			this.toastrService.success(
-				'NOTES.ORGANIZATIONS.EDIT_ORGANIZATIONS_DEPARTMENTS.REMOVE_DEPARTMENT',
-				{
-					name: this.selectedDepartment
-						? this.selectedDepartment.department_name
-						: name
-				}
-			);
-			this.cancel();
-			this.loadDepartments();
+			await this.organizationDepartmentsService.delete(this.selectedDepartment ? this.selectedDepartment.id : id);
+			this.toastrService.success('NOTES.ORGANIZATIONS.EDIT_ORGANIZATIONS_DEPARTMENTS.REMOVE_DEPARTMENT', {
+				name: this.selectedDepartment ? this.selectedDepartment.name : name
+			});
+			this._refresh$.next(true);
+			this.departments$.next(true);
 		}
 	}
 
-	async editDepartment(department: IOrganizationDepartment) {
-		this.departmentToEdit = department
-			? department
-			: this.selectedDepartment;
-		this.isGridEdit = department ? false : true;
-		this.showAddCard = true;
+	async editDepartment(selectedItem: IOrganizationDepartment) {
+		if (selectedItem) {
+			this.selected = {
+				department: selectedItem,
+				state: true
+			};
+		} else {
+			this.selectedDepartment = this.selected.department;
+		}
 	}
 
-	public async addOrEditDepartment(
-		input: IOrganizationDepartmentCreateInput
-	) {
+	public async addOrEditDepartment(input: IOrganizationDepartmentCreateInput) {
 		if (input.name) {
-			this.departmentToEdit
-				? await this.organizationDepartmentsService.update(
-					this.departmentToEdit.id,
-					input
-				)
+			const existingNames = this.departments
+				.filter((department) => !this.selectedDepartment || department.id !== this.selectedDepartment.id)
+				.map((department) => department.name);
+
+			if (validateUniqueString(existingNames, input.name)) {
+				this.toastrService.danger(
+					this.getTranslation('NOTES.ORGANIZATIONS.EDIT_ORGANIZATIONS_DEPARTMENTS.ALREADY_EXISTS', {
+						name: input.name
+					})
+				);
+				return;
+			}
+
+			this.selectedDepartment
+				? await this.organizationDepartmentsService.update(this.selectedDepartment.id, input)
 				: await this.organizationDepartmentsService.create(input);
 
-			this.cancel();
-
-			this.toastrService.success(
-				'NOTES.ORGANIZATIONS.EDIT_ORGANIZATIONS_DEPARTMENTS.ADD_DEPARTMENT',
-				{
-					name: input.name
-				}
-			);
-			this.loadDepartments();
+			this.toastrService.success('NOTES.ORGANIZATIONS.EDIT_ORGANIZATIONS_DEPARTMENTS.ADD_DEPARTMENT', {
+				name: input.name
+			});
+			this._refresh$.next(true);
+			this.departments$.next(true);
 		} else {
 			this.toastrService.danger(
-				this.getTranslation(
-					'NOTES.ORGANIZATIONS.EDIT_ORGANIZATIONS_DEPARTMENTS.INVALID_DEPARTMENT_NAME'
-				),
-				this.getTranslation(
-					'TOASTR.MESSAGE.NEW_ORGANIZATION_DEPARTMENT_INVALID_NAME'
-				)
+				this.getTranslation('NOTES.ORGANIZATIONS.EDIT_ORGANIZATIONS_DEPARTMENTS.INVALID_DEPARTMENT_NAME'),
+				this.getTranslation('TOASTR.MESSAGE.NEW_ORGANIZATION_DEPARTMENT_INVALID_NAME')
 			);
 		}
-	}
-
-	private async loadDepartments() {
-		this.loading = true;
-		if (!this.organizationId) {
-			return;
-		}
-
-		const res = await this.organizationDepartmentsService.getAll(
-			['members', 'members.user', 'tags'],
-			{
-				organizationId: this.organizationId,
-				tenantId: this.tenantId,
-
-			},
-			{
-				createdAt: 'DESC',
-			}
-		);
-		if (res) {
-			const result = [];
-			this.departments = res.items;
-
-			this.departments.forEach((dpt) =>
-				result.push({
-					id: dpt.id,
-					department_name: dpt.name,
-					members: dpt.members,
-					tags: dpt.tags
-				})
-			);
-			this.smartTableSource.load(result);
-		}
-		this.loading = false;
-	}
-	_applyTranslationOnSmartTable() {
-		this.translateService.onLangChange
-			.pipe(untilDestroyed(this))
-			.subscribe(() => {
-				this.loadSmartTable();
-			});
 	}
 
 	/*
-	 * Table on changed source event
+	 * Register Smart Table Source Config
 	 */
-	onChangedSource() {
-		this.departmentsTable.source.onChangedSource
+	setSmartTableSource() {
+		if (!this.organization) {
+			return;
+		}
+		const { tenantId } = this.store.user;
+		const { id: organizationId } = this.organization;
+
+		this.smartTableSource = new ServerDataSource(this.httpClient, {
+			endPoint: `${API_PREFIX}/organization-department/pagination`,
+			relations: ['members', 'members.user', 'tags'],
+			join: {
+				alias: 'organization_department',
+				leftJoin: {
+					tags: 'organization_department.tags'
+				},
+				...(this.filters.join ? this.filters.join : {})
+			},
+			where: {
+				tenantId,
+				organizationId,
+				...(this.filters.where ? this.filters.where : {})
+			},
+			resultMap: (department: IOrganizationDepartment) => {
+				return department;
+			},
+			finalize: () => {
+				if (this._isGridLayout) {
+					this.departments.push(...this.smartTableSource.getData());
+				} else {
+					this.departments = this.smartTableSource.getData();
+				}
+				this.setPagination({
+					...this.getPagination(),
+					totalItems: this.smartTableSource.count()
+				});
+				this.loading = false;
+			}
+		});
+	}
+
+	private async getDepartments() {
+		if (!this.organization) {
+			return;
+		}
+		try {
+			this.setSmartTableSource();
+
+			const { activePage, itemsPerPage } = this.getPagination();
+			this.smartTableSource.setPaging(activePage, itemsPerPage, false);
+
+			if (this._isGridLayout) {
+				await this.smartTableSource.getElements();
+
+				this.setPagination({
+					...this.getPagination(),
+					totalItems: this.smartTableSource.count()
+				});
+			}
+		} catch (error) {
+			this.toastrService.danger(error);
+		}
+	}
+
+	private get _isGridLayout(): boolean {
+		return this.dataLayoutStyle === ComponentLayoutStyleEnum.CARDS_GRID;
+	}
+
+	/**
+	 * On language change load smart table settings again
+	 */
+	private _applyTranslationOnSmartTable() {
+		this.translateService.onLangChange
 			.pipe(
-				untilDestroyed(this),
-				tap(() => this.clearItem())
+				tap(() => this._loadSettingsSmartTable()),
+				untilDestroyed(this)
 			)
 			.subscribe();
 	}
@@ -275,20 +359,22 @@ export class DepartmentsComponent
 	/*
 	 * Clear selected item
 	 */
-	clearItem() {
-		this.selectDepartment({
-			isSelected: false,
-			data: null
-		});
-		this.deselectAll();
+	public _clearItem() {
+		this.selected = {
+			department: null,
+			state: false
+		};
+		this.selectedDepartment = null;
+		this.disableButton = true;
+		this.addEditDialogRef?.close();
 	}
-	/*
-	 * Deselect all table rows
-	 */
-	deselectAll() {
-		if (this.departmentsTable && this.departmentsTable.grid) {
-			this.departmentsTable.grid.dataSet['willSelect'] = 'false';
-			this.departmentsTable.grid.dataSet.deselectAll();
+
+	openDialog(template: TemplateRef<any>, isEditTemplate: boolean) {
+		try {
+			isEditTemplate ? this.editDepartment(this.selectedDepartment) : this._clearItem();
+			this.addEditDialogRef = this.dialogService.open(template);
+		} catch (error) {
+			console.log('An error occurred on open dialog');
 		}
 	}
 }

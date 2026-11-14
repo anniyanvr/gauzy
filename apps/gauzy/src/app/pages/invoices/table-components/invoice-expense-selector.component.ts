@@ -1,38 +1,36 @@
-import { DefaultEditor } from 'ng2-smart-table';
-import { OnInit, OnDestroy, Component } from '@angular/core';
-import { ExpenseTypesEnum, IExpense, IOrganization } from '@gauzy/contracts';
-import { Store } from '../../../@core/services/store.service';
-import { ExpensesService } from '../../../@core/services/expenses.service';
-import { UntilDestroy, untilDestroyed } from '@ngneat/until-destroy';
+import { OnInit, OnDestroy, Component, ChangeDetectionStrategy } from '@angular/core';
 import { filter, tap } from 'rxjs/operators';
+import { UntilDestroy, untilDestroyed } from '@ngneat/until-destroy';
+import { DefaultEditor } from 'angular2-smart-table';
+import { ExpenseTypesEnum, IExpense, IOrganization } from '@gauzy/contracts';
+import { ExpensesService, Store } from '@gauzy/ui-core/core';
 
 @UntilDestroy({ checkProperties: true })
 @Component({
-	template: `
+    template: `
 		<nb-select
-			fullWidth
-			placeholder="{{ 'FORM.PLACEHOLDERS.SELECT_EXPENSE' | translate }}"
-			[(ngModel)]="expense"
-			(selectedChange)="selectExpense($event)"
-		>
-			<nb-option *ngFor="let expense of expenses" [value]="expense">
-				{{ expense.purpose }}
-			</nb-option>
+		  fullWidth
+		  [placeholder]="'FORM.PLACEHOLDERS.SELECT_EXPENSE' | translate"
+		  [(ngModel)]="expense"
+		  (selectedChange)="selectExpense($event)"
+		  >
+		  @for (expense of expenses; track expense) {
+		    <nb-option [value]="expense">
+		      {{ expense.purpose }}
+		    </nb-option>
+		  }
 		</nb-select>
-	`,
-	styles: []
+		`,
+    styles: [],
+    changeDetection: ChangeDetectionStrategy.Eager,
+    standalone: false
 })
-export class InvoiceExpensesSelectorComponent
-	extends DefaultEditor
-	implements OnInit, OnDestroy {
-	expense: IExpense;
-	expenses: IExpense[];
-	organization: IOrganization;
+export class InvoiceExpensesSelectorComponent extends DefaultEditor implements OnInit, OnDestroy {
+	public expense: IExpense;
+	public expenses: IExpense[];
+	public organization: IOrganization;
 
-	constructor(
-		private store: Store,
-		private expensesService: ExpensesService
-	) {
+	constructor(private readonly store: Store, private readonly expensesService: ExpensesService) {
 		super();
 	}
 
@@ -59,14 +57,18 @@ export class InvoiceExpensesSelectorComponent
 			})
 			.then(({ items }) => {
 				this.expenses = items;
-				this.expense = this.expenses.find(
-					(e) => e.id === this.cell.newValue.id
-				);
+				//
+				const expense: IExpense = this.cell.getNewRawValue();
+				this.expense = this.expenses.find((e) => e.id === expense.id);
 			});
 	}
 
+	/**
+	 *
+	 * @param $event
+	 */
 	selectExpense($event) {
-		this.cell.newValue = $event;
+		this.cell.setValue($event);
 	}
 
 	ngOnDestroy() {}

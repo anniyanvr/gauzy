@@ -1,36 +1,46 @@
 import { NgModule } from '@angular/core';
-import { CommonModule } from '@angular/common';
-
-import { ManualTimeRoutingModule } from './manual-time-routing.module';
-import { ManualTimeComponent } from './manual-time/manual-time.component';
-import { SharedModule } from '../../../@shared/shared.module';
-import { TranslateModule } from '@ngx-translate/core';
-import { FormsModule } from '@angular/forms';
 import {
+	NbButtonModule,
+	NbCardModule,
+	NbDialogModule,
 	NbIconModule,
 	NbSpinnerModule,
-	NbCardModule,
-	NbSelectModule,
-	NbBadgeModule
+	NbToggleModule,
+	NbTooltipModule
 } from '@nebular/theme';
-import { FiltersModule } from '../../../@shared/timesheet/filters/filters.module';
-import { HeaderTitleModule } from '../../../@shared/components/header-title/header-title.module';
+import { NgSelectModule } from '@ng-select/ng-select';
+import { TranslatePipe } from '@ngx-translate/core';
+import {
+	EditTimeLogModalModule,
+	GauzyFiltersModule,
+	NoDataMessageModule,
+	ProjectColumnViewModule,
+	SharedModule,
+	TaskSelectModule
+} from '@gauzy/ui-core/shared';
+import { ManualTimeRoutingModule } from './manual-time-routing.module';
+import { ManualTimeComponent } from './manual-time/manual-time.component';
+import { ManualTimeDetailsComponent } from './manual-time-details/manual-time-details.component';
 
 @NgModule({
-	declarations: [ManualTimeComponent],
+	declarations: [ManualTimeComponent, ManualTimeDetailsComponent],
 	imports: [
-		CommonModule,
 		ManualTimeRoutingModule,
 		SharedModule,
-		TranslateModule,
+		TranslatePipe,
+		NbButtonModule,
+		NbCardModule,
+		NbDialogModule.forChild(),
+		EditTimeLogModalModule,
 		NbIconModule,
 		NbSpinnerModule,
-		NbCardModule,
-		FiltersModule,
-		NbSelectModule,
-		FormsModule,
-		NbBadgeModule,
-		HeaderTitleModule
+		NbToggleModule,
+		NbTooltipModule,
+		NgSelectModule,
+		GauzyFiltersModule,
+		ProjectColumnViewModule,
+		NoDataMessageModule,
+		TaskSelectModule
 	]
 })
 export class ManualTimeModule {}

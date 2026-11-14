@@ -4,3 +4,8 @@
 
 /dist
 /coverage
+.angular
+
+/.nx/cache
+/.nx/workspace-data
+.nx/self-healing

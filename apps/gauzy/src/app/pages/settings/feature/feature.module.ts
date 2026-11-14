@@ -1,19 +1,20 @@
 import { NgModule } from '@angular/core';
+import { CommonModule } from '@angular/common';
 import { NbCardModule, NbRouteTabsetModule } from '@nebular/theme';
-import { ThemeModule } from '../../../@theme/theme.module';
+import { TranslatePipe } from '@ngx-translate/core';
+import { FeatureToggleModule, SharedModule } from '@gauzy/ui-core/shared';
 import { FeatureRoutingModule } from './feature-routing.module';
 import { FeatureComponent } from './feature.component';
-import { FeatureToggleModule } from '../../../@shared/feature-toggle/feature-toggle.module';
-import { TranslateModule } from '../../../@shared/translate/translate.module';
 
 @NgModule({
 	imports: [
-		FeatureRoutingModule,
-		ThemeModule,
+		CommonModule,
 		NbCardModule,
 		NbRouteTabsetModule,
-		TranslateModule,
-		FeatureToggleModule
+		TranslatePipe,
+		FeatureRoutingModule,
+		FeatureToggleModule,
+		SharedModule
 	],
 	declarations: [FeatureComponent],
 	providers: []

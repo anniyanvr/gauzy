@@ -1,5 +1,6 @@
 import { NgModule } from '@angular/core';
-import { ThemeModule } from '../../@theme/theme.module';
+import { CommonModule } from '@angular/common';
+import { FormsModule, ReactiveFormsModule } from '@angular/forms';
 import {
 	NbCardModule,
 	NbButtonModule,
@@ -10,25 +11,19 @@ import {
 	NbLayoutModule,
 	NbSelectModule
 } from '@nebular/theme';
-import { FormsModule, ReactiveFormsModule } from '@angular/forms';
-import { Ng2SmartTableModule } from 'ng2-smart-table';
-import { TableComponentsModule } from '../../@shared/table-components/table-components.module';
-import { UserFormsModule } from '../../@shared/user/forms/user-forms.module';
+import { AceEditorModule } from 'ngx-ace-editor-wrapper';
+import { TranslatePipe } from '@ngx-translate/core';
+import { EmailTemplateService } from '@gauzy/ui-core/core';
+import { LanguageSelectorModule, TableComponentsModule, UserFormsModule } from '@gauzy/ui-core/shared';
 import { EmailTemplatesRoutingModule } from './email-templates-routing.module';
 import { EmailTemplatesComponent } from './email-templates.component';
-import { EmailTemplateService } from '../../@core/services/email-template.service';
-import { AceEditorModule } from 'ngx-ace-editor-wrapper';
-import { CommonModule } from '@angular/common';
-import { TranslateModule } from '../../@shared/translate/translate.module';
-import { LanguageSelectorModule } from '../../@shared/language/language-selector/language-selector.module';
-import { HeaderTitleModule } from '../../@shared/components/header-title/header-title.module';
+import { SandboxedSrcdocDirective } from './sandboxed-srcdoc.directive';
 
 @NgModule({
 	imports: [
 		NbLayoutModule,
 		CommonModule,
 		EmailTemplatesRoutingModule,
-		ThemeModule,
 		UserFormsModule,
 		NbCardModule,
 		FormsModule,
@@ -37,16 +32,14 @@ import { HeaderTitleModule } from '../../@shared/components/header-title/header-
 		NbInputModule,
 		NbSelectModule,
 		NbIconModule,
-		Ng2SmartTableModule,
 		NbDialogModule.forChild(),
 		TableComponentsModule,
-		TranslateModule,
+		TranslatePipe,
 		NbSpinnerModule,
 		AceEditorModule,
-		LanguageSelectorModule,
-		HeaderTitleModule
+		LanguageSelectorModule
 	],
 	providers: [EmailTemplateService],
-	declarations: [EmailTemplatesComponent]
+	declarations: [EmailTemplatesComponent, SandboxedSrcdocDirective]
 })
 export class EmailTemplatesModule {}

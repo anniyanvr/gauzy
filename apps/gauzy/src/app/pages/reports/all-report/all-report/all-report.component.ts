@@ -1,84 +1,96 @@
-import { Component, OnInit } from '@angular/core';
-import {
-	IGetReportCategory,
-	IOrganization,
-	IReport,
-	IReportCategory,
-	PermissionsEnum
-} from '@gauzy/contracts';
+import { Component, OnInit, ChangeDetectionStrategy } from '@angular/core';
+import { IGetReportCategory, IOrganization, IReport, IReportCategory, PermissionsEnum } from '@gauzy/contracts';
 import { UntilDestroy, untilDestroyed } from '@ngneat/until-destroy';
-import { Store } from 'apps/gauzy/src/app/@core/services/store.service';
-import { filter } from 'rxjs/operators';
+import { filter, tap } from 'rxjs/operators';
 import { chain } from 'underscore';
+import { Store } from '@gauzy/ui-core/core';
 import { ReportService } from '../report.service';
 
 @UntilDestroy()
 @Component({
-	selector: 'ga-all-report',
-	templateUrl: './all-report.component.html',
-	styleUrls: ['./all-report.component.scss']
+    selector: 'ga-all-report',
+    templateUrl: './all-report.component.html',
+    styleUrls: ['./all-report.component.scss'],
+    changeDetection: ChangeDetectionStrategy.Eager,
+    standalone: false
 })
 export class AllReportComponent implements OnInit {
 	PermissionsEnum = PermissionsEnum;
-	organization: IOrganization;
-	loading: boolean;
-	reportCategories: IReportCategory[];
+	public organization: IOrganization;
+	public loading: boolean;
+	public reportCategories: IReportCategory[];
 
-	constructor(private reportService: ReportService, private store: Store) {}
+	constructor(private readonly reportService: ReportService, private readonly store: Store) {}
 
 	ngOnInit(): void {
 		this.store.selectedOrganization$
 			.pipe(
 				filter((organization: IOrganization) => !!organization),
+				tap((organization: IOrganization) => (this.organization = organization)),
+				tap(() => this.getReports()),
 				untilDestroyed(this)
 			)
-			.subscribe((organization) => {
-				if (organization) {
-					this.organization = organization;
-					this.getReports();
-				}
-			});
+			.subscribe();
 	}
 
-	updateShowInMenu(isEnabled: boolean, report): void {
-		const { tenantId } = this.store.user;
-		const { id: organizationId } = this.organization;
-		this.reportService
-			.updateReport({
+	/**
+	 * Updates the 'show in menu' status of a report.
+	 *
+	 * @param isEnabled Indicates whether the report should be shown in the menu.
+	 * @param report The report to update.
+	 */
+	async updateShowInMenu(isEnabled: boolean, report): Promise<void> {
+		try {
+			const { id: organizationId, tenantId } = this.organization;
+
+			await this.reportService.updateReport({
 				reportId: report.id,
 				organizationId,
 				tenantId,
 				isEnabled
-			})
-			.then(() => {
-				this.reportService.getReportMenuItems({
-					organizationId,
-					tenantId
-				});
 			});
+
+			await this.reportService.getReportMenuItems({
+				organizationId,
+				tenantId
+			});
+		} catch (error) {
+			console.error(`Error occurred while updating 'show in menu' status: ${error.message}`);
+		}
 	}
 
-	getReports() {
-		const request: IGetReportCategory = {
-			relations: ['category'],
-			organizationId: this.organization.id
-		};
-		this.loading = true;
-		this.reportService
-			.getReports(request)
-			.then((resp) => {
-				this.reportCategories = chain(resp.items)
-					.groupBy('categoryId')
-					.map((reports: IReport[]) => {
-						return {
-							...reports[0].category,
-							reports
-						};
-					})
-					.value();
-			})
-			.finally(() => {
-				this.loading = false;
-			});
+	/**
+	 * Retrieves all reports for the current organization.
+	 *
+	 * @returns A promise that resolves when reports are successfully retrieved.
+	 */
+	async getReports() {
+		if (!this.organization) {
+			return false;
+		}
+		try {
+			this.loading = true;
+
+			const { id: organizationId, tenantId } = this.organization;
+			const request: IGetReportCategory = {
+				organizationId,
+				tenantId,
+				relations: ['category']
+			};
+
+			const { items = [] } = await this.reportService.getReports(request);
+
+			const categories = chain(items).groupBy('categoryId');
+			this.reportCategories = categories
+				.map((reports: IReport[]) => ({
+					...reports[0].category,
+					reports
+				}))
+				.value();
+		} catch (error) {
+			console.log('Error while retrieving report with category', error);
+		} finally {
+			this.loading = false;
+		}
 	}
 }

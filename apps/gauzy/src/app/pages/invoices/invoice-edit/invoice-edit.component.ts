@@ -1,71 +1,77 @@
-import { Component, OnInit, OnDestroy, Input } from '@angular/core';
-import { TranslationBaseComponent } from '../../../@shared/language-base/translation-base.component';
-import { FormGroup, FormBuilder, Validators } from '@angular/forms';
-import { Store } from '../../../@core/services/store.service';
+import { Component, OnInit, OnDestroy, Input, ChangeDetectionStrategy } from '@angular/core';
+import { UntypedFormGroup, UntypedFormBuilder, Validators } from '@angular/forms';
 import { TranslateService } from '@ngx-translate/core';
+import { filter, tap } from 'rxjs/operators';
+import { firstValueFrom } from 'rxjs';
+import { Cell, LocalDataSource } from 'angular2-smart-table';
+import { Router, ActivatedRoute } from '@angular/router';
+import { NbDialogService } from '@nebular/theme';
+import { UntilDestroy, untilDestroyed } from '@ngneat/until-destroy';
 import {
+	BaseEntityEnum,
 	IInvoice,
 	IOrganizationContact,
 	IInvoiceItem,
 	IOrganization,
-	IEmployee,
 	InvoiceTypeEnum,
 	DiscountTaxTypeEnum,
 	ITag,
-	ITask,
-	IOrganizationProject,
-	IExpense,
 	IInvoiceItemCreateInput,
-	IProductTranslatable
+	IEmployee,
+	IOrganizationProject,
+	ITask,
+	IProduct,
+	IExpense,
+	TaxCalculationTypeEnum
 } from '@gauzy/contracts';
-import { filter, tap } from 'rxjs/operators';
-import { Observable, firstValueFrom } from 'rxjs';
-import { LocalDataSource } from 'ng2-smart-table';
-import { Router, ActivatedRoute } from '@angular/router';
-import { NbDialogService } from '@nebular/theme';
-import { UntilDestroy, untilDestroyed } from '@ngneat/until-destroy';
-import { compareDate } from '@gauzy/common-angular';
+import { compareDate, distinctUntilChange, extractNumber } from '@gauzy/ui-core/common';
+import { Store, ToastrService } from '@gauzy/ui-core/core';
+import * as moment from 'moment';
 import { InvoiceEmailMutationComponent } from '../invoice-email/invoice-email-mutation.component';
-import { 
+import { calculateInvoiceFormTotals, taxCalculationTypeMatters } from '../invoice-totals';
+import {
 	InvoiceEstimateHistoryService,
 	InvoiceItemService,
 	InvoicesService,
-	ToastrService,
-	TranslatableService 
-} from '../../../@core/services';
-import { InvoiceApplyTaxDiscountComponent, InvoiceEmployeesSelectorComponent, InvoiceExpensesSelectorComponent, InvoiceProductsSelectorComponent, InvoiceProjectsSelectorComponent, InvoiceTasksSelectorComponent } from '../table-components';
+	OrganizationSettingService,
+	TranslatableService
+} from '@gauzy/ui-core/core';
+import {
+	InvoiceApplyTaxDiscountComponent,
+	InvoiceEmployeesSelectorComponent,
+	InvoiceExpensesSelectorComponent,
+	InvoiceProductsSelectorComponent,
+	InvoiceProjectsSelectorComponent,
+	InvoiceTasksSelectorComponent
+} from '../table-components';
+import { any } from 'underscore';
+import { IPaginationBase, PaginationFilterBaseComponent } from '@gauzy/ui-core/shared';
 
 @UntilDestroy({ checkProperties: true })
 @Component({
-	selector: 'ga-invoice-edit',
-	templateUrl: './invoice-edit.component.html',
-	styleUrls: ['./invoice-edit.component.scss']
+    selector: 'ga-invoice-edit',
+    templateUrl: './invoice-edit.component.html',
+    styleUrls: ['./invoice-edit.component.scss'],
+    changeDetection: ChangeDetectionStrategy.Eager,
+    standalone: false
 })
-export class InvoiceEditComponent
-	extends TranslationBaseComponent
-	implements OnInit, OnDestroy {
-	invoiceLoaded = false;
-	loadedNumber: boolean;
+export class InvoiceEditComponent extends PaginationFilterBaseComponent implements OnInit, OnDestroy {
 	shouldLoadTable = false;
 	invoiceId: string;
 	settingsSmartTable: object;
-	formItemNumber: number;
 	smartTableSource = new LocalDataSource();
-	form: FormGroup;
+	form: UntypedFormGroup;
 	invoice: IInvoice;
 	organization: IOrganization;
+
+	/**
+	 * Entity type the record-side Documents panel attaches to. An estimate is an
+	 * `Invoice` row with `isEstimate` set, so both share one `DocumentLink.entity`.
+	 */
+	public readonly documentEntity = BaseEntityEnum.Invoice;
 	itemsToDelete: string[] = [];
-	invoiceItems: IInvoiceItem[];
+	invoiceItems: IInvoiceItem[] = [];
 	selectedOrganizationContact: IOrganizationContact;
-	employees: IEmployee[];
-	projects: IOrganizationProject[];
-	products: IProductTranslatable[];
-	invoiceDate: Date;
-	dueDate: Date;
-	tags: ITag[] = [];
-	tasks: ITask[];
-	expenses: IExpense[] = [];
-	observableTasks: Observable<ITask[]>;
 	duplicate: boolean;
 	discountAfterTax: boolean;
 	subtotal = 0;
@@ -73,15 +79,25 @@ export class InvoiceEditComponent
 	loading: boolean;
 	selectedLanguage: string;
 	discountTaxTypes = Object.values(DiscountTaxTypeEnum);
+	taxCalculationTypes = Object.values(TaxCalculationTypeEnum);
+
+	/** Whether the Simple/Compound choice changes the total for the selected tax types (and so is shown). */
+	get showTaxCalculationType(): boolean {
+		return taxCalculationTypeMatters(this.form?.get('taxType')?.value, this.form?.get('tax2Type')?.value);
+	}
 	isRemainingAmount: string;
 	alreadyPaid: number;
 	amountDue: number;
+	selectedItem = {
+		data: any,
+		isSelected: false
+	};
 
 	get currency() {
 		return this.form.get('currency');
 	}
 
-	private _isEstimate: boolean = false;
+	private _isEstimate = false;
 	@Input() set isEstimate(val: boolean) {
 		this._isEstimate = val;
 	}
@@ -89,18 +105,30 @@ export class InvoiceEditComponent
 		return this._isEstimate;
 	}
 
+	/**
+	 * Label persisted into `DocumentLink.metadata.label` when a document is attached,
+	 * so the Documents hub can name this record without re-fetching it.
+	 *
+	 * @param invoice The invoice being edited.
+	 * @returns The invoice number prefixed with `#`, falling back to the id.
+	 */
+	documentLabel(invoice: IInvoice): string {
+		return `#${invoice?.invoiceNumber ?? invoice?.id}`;
+	}
+
 	constructor(
-		private store: Store,
-		private router: Router,
-		private fb: FormBuilder,
-		private invoiceItemService: InvoiceItemService,
-		private translate: TranslateService,
-		private invoicesService: InvoicesService,
-		private toastrService: ToastrService,
-		private route: ActivatedRoute,
-		private dialogService: NbDialogService,
-		private invoiceEstimateHistoryService: InvoiceEstimateHistoryService,
-		private translatableService: TranslatableService
+		private readonly store: Store,
+		private readonly router: Router,
+		private readonly fb: UntypedFormBuilder,
+		private readonly invoiceItemService: InvoiceItemService,
+		private readonly translate: TranslateService,
+		private readonly invoicesService: InvoicesService,
+		private readonly toastrService: ToastrService,
+		private readonly route: ActivatedRoute,
+		private readonly dialogService: NbDialogService,
+		private readonly invoiceEstimateHistoryService: InvoiceEstimateHistoryService,
+		private readonly translatableService: TranslatableService,
+		private readonly organizationSettingService: OrganizationSettingService
 	) {
 		super(translate);
 	}
@@ -108,42 +136,60 @@ export class InvoiceEditComponent
 	ngOnInit() {
 		this._applyTranslationOnSmartTable();
 		this.initializeForm();
-		this.route.paramMap.pipe(untilDestroyed(this)).subscribe((params) => {
-			this.invoiceId = params.get('id');
+		this.route.paramMap
+			.pipe(
+				tap((params) => (this.invoiceId = params.get('id'))),
+				untilDestroyed(this)
+			)
+			.subscribe();
+		this.route.queryParamMap.pipe(untilDestroyed(this)).subscribe((params) => {
+			const paramsObj = params['params'];
+			if (Object.keys(paramsObj).length) {
+				this.isRemainingAmount = params.get('remainingAmount');
+			}
 		});
-		this.route.queryParamMap
-			.pipe(untilDestroyed(this))
-			.subscribe((params) => {
-				const paramsObj = params['params'];
-				if (Object.keys(paramsObj).length) {
-					this.isRemainingAmount = params.get('remainingAmount');
-				}
-			});
 		this.invoicesService.currentData
-			.pipe(untilDestroyed(this))
-			.subscribe((response) => {
-				this.duplicate = response;
-			});
-		this.selectedLanguage = this.translateService.currentLang;
-		this.translateService.onLangChange
-			.pipe(untilDestroyed(this))
-			.subscribe((languageEvent) => {
-				this.selectedLanguage = languageEvent.lang;
-			});
+			.pipe(
+				tap((response) => (this.duplicate = response)),
+				untilDestroyed(this)
+			)
+			.subscribe();
+		this.selectedLanguage = this.translateService.getCurrentLang();
+		this.translateService.onLangChange.pipe(untilDestroyed(this)).subscribe((languageEvent) => {
+			this.selectedLanguage = languageEvent.lang;
+		});
 		this.store.selectedOrganization$
 			.pipe(
 				filter((organization) => !!organization),
+				distinctUntilChange(),
 				tap(() => (this.loading = true)),
 				tap((organization) => (this.organization = organization)),
 				tap(() => this.getInvoiceById()),
 				untilDestroyed(this)
 			)
 			.subscribe();
+		this.subject$
+			.pipe(
+				tap(() => {
+					const { activePage, itemsPerPage } = this.getPagination();
+					this.smartTableSource.setPaging(activePage, itemsPerPage, false);
+					this.smartTableSource.refresh();
+				})
+			)
+			.subscribe();
+		this.pagination$
+			.pipe(
+				distinctUntilChange(),
+				tap(() => this.subject$.next(true)),
+				untilDestroyed(this)
+			)
+			.subscribe();
 	}
 
 	getInvoiceById() {
-		this.loading = true;
 		const { tenantId } = this.store.user;
+		const { id: organizationId } = this.organization;
+
 		this.invoicesService
 			.getById(
 				this.invoiceId,
@@ -159,14 +205,13 @@ export class InvoiceEditComponent
 					'toContact',
 					'fromOrganization'
 				],
-				{ tenantId }
+				{ tenantId, organizationId }
 			)
 			.then(async (invoice: IInvoice) => {
 				this.invoice = invoice;
 				this.invoiceItems = invoice.invoiceItems;
 				this.selectedOrganizationContact = invoice.toContact;
-				this.discountAfterTax =
-					invoice.fromOrganization.discountAfterTax;
+				this.discountAfterTax = invoice.fromOrganization.discountAfterTax;
 
 				await this._loadOrganizationData();
 				this.updateValueAndValidity(invoice);
@@ -179,30 +224,19 @@ export class InvoiceEditComponent
 	initializeForm() {
 		this.form = this.fb.group({
 			id: ['', Validators.required],
-			invoiceDate: ['', Validators.required],
-			invoiceNumber: [
-				'',
-				Validators.compose([Validators.required, Validators.min(1)])
-			],
+			invoiceDate: [this.organizationSettingService.getDateFromOrganizationSettings(), Validators.required],
+			invoiceNumber: ['', Validators.compose([Validators.required, Validators.min(1)])],
 			dueDate: ['', Validators.required],
-			discountValue: [
-				'',
-				Validators.compose([Validators.required, Validators.min(0)])
-			],
-			tax: [
-				'',
-				Validators.compose([Validators.required, Validators.min(0)])
-			],
-			tax2: [
-				'',
-				Validators.compose([Validators.required, Validators.min(0)])
-			],
-			terms: [''],
+			discountValue: ['', Validators.compose([Validators.required, Validators.min(0)])],
+			tax: ['', Validators.compose([Validators.required, Validators.min(0)])],
+			tax2: ['', Validators.compose([Validators.required, Validators.min(0)])],
+			terms: [],
 			organizationContact: ['', Validators.required],
 			currency: ['', Validators.required],
-			discountType: [''],
-			taxType: [''],
-			tax2Type: [''],
+			discountType: [],
+			taxType: [],
+			tax2Type: [],
+			taxCalculationType: [TaxCalculationTypeEnum.SIMPLE],
 			tags: []
 		});
 	}
@@ -222,34 +256,66 @@ export class InvoiceEditComponent
 			discountType: invoice.discountType,
 			taxType: invoice.taxType,
 			tax2Type: invoice.tax2Type,
+			// Invoices saved before the type was stored have none: they were always recalculated as SIMPLE.
+			taxCalculationType: invoice.taxCalculationType ?? TaxCalculationTypeEnum.SIMPLE,
 			tags: invoice.tags
 		});
 		this.form.updateValueAndValidity();
+	}
 
-		this.invoiceLoaded = true;
-		this.tags = invoice.tags;
+	/**
+	 * A figure with the record’s currency in front of it, and nothing at all when
+	 * there is no figure yet.
+	 *
+	 * Every column’s prepare function also runs on the EMPTY add row, and it feeds
+	 * the inline editor as well as the cell — which is why an untouched add row used
+	 * to open with "BGN undefined" already typed into the price box and "BGN NaN" in
+	 * the total beside it.
+	 */
+	private formatMoney(value: any): string {
+		const amount = Number(value);
+		if (value === null || value === undefined || value === '' || !Number.isFinite(amount)) {
+			return '';
+		}
+		return `${this.currency.value} ${value}`;
 	}
 
 	async loadSmartTable() {
+		const pagination: IPaginationBase = this.getPagination();
 		this.settingsSmartTable = {
+			selectedRowIndex: -1,
+			// No `mode: 'external'` (the default is 'inline'). In external mode the
+			// library stops acting on the Add, Edit and Delete TRIGGERS itself and
+			// emits `create` / `edit` / `delete` for the host to handle. This form
+			// bound only `edit` — so the add button opened no row and the row's own
+			// delete button did nothing, while the `createConfirm` and `deleteConfirm`
+			// handlers below, both written against the inline flow (they resolve the
+			// grid's deferred), could never be reached. Inline is what those handlers
+			// expect and what the Add form beside this one has always run.
 			pager: {
-				display: true,
-				perPage: 5
+				display: false,
+				perPage: pagination ? pagination.itemsPerPage : 10
 			},
+			actions: { add: false, edit: true, delete: true },
+			// The old '<i class="nb-*">' markup relied on Nebular's long-removed icon
+			// font, so every row action rendered as a bare colored dot. FontAwesome is
+			// loaded globally; native `title` (not nbTooltip) because these strings are
+			// injected via [innerHTML], where directives never bind. The OUTLINE set
+			// (`far`), so the row actions read like the eva outline icons the rest of
+			// the app uses rather than the heavier solid glyphs.
 			add: {
-				addButtonContent: '<i class="nb-plus"></i>',
-				createButtonContent: '<i class="nb-checkmark"></i>',
-				cancelButtonContent: '<i class="nb-close"></i>',
+				createButtonContent: `<i class="far fa-circle-check" aria-hidden="true" title="${this.getTranslation('BUTTONS.SAVE')}"></i><span class="sr-only">${this.getTranslation('BUTTONS.SAVE')}</span>`,
+				cancelButtonContent: `<i class="far fa-circle-xmark" aria-hidden="true" title="${this.getTranslation('BUTTONS.CANCEL')}"></i><span class="sr-only">${this.getTranslation('BUTTONS.CANCEL')}</span>`,
 				confirmCreate: true
 			},
 			edit: {
-				editButtonContent: '<i class="nb-edit"></i>',
-				saveButtonContent: '<i class="nb-checkmark"></i>',
-				cancelButtonContent: '<i class="nb-close"></i>',
+				editButtonContent: `<i class="far fa-pen-to-square" aria-hidden="true" title="${this.getTranslation('BUTTONS.EDIT')}"></i><span class="sr-only">${this.getTranslation('BUTTONS.EDIT')}</span>`,
+				saveButtonContent: `<i class="far fa-circle-check" aria-hidden="true" title="${this.getTranslation('BUTTONS.SAVE')}"></i><span class="sr-only">${this.getTranslation('BUTTONS.SAVE')}</span>`,
+				cancelButtonContent: `<i class="far fa-circle-xmark" aria-hidden="true" title="${this.getTranslation('BUTTONS.CANCEL')}"></i><span class="sr-only">${this.getTranslation('BUTTONS.CANCEL')}</span>`,
 				confirmSave: true
 			},
 			delete: {
-				deleteButtonContent: '<i class="nb-trash"></i>',
+				deleteButtonContent: `<i class="far fa-trash-can" aria-hidden="true" title="${this.getTranslation('BUTTONS.DELETE')}"></i><span class="sr-only">${this.getTranslation('BUTTONS.DELETE')}</span>`,
 				confirmDelete: true
 			},
 			columns: {}
@@ -260,94 +326,67 @@ export class InvoiceEditComponent
 		switch (this.invoice.invoiceType) {
 			case InvoiceTypeEnum.BY_EMPLOYEE_HOURS:
 				this.settingsSmartTable['columns']['selectedItem'] = {
-					title: this.getTranslation(
-						'INVOICES_PAGE.INVOICE_ITEM.EMPLOYEE'
-					),
+					title: this.getTranslation('INVOICES_PAGE.INVOICE_ITEM.EMPLOYEE'),
 					width: '13%',
 					editor: {
 						type: 'custom',
 						component: InvoiceEmployeesSelectorComponent
 					},
-					valuePrepareFunction: (cell) => {
-						const employee = cell;
-						if (employee) {
-							return `${cell.user.name}`;
-						}
+					valuePrepareFunction: (employee: IEmployee) => {
+						return employee?.user?.name || '';
 					}
 				};
 				break;
 			case InvoiceTypeEnum.BY_PROJECT_HOURS:
 				this.settingsSmartTable['columns']['selectedItem'] = {
-					title: this.getTranslation(
-						'INVOICES_PAGE.INVOICE_ITEM.PROJECT'
-					),
+					title: this.getTranslation('INVOICES_PAGE.INVOICE_ITEM.PROJECT'),
 					width: '13%',
 					editor: {
 						type: 'custom',
 						component: InvoiceProjectsSelectorComponent
 					},
-					valuePrepareFunction: (cell, row) => {
-						const project = cell;
-						if (project) {
-							return `${project.name}`;
-						}
+					valuePrepareFunction: (project: IOrganizationProject) => {
+						return project?.name || '';
 					}
 				};
 				break;
 			case InvoiceTypeEnum.BY_TASK_HOURS:
 				this.settingsSmartTable['columns']['selectedItem'] = {
-					title: this.getTranslation(
-						'INVOICES_PAGE.INVOICE_ITEM.TASK'
-					),
+					title: this.getTranslation('INVOICES_PAGE.INVOICE_ITEM.TASK'),
 					width: '13%',
 					editor: {
 						type: 'custom',
 						component: InvoiceTasksSelectorComponent
 					},
-					valuePrepareFunction: (cell) => {
-						const task = cell;
-						if (task) {
-							return `${task.title}`;
-						}
+					valuePrepareFunction: (task: ITask) => {
+						return task?.title || '';
 					}
 				};
 				break;
 			case InvoiceTypeEnum.BY_PRODUCTS:
 				this.settingsSmartTable['columns']['selectedItem'] = {
-					title: this.getTranslation(
-						'INVOICES_PAGE.INVOICE_ITEM.PRODUCT'
-					),
+					title: this.getTranslation('INVOICES_PAGE.INVOICE_ITEM.PRODUCT'),
 					width: '13%',
 					editor: {
 						type: 'custom',
 						component: InvoiceProductsSelectorComponent
 					},
-					valuePrepareFunction: (cell) => {
-						const product = cell;
-						if (product) {
-							return `${this.translatableService.getTranslatedProperty(
-								product,
-								'name'
-							)}`;
-						}
+					valuePrepareFunction: (product: IProduct) => {
+						const translatedName = this.translatableService.getTranslatedProperty(product, 'name');
+						return translatedName || '';
 					}
 				};
 				break;
 			case InvoiceTypeEnum.BY_EXPENSES:
 				this.settingsSmartTable['columns']['selectedItem'] = {
-					title: this.getTranslation(
-						'INVOICES_PAGE.INVOICE_ITEM.EXPENSE'
-					),
+					title: this.getTranslation('INVOICES_PAGE.INVOICE_ITEM.EXPENSE'),
 					width: '13%',
 					editor: {
 						type: 'custom',
 						component: InvoiceExpensesSelectorComponent
 					},
-					valuePrepareFunction: (cell) => {
-						const expense = cell;
-						if (expense) {
-							return `${expense.purpose}`;
-						}
+					valuePrepareFunction: (expense: IExpense) => {
+						return expense?.purpose || '';
 					}
 				};
 				break;
@@ -361,22 +400,18 @@ export class InvoiceEditComponent
 			this.invoice.invoiceType === InvoiceTypeEnum.BY_TASK_HOURS
 		) {
 			price = {
-				title: this.getTranslation(
-					'INVOICES_PAGE.INVOICE_ITEM.HOURLY_RATE'
-				),
+				title: this.getTranslation('INVOICES_PAGE.INVOICE_ITEM.HOURLY_RATE'),
 				type: 'text',
-				filter: false,
+				isFilterable: false,
 				width: '13%',
-				valuePrepareFunction: (cell, row) => {
-					return `${this.currency.value} ${cell}`;
+				valuePrepareFunction: (value: IInvoiceItem['price']) => {
+					return this.formatMoney(value);
 				}
 			};
 			quantity = {
-				title: this.getTranslation(
-					'INVOICES_PAGE.INVOICE_ITEM.HOURS_WORKED'
-				),
+				title: this.getTranslation('INVOICES_PAGE.INVOICE_ITEM.HOURS_WORKED'),
 				type: 'text',
-				filter: false,
+				isFilterable: false,
 				width: '13%'
 			};
 		} else if (
@@ -387,61 +422,51 @@ export class InvoiceEditComponent
 			price = {
 				title: this.getTranslation('INVOICES_PAGE.INVOICE_ITEM.PRICE'),
 				type: 'text',
-				filter: false,
+				isFilterable: false,
 				width: '13%',
 				valuePrepareFunction: (cell, row) => {
-					return `${this.currency.value} ${cell}`;
+					return this.formatMoney(cell);
 				}
 			};
 			quantity = {
-				title: this.getTranslation(
-					'INVOICES_PAGE.INVOICE_ITEM.QUANTITY'
-				),
+				title: this.getTranslation('INVOICES_PAGE.INVOICE_ITEM.QUANTITY'),
 				type: 'text',
-				filter: false,
+				isFilterable: false,
 				width: '13%'
 			};
 		}
 		this.settingsSmartTable['columns']['description'] = {
-			title: this.getTranslation(
-				'INVOICES_PAGE.INVOICE_ITEM.DESCRIPTION'
-			),
+			title: this.getTranslation('INVOICES_PAGE.INVOICE_ITEM.DESCRIPTION'),
 			type: 'text',
 			width: '13%'
 		};
 		this.settingsSmartTable['columns']['price'] = price;
 		this.settingsSmartTable['columns']['quantity'] = quantity;
 		this.settingsSmartTable['columns']['totalValue'] = {
-			title: this.getTranslation(
-				'INVOICES_PAGE.INVOICE_ITEM.TOTAL_VALUE'
-			),
+			title: this.getTranslation('INVOICES_PAGE.INVOICE_ITEM.TOTAL_VALUE'),
 			type: 'text',
 			addable: false,
 			editable: false,
-			valuePrepareFunction: (cell, row) => {
-				return `${this.currency.value} ${row.quantity * row.price}`;
+			valuePrepareFunction: (value: IInvoiceItem['totalValue'], cell: Cell) => {
+				const row = cell.getRow().getData();
+				return this.formatMoney(row.quantity * row.price);
 			},
-			filter: false,
+			isFilterable: false,
 			width: '13%'
 		};
-		if (
-			this.organization &&
-			this.organization.separateInvoiceItemTaxAndDiscount
-		) {
+		if (this.organization && this.organization.separateInvoiceItemTaxAndDiscount) {
 			this.settingsSmartTable['columns']['applyTax'] = {
 				title: this.getTranslation('INVOICES_PAGE.APPLY_TAX'),
 				editor: {
 					type: 'custom',
 					component: InvoiceApplyTaxDiscountComponent
 				},
-				filter: false,
+				isFilterable: false,
 				width: '10%',
-				valuePrepareFunction: (cell) => {
-					if (cell) {
-						return this.getTranslation('INVOICES_PAGE.APPLIED');
-					} else {
-						return this.getTranslation('INVOICES_PAGE.NOT_APPLIED');
-					}
+				valuePrepareFunction: (isApplied: any) => {
+					return isApplied
+						? this.getTranslation('INVOICES_PAGE.APPLIED')
+						: this.getTranslation('INVOICES_PAGE.NOT_APPLIED');
 				}
 			};
 			this.settingsSmartTable['columns']['applyDiscount'] = {
@@ -450,14 +475,12 @@ export class InvoiceEditComponent
 					type: 'custom',
 					component: InvoiceApplyTaxDiscountComponent
 				},
-				filter: false,
+				isFilterable: false,
 				width: '10%',
-				valuePrepareFunction: (cell) => {
-					if (cell) {
-						return this.getTranslation('INVOICES_PAGE.APPLIED');
-					} else {
-						return this.getTranslation('INVOICES_PAGE.NOT_APPLIED');
-					}
+				valuePrepareFunction: (isApplied: any) => {
+					return isApplied
+						? this.getTranslation('INVOICES_PAGE.APPLIED')
+						: this.getTranslation('INVOICES_PAGE.NOT_APPLIED');
 				}
 			};
 		}
@@ -467,6 +490,7 @@ export class InvoiceEditComponent
 		if (!this.organization) {
 			return;
 		}
+
 		this.loadSmartTable();
 		await this.loadInvoiceItemData();
 		await this.calculateTotal();
@@ -486,26 +510,22 @@ export class InvoiceEditComponent
 			}
 			const { tenantId } = this.store.user;
 			const { id: organizationId } = this.organization;
-			const invoice = await this.invoicesService.getAll([], {
+			const invoice = await this.invoicesService.getAll({
 				invoiceNumber: invoiceData.invoiceNumber,
 				organizationId,
 				tenantId
 			});
 
-			if (
-				invoice.items.length &&
-				+invoice.items[0].invoiceNumber !== +this.invoice.invoiceNumber
-			) {
-				this.toastrService.danger(
-					'INVOICES_PAGE.INVOICE_NUMBER_DUPLICATE'
-				);
+			if (invoice.items.length && +invoice.items[0].invoiceNumber !== +this.invoice.invoiceNumber) {
+				this.toastrService.danger('INVOICES_PAGE.INVOICE_NUMBER_DUPLICATE');
 				return;
 			}
 
+			const { invoiceDate } = this.form.getRawValue();
 			await this.invoicesService.update(this.invoice.id, {
 				invoiceNumber: invoiceData.invoiceNumber,
-				invoiceDate: invoiceData.invoiceDate,
-				dueDate: invoiceData.dueDate,
+				invoiceDate: moment(invoiceData.invoiceDate).startOf('day').toDate(),
+				dueDate: moment(invoiceData.dueDate).endOf('day').toDate(),
 				currency: this.currency.value,
 				discountValue: invoiceData.discountValue,
 				discountType: invoiceData.discountType,
@@ -513,6 +533,7 @@ export class InvoiceEditComponent
 				tax2: invoiceData.tax2,
 				taxType: invoiceData.taxType,
 				tax2Type: invoiceData.tax2Type,
+				taxCalculationType: invoiceData.taxCalculationType,
 				terms: invoiceData.terms,
 				totalValue: +this.total.toFixed(2),
 				invoiceType: this.invoice.invoiceType,
@@ -520,25 +541,22 @@ export class InvoiceEditComponent
 				toContact: invoiceData.organizationContact,
 				organizationId,
 				tenantId,
-				tags: this.tags,
+				tags: invoiceData.tags,
 				status: status,
 				sentTo: sendTo,
 				hasRemainingAmountInvoiced:
-					this.isRemainingAmount ||
-					this.invoice.hasRemainingAmountInvoiced
-						? true
-						: false,
+					this.isRemainingAmount || this.invoice.hasRemainingAmountInvoiced ? true : false,
 				alreadyPaid: this.invoice.alreadyPaid,
 				amountDue: this.invoice.amountDue
 			});
 
 			const invoiceItems: IInvoiceItemCreateInput[] = [];
-
 			for (const invoiceItem of tableData) {
+				const id = invoiceItem.selectedItem ? invoiceItem.selectedItem.id : null;
 				const itemToAdd = {
 					description: invoiceItem.description,
-					price: invoiceItem.price,
-					quantity: invoiceItem.quantity,
+					price: Number(invoiceItem.price),
+					quantity: Number(invoiceItem.quantity),
 					totalValue: invoiceItem.totalValue,
 					invoiceId: this.invoice.id,
 					applyTax: invoiceItem.applyTax,
@@ -548,19 +566,19 @@ export class InvoiceEditComponent
 				};
 				switch (this.invoice.invoiceType) {
 					case InvoiceTypeEnum.BY_EMPLOYEE_HOURS:
-						itemToAdd['employeeId'] = invoiceItem.selectedItem;
+						itemToAdd['employeeId'] = id;
 						break;
 					case InvoiceTypeEnum.BY_PROJECT_HOURS:
-						itemToAdd['projectId'] = invoiceItem.selectedItem;
+						itemToAdd['projectId'] = id;
 						break;
 					case InvoiceTypeEnum.BY_TASK_HOURS:
-						itemToAdd['taskId'] = invoiceItem.selectedItem;
+						itemToAdd['taskId'] = id;
 						break;
 					case InvoiceTypeEnum.BY_PRODUCTS:
-						itemToAdd['productId'] = invoiceItem.selectedItem;
+						itemToAdd['productId'] = id;
 						break;
 					case InvoiceTypeEnum.BY_EXPENSES:
-						itemToAdd['expenseId'] = invoiceItem.selectedItem;
+						itemToAdd['expenseId'] = id;
 						break;
 					default:
 						break;
@@ -569,19 +587,12 @@ export class InvoiceEditComponent
 				invoiceItems.push(itemToAdd);
 			}
 
-			await this.invoiceItemService.createBulk(
-				this.invoice.id,
-				invoiceItems
-			);
+			await this.invoiceItemService.createBulk(this.invoice.id, invoiceItems);
 
 			await this.invoiceEstimateHistoryService.add({
 				action: this.isEstimate
-					? this.getTranslation(
-							'INVOICES_PAGE.INVOICES_EDIT_ESTIMATE'
-					  )
-					: this.getTranslation(
-							'INVOICES_PAGE.INVOICES_EDIT_INVOICE'
-					  ),
+					? this.getTranslation('INVOICES_PAGE.INVOICES_EDIT_ESTIMATE')
+					: this.getTranslation('INVOICES_PAGE.INVOICES_EDIT_INVOICE'),
 				invoice: this.invoice,
 				invoiceId: this.invoice.id,
 				user: this.store.user,
@@ -593,9 +604,7 @@ export class InvoiceEditComponent
 
 			if (this.isRemainingAmount) {
 				await this.invoiceEstimateHistoryService.add({
-					action: this.getTranslation(
-						'INVOICES_PAGE.INVOICED_REMAINING_AMOUNT'
-					),
+					action: this.getTranslation('INVOICES_PAGE.INVOICED_REMAINING_AMOUNT'),
 					invoice: this.invoice,
 					invoiceId: this.invoice.id,
 					user: this.store.user,
@@ -606,15 +615,19 @@ export class InvoiceEditComponent
 			}
 
 			if (this.isEstimate) {
-				this.toastrService.success(
-					'INVOICES_PAGE.INVOICES_EDIT_ESTIMATE'
-				);
-				this.router.navigate(['/pages/accounting/invoices/estimates']);
+				this.toastrService.success('INVOICES_PAGE.INVOICES_EDIT_ESTIMATE');
+				this.router.navigate(['/pages/accounting/invoices/estimates'], {
+					queryParams: {
+						date: moment(invoiceDate).format('MM-DD-YYYY')
+					}
+				});
 			} else {
-				this.toastrService.success(
-					'INVOICES_PAGE.INVOICES_EDIT_INVOICE'
-				);
-				this.router.navigate(['/pages/accounting/invoices']);
+				this.toastrService.success('INVOICES_PAGE.INVOICES_EDIT_INVOICE');
+				this.router.navigate(['/pages/accounting/invoices'], {
+					queryParams: {
+						date: moment(invoiceDate).format('MM-DD-YYYY')
+					}
+				});
 			}
 		} else {
 			this.toastrService.warning('INVOICES_PAGE.INVOICE_ITEM.NO_ITEMS');
@@ -623,10 +636,7 @@ export class InvoiceEditComponent
 
 	async sendToContact() {
 		if (this.form.value.organizationContact.id) {
-			await this.updateInvoice(
-				'SENT',
-				this.form.value.organizationContact.id
-			);
+			await this.updateInvoice('SENT', this.form.value.organizationContact.id);
 			await this.invoiceEstimateHistoryService.add({
 				action: this.isEstimate
 					? this.getTranslation('INVOICES_PAGE.ESTIMATE_SENT_TO', {
@@ -662,20 +672,14 @@ export class InvoiceEditComponent
 			}
 			const { tenantId } = this.store.user;
 			const { id: organizationId } = this.organization;
-			const invoiceExists = await this.invoicesService.getAll([], {
+			const invoiceExists = await this.invoicesService.getAll({
 				invoiceNumber: invoiceData.invoiceNumber,
 				organizationId,
 				tenantId
 			});
 
-			if (
-				invoiceExists.items.length &&
-				+invoiceExists.items[0].invoiceNumber !==
-					+this.invoice.invoiceNumber
-			) {
-				this.toastrService.danger(
-					'INVOICES_PAGE.INVOICE_NUMBER_DUPLICATE'
-				);
+			if (invoiceExists.items.length && +invoiceExists.items[0].invoiceNumber !== +this.invoice.invoiceNumber) {
+				this.toastrService.danger('INVOICES_PAGE.INVOICE_NUMBER_DUPLICATE');
 				return;
 			}
 
@@ -691,6 +695,7 @@ export class InvoiceEditComponent
 				tax2: invoiceData.tax2,
 				taxType: invoiceData.taxType,
 				tax2Type: invoiceData.tax2Type,
+				taxCalculationType: invoiceData.taxCalculationType,
 				terms: invoiceData.terms,
 				paid: false,
 				totalValue: +this.total.toFixed(2),
@@ -700,15 +705,12 @@ export class InvoiceEditComponent
 				organizationId,
 				tenantId,
 				invoiceType: this.invoice.invoiceType,
-				tags: this.tags,
+				tags: invoiceData.tags,
 				isEstimate: this.isEstimate,
 				alreadyPaid: this.invoice.alreadyPaid,
 				amountDue: this.invoice.amountDue,
 				hasRemainingAmountInvoiced:
-					this.isRemainingAmount ||
-					this.invoice.hasRemainingAmountInvoiced
-						? true
-						: false,
+					this.isRemainingAmount || this.invoice.hasRemainingAmountInvoiced ? true : false,
 				invoiceItems: []
 			};
 
@@ -749,14 +751,14 @@ export class InvoiceEditComponent
 
 			invoice.invoiceItems = invoiceItems;
 
-			const result = await firstValueFrom(this.dialogService
-				.open(InvoiceEmailMutationComponent, {
+			const result = await firstValueFrom(
+				this.dialogService.open(InvoiceEmailMutationComponent, {
 					context: {
 						invoice: invoice,
 						isEstimate: this.isEstimate
 					}
-				})
-				.onClose);
+				}).onClose
+			);
 
 			if (result) {
 				await this.updateInvoice('SENT');
@@ -812,81 +814,17 @@ export class InvoiceEditComponent
 	async calculateTotal() {
 		const tableData = await this.smartTableSource.getAll();
 
-		const discountValue =
-			this.form.value.discountValue && this.form.value.discountValue > 0
-				? this.form.value.discountValue
-				: 0;
-		const tax =
-			this.form.value.tax && this.form.value.tax > 0
-				? this.form.value.tax
-				: 0;
-		const tax2 =
-			this.form.value.tax2 && this.form.value.tax2 > 0
-				? this.form.value.tax2
-				: 0;
-
-		let totalDiscount = 0;
-		let totalTax = 0;
-
-		for (const item of tableData) {
-			if (item.applyTax) {
-				switch (this.form.value.taxType) {
-					case DiscountTaxTypeEnum.PERCENT:
-						totalTax += item.totalValue * (+tax / 100);
-						break;
-					case DiscountTaxTypeEnum.FLAT_VALUE:
-						totalTax += +tax;
-						break;
-					default:
-						totalTax = 0;
-						break;
-				}
-				switch (this.form.value.tax2Type) {
-					case DiscountTaxTypeEnum.PERCENT:
-						totalTax += item.totalValue * (+tax2 / 100);
-						break;
-					case DiscountTaxTypeEnum.FLAT_VALUE:
-						totalTax += +tax2;
-						break;
-					default:
-						totalTax = 0;
-						break;
-				}
-			}
-
-			if (item.applyDiscount) {
-				switch (this.form.value.discountType) {
-					case DiscountTaxTypeEnum.PERCENT:
-						if (!this.discountAfterTax) {
-							totalDiscount +=
-								item.totalValue * (+discountValue / 100);
-						}
-						break;
-					case DiscountTaxTypeEnum.FLAT_VALUE:
-						totalDiscount += +discountValue;
-						break;
-					default:
-						totalDiscount = 0;
-						break;
-				}
-			}
-		}
-
-		if (
-			this.discountAfterTax &&
-			this.form.value.discountType === DiscountTaxTypeEnum.PERCENT
-		) {
-			totalDiscount = (this.subtotal + totalTax) * (+discountValue / 100);
-		}
-
-		this.total = this.subtotal - totalDiscount + totalTax;
-
-		if (this.total < 0) {
-			this.total = 0;
-		}
+		// See invoice-totals.ts, shared with the add page. The form carries the stored calculation type, so a
+		// compound invoice keeps its total when edited.
+		this.total = calculateInvoiceFormTotals(this.form.value, tableData, this.subtotal, this.discountAfterTax).total;
 
 		this.alreadyPaid = +this.invoice.alreadyPaid;
 		this.amountDue = +this.total - +this.alreadyPaid;
+		this.setPagination({
+			...this.getPagination(),
+			totalItems: this.smartTableSource.count()
+		});
+		this.refreshPagination();
 	}
 
 	async onCurrencyChange($event) {
@@ -907,40 +845,40 @@ export class InvoiceEditComponent
 	async onCreateConfirm(event) {
 		if (
 			!isNaN(event.newData.quantity) &&
-			!isNaN(event.newData.price) &&
+			!isNaN(extractNumber(event.newData.price)) &&
 			event.newData.quantity &&
 			event.newData.price &&
 			event.newData.description &&
-			(event.newData.selectedItem ||
-				this.invoice.invoiceType === InvoiceTypeEnum.DETAILED_ITEMS)
+			(event.newData.selectedItem || this.invoice.invoiceType === InvoiceTypeEnum.DETAILED_ITEMS)
 		) {
-			const newData = event.newData;
-			const itemTotal = +event.newData.quantity * +event.newData.price;
+			const newData = { ...event.newData, price: extractNumber(event.newData.price) };
+			const itemTotal = +event.newData.quantity * +extractNumber(event.newData.price);
 			newData.totalValue = itemTotal;
 			this.subtotal += itemTotal;
 			await event.confirm.resolve(newData);
 			await this.calculateTotal();
 		} else {
-			this.toastrService.danger(
-				'INVOICES_PAGE.INVOICE_ITEM.INVALID_ITEM'
-			);
+			this.toastrService.danger('INVOICES_PAGE.INVOICE_ITEM.INVALID_ITEM');
 			event.confirm.reject();
 		}
 	}
 
+	/**
+	 *
+	 * @param event
+	 */
 	async onEditConfirm(event) {
 		if (
 			!isNaN(event.newData.quantity) &&
-			!isNaN(event.newData.price) &&
+			!isNaN(extractNumber(event.newData.price)) &&
 			event.newData.quantity &&
 			event.newData.price &&
 			event.newData.description &&
-			(event.newData.selectedItem ||
-				this.invoice.invoiceType === InvoiceTypeEnum.DETAILED_ITEMS)
+			(event.newData.selectedItem || this.invoice.invoiceType === InvoiceTypeEnum.DETAILED_ITEMS)
 		) {
-			const newData = event.newData;
+			const newData = { ...event.newData, price: extractNumber(event.newData.price) };
 			const oldValue = +event.data.quantity * +event.data.price;
-			const newValue = +newData.quantity * +event.newData.price;
+			const newValue = +newData.quantity * +extractNumber(event.newData.price);
 			newData.totalValue = newValue;
 			if (newValue > oldValue) {
 				this.subtotal += newValue - oldValue;
@@ -950,9 +888,7 @@ export class InvoiceEditComponent
 			await event.confirm.resolve(newData);
 			await this.calculateTotal();
 		} else {
-			this.toastrService.danger(
-				'INVOICES_PAGE.INVOICE_ITEM.INVALID_ITEM'
-			);
+			this.toastrService.danger('INVOICES_PAGE.INVOICE_ITEM.INVALID_ITEM');
 			event.confirm.reject();
 		}
 	}
@@ -962,6 +898,9 @@ export class InvoiceEditComponent
 			this.itemsToDelete.push(event.data.id);
 		}
 		this.subtotal -= +event.data.quantity * +event.data.price;
+		// Resolving the grid's deferred is what removes the row; the id above is
+		// what deletes it server-side when the form is saved. Same two steps as the
+		// Add form, where this line was never commented out.
 		await event.confirm.resolve(event.data);
 		await this.calculateTotal();
 	}
@@ -980,13 +919,18 @@ export class InvoiceEditComponent
 	}
 
 	payments() {
-		this.router.navigate([
-			`/pages/accounting/invoices/payments/${this.invoice.id}`
-		]);
+		if (this.invoice) {
+			this.router.navigate([`/pages/accounting/invoices/payments/${this.invoice.id}`]);
+		}
 	}
 
-	selectedTagsEvent(currentTagSelection: ITag[]) {
-		this.tags = currentTagSelection;
+	selectedTagsEvent(selectedTags: ITag[]) {
+		this.form.get('tags').setValue(selectedTags);
+		this.form.get('tags').updateValueAndValidity();
+	}
+
+	selectItem(item: any) {
+		this.selectedItem = item;
 	}
 
 	ngOnDestroy() {}

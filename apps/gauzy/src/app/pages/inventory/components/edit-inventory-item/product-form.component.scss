@@ -1,3 +1,6 @@
+@use 'gauzy/_gauzy-cards' as *;
+@use 'gauzy/_gauzy-overrides' as ga-overrides;
+
 .d-bottom {
   display: flex;
   align-items: flex-end;
@@ -62,10 +65,14 @@ nb-card-body {
 
 nb-card {
   overflow-y: visible;
+  margin-bottom: 0px;
 }
 
 nb-card-footer {
-  justify-self: flex-end;
+  display: flex;
+  gap: 15px;
+  justify-content: center;
+  padding: 0 24px;
 }
 
 .card-container {
@@ -76,9 +83,23 @@ nb-card-footer {
 .product-container {
   width: 100%;
 }
+
+.product-photo-container {
+  position: relative;
+
+  & div:nth-child(2) {
+    position: absolute;
+    bottom: 0;
+  }
+}
+
 .product-photo {
   width: 100%;
-  background-color: white;
+  // Was a literal `white`: with no featured image yet, this well is the visible
+  // surface, so on the dark themes it rendered as a bright white slab in the
+  // middle of a near-black form. `--gauzy-card-1` is the panel colour, i.e. what
+  // every other empty box on this page already resolves to.
+  background-color: var(--gauzy-card-1);
   overflow: hidden;
   position: relative;
 
@@ -112,4 +133,31 @@ nb-card-footer {
     top: calc(50% - 68px / 2);
     left: calc(50% - 68px / 2);
   }
+}
+
+nb-tab {
+  background-color: var(--gauzy-card-2);
+  border: 0 0 $default-radius $default-radius;
+
+  &.content-active {
+    margin: 0 -1.5rem -1rem 0;
+    height: calc(100vh - 17rem);
+    border-radius: 0 0 $default-radius 0;
+  }
+
+  input,
+  textarea,
+  ::ng-deep .ng-select .ng-select-container,
+  ::ng-deep nb-select.appearance-outline.status-basic .select-button,
+  ga-location-form ::ng-deep input {
+    background-color: var(--gauzy-card-1);
+  }
+}
+
+label {
+  font-size: 11px;
+  font-weight: 600;
+  line-height: 13px;
+  letter-spacing: -0.01em;
+  text-align: left;
 }

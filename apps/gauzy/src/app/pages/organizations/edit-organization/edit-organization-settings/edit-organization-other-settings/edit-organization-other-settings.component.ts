@@ -1,55 +1,147 @@
-import * as moment from 'moment';
-import * as timezone from 'moment-timezone';
-import { Component, OnInit, OnDestroy } from '@angular/core';
-import { FormBuilder, FormGroup, Validators } from '@angular/forms';
-import {
-	AlignmentOptions,
-	DefaultValueDateTypeEnum,
-	IOrganization,
-	WeekDaysEnum,
-	RegionsEnum,
-	BonusTypeEnum,
-	CurrencyPosition,
-	AccountingTemplateTypeEnum,
-	IAccountingTemplate,
-	CurrenciesEnum,
-	DEFAULT_DATE_FORMATS,
-	CrudActionEnum,
-	IKeyValuePair,
-	DEFAULT_TIME_FORMATS
-} from '@gauzy/contracts';
 import { formatDate } from '@angular/common';
+import {
+	AfterViewInit,
+	ChangeDetectorRef,
+	Component,
+	ElementRef,
+	OnDestroy,
+	OnInit,
+	QueryList,
+	ViewChild,
+	ViewChildren,
+	ChangeDetectionStrategy
+} from '@angular/core';
+import { UntypedFormBuilder, FormControl, UntypedFormGroup, Validators } from '@angular/forms';
+import { ActivatedRoute, Router } from '@angular/router';
+import { filter, tap, debounceTime, map } from 'rxjs/operators';
+import * as moment from 'moment';
 import { TranslateService } from '@ngx-translate/core';
 import { UntilDestroy, untilDestroyed } from '@ngneat/until-destroy';
-import { filter } from 'rxjs/operators';
-import { Router } from '@angular/router';
-import { TranslationBaseComponent } from '../../../../../@shared/language-base/translation-base.component';
-import { AccountingTemplateService, OrganizationEditStore, OrganizationsService, Store, ToastrService } from './../../../../../../app/@core/services';
+import { NbAccordionComponent, NbAccordionItemComponent, NbDialogService, NbThemeService } from '@nebular/theme';
+import { firstValueFrom } from 'rxjs';
+import {
+	DEFAULT_ACTIVITY_PROOF_DURATIONS,
+	DEFAULT_DATE_FORMATS,
+	DEFAULT_INACTIVITY_TIME_LIMITS,
+	DEFAULT_REVENUE_BASED_BONUS,
+	DEFAULT_PROFIT_BASED_BONUS,
+	DEFAULT_SCREENSHOT_FREQUENCY_OPTIONS,
+	DEFAULT_TIME_FORMATS,
+	DEFAULT_STANDARD_WORK_HOURS_PER_DAY,
+	DEFAULT_INVITE_EXPIRY_PERIOD,
+	TaskProofOfCompletionTypeEnum,
+	DEFAULT_PROOF_COMPLETION_TYPE,
+	DEFAULT_TASK_NOTIFY_PERIOD,
+	DEFAULT_AUTO_CLOSE_ISSUE_PERIOD,
+	DEFAULT_AUTO_ARCHIVE_ISSUE_PERIOD
+} from '@gauzy/constants';
+import {
+	AccountingTemplateTypeEnum,
+	AlignmentOptions,
+	BonusTypeEnum,
+	CrudActionEnum,
+	CurrenciesEnum,
+	CurrencyPosition,
+	DefaultValueDateTypeEnum,
+	IAccountingTemplate,
+	IKeyValuePair,
+	IOrganization,
+	RegionsEnum,
+	WeekDaysEnum,
+	IOrganizationTaskSetting,
+	AgentExitLogoutField,
+	IAgentRestrictionLocation,
+	IScreenshotCaptureAcknowledgement,
+	isEEAOrUKRegion
+} from '@gauzy/contracts';
+import { isEmpty } from '@gauzy/ui-core/common';
+import {
+	AccountingTemplateService,
+	OrganizationEditStore,
+	OrganizationTaskSettingService,
+	OrganizationsService,
+	Store,
+	ToastrService,
+	applyEEAUKFormRestrictions,
+	bindAgentRestrictionListeners,
+	ScreenshotCaptureAcknowledgementPrompt
+} from '@gauzy/ui-core/core';
+import { NotesWithTagsComponent, ScreenshotCaptureAcknowledgementDialogComponent } from '@gauzy/ui-core/shared';
 
 @UntilDestroy({ checkProperties: true })
 @Component({
 	selector: 'ga-edit-org-other-settings',
 	templateUrl: './edit-organization-other-settings.component.html',
-	styleUrls: ['./edit-organization-other-settings.component.scss']
+	styleUrls: ['./edit-organization-other-settings.component.scss'],
+	changeDetection: ChangeDetectionStrategy.Eager,
+	standalone: false
 })
 export class EditOrganizationOtherSettingsComponent
-	extends TranslationBaseComponent
-	implements OnInit, OnDestroy {
+	extends NotesWithTagsComponent
+	implements AfterViewInit, OnInit, OnDestroy
+{
+	public get isTrackInactivity(): boolean {
+		return this.form.get('allowTrackInactivity').value;
+	}
 
-	organization: IOrganization;
-	form: FormGroup;
+	public get isEEAOrUK(): boolean {
+		if (!this.organization) return false;
+		return isEEAOrUKRegion(this.location);
+	}
+
+	/** Where the organization is, with the form's pending region and time zone applied. */
+	private get location(): IAgentRestrictionLocation {
+		return {
+			regionCode: this.form.get('regionCode')?.value || this.organization?.regionCode,
+			timeZone: this.form.get('timeZone')?.value || this.organization?.timeZone,
+			country: this.organization?.contact?.country
+		};
+	}
+
+	/**
+	 * Issue #9872: turning screen capture on for an EEA/UK organization asks the admin for the acknowledgement
+	 * the API requires, and sends it with the save. Like the API, it reads the stored location as well as the
+	 * pending one, so moving out of the EEA/UK in the same save still asks.
+	 */
+	public readonly screenshotCaptureAcknowledgement = new ScreenshotCaptureAcknowledgementPrompt({
+		control: () => this.form?.get('allowScreenshotCapture'),
+		persisted: () => this.organization,
+		location: () => [
+			{
+				regionCode: this.organization?.regionCode,
+				timeZone: this.organization?.timeZone,
+				country: this.organization?.contact?.country
+			},
+			this.location
+		],
+		ask: () => this._askForScreenshotCaptureAcknowledgement()
+	});
+
+	/**
+	 * A restriction this organization already had while already in EEA/UK: shown as stored, so an
+	 * unrelated save does not silently lift it (it is reported for deliberate review instead).
+	 */
+	private keepExistingAgentRestriction = (field: AgentExitLogoutField): boolean =>
+		this.organization?.[field] === false &&
+		isEEAOrUKRegion({
+			regionCode: this.organization.regionCode,
+			timeZone: this.organization.timeZone,
+			country: this.organization.contact?.country
+		});
+
+	public acknowledgeAgentExitLogoutRestriction: boolean = false;
+
+	public organization: IOrganization;
+	public organizationTaskSetting: IOrganizationTaskSetting;
 	defaultOrganizationSelection: IKeyValuePair[] = [
-		{ key: 'Yes', value: true }, 
+		{ key: 'Yes', value: true },
 		{ key: 'No', value: false }
 	];
 	defaultValueDateTypes: string[] = Object.values(DefaultValueDateTypeEnum);
-	defaultAlignmentTypes: string[] = Object.values(AlignmentOptions).map(
-		(type) => {
-			return type[0] + type.substr(1, type.length).toLowerCase();
-		}
-	);
+	defaultAlignmentTypes: string[] = Object.values(AlignmentOptions);
 	defaultCurrencyPosition: string[] = Object.values(CurrencyPosition);
 	defaultBonusTypes: string[] = Object.values(BonusTypeEnum);
+	defaultTaskProofOfCompletionTypes: string[] = Object.values(TaskProofOfCompletionTypeEnum);
 	invoiceTemplates: IAccountingTemplate[] = [];
 	estimateTemplates: IAccountingTemplate[] = [];
 	receiptTemplates: IAccountingTemplate[] = [];
@@ -57,269 +149,772 @@ export class EditOrganizationOtherSettingsComponent
 	selectedEstimateTemplate: IAccountingTemplate;
 	selectedReceiptTemplate: IAccountingTemplate;
 
-	listOfZones = timezone.tz.names().filter((zone) => zone.includes('/'));
 	listOfDateFormats = DEFAULT_DATE_FORMATS;
 	listOfTimeFormats = DEFAULT_TIME_FORMATS;
+	listOfInactivityLimits = DEFAULT_INACTIVITY_TIME_LIMITS;
+	listOfActivityProofDuration = DEFAULT_ACTIVITY_PROOF_DURATIONS;
+	screenshotFrequencyOptions = DEFAULT_SCREENSHOT_FREQUENCY_OPTIONS;
 	numberFormats = ['USD', 'BGN', 'ILS'];
 	numberFormat: string;
-	weekdays: string[] = Object.values(WeekDaysEnum);
+	weekdays: WeekDaysEnum[] = Object.values(WeekDaysEnum);
 	regionCodes = Object.keys(RegionsEnum);
 	regionCode: string;
 	regions = Object.values(RegionsEnum);
+	standardWorkHoursPerDayOptions: number[] = Array.from({ length: 24 }, (_, i) => i + 1); // Creates an array from 1 to 24
+
+	/*
+	 * Organization Mutation Form
+	 */
+	public form: UntypedFormGroup = EditOrganizationOtherSettingsComponent.buildForm(this._fb);
+	static buildForm(fb: UntypedFormBuilder): UntypedFormGroup {
+		const currentYear = new Date().getFullYear();
+		const startOfYear = formatDate(new Date(currentYear, 0, 1), 'yyyy-MM-dd', 'en'); // January 1st
+		const endOfYear = formatDate(new Date(currentYear, 11, 31), 'yyyy-MM-dd', 'en'); // December 31st
+
+		return fb.group({
+			name: [],
+			currency: [],
+			defaultValueDateType: [null, Validators.required],
+			regionCode: [],
+			defaultAlignmentType: [],
+			brandColor: [],
+			dateFormat: [],
+			timeZone: [],
+			startWeekOn: [],
+			defaultStartTime: [],
+			defaultEndTime: [],
+			numberFormat: [],
+			bonusType: [],
+			bonusPercentage: [],
+			invitesAllowed: [false],
+			inviteExpiryPeriod: [],
+			fiscalStartDate: [startOfYear],
+			fiscalEndDate: [endOfYear],
+			futureDateAllowed: [false],
+			allowManualTime: [],
+			allowModifyTime: [],
+			allowDeleteTime: [],
+			allowTrackInactivity: [],
+			inactivityTimeLimit: [1],
+			activityProofDuration: [1],
+			requireReason: [],
+			requireDescription: [],
+			requireProject: [],
+			requireTask: [],
+			requireClient: [],
+			timeFormat: [12],
+			separateInvoiceItemTaxAndDiscount: [],
+			defaultInvoiceEstimateTerms: [],
+			fiscalInformation: [],
+			currencyPosition: [CurrencyPosition.LEFT],
+			discountAfterTax: [],
+			convertAcceptedEstimates: [false],
+			daysUntilDue: [],
+			invoiceTemplate: [],
+			estimateTemplate: [],
+			receiptTemplate: [],
+			isDefault: [],
+			isRemoveIdleTime: [false],
+			allowScreenshotCapture: [true],
+			upworkOrganizationId: [null],
+			upworkOrganizationName: [null],
+			randomScreenshot: [false],
+			trackOnSleep: [false],
+			screenshotFrequency: [10],
+			enforced: [false],
+			standardWorkHoursPerDay: [DEFAULT_STANDARD_WORK_HOURS_PER_DAY],
+			allowAgentAppExit: [true],
+			allowLogoutFromAgentApp: [true],
+			trackKeyboardMouseActivity: [false],
+			trackAllDisplays: [true],
+			allowEmployeeToSeeTrackedData: [true]
+		});
+	}
+
+	/*
+	 * Organization Task Setting
+	 */
+	public taskSettingForm: UntypedFormGroup = EditOrganizationOtherSettingsComponent.buildTaskSettingForm(this._fb);
+
+	/**
+	 * Nebular Accordion Main Component
+	 */
+	accordion: NbAccordionComponent;
+	@ViewChild('accordion') set content(content: NbAccordionComponent) {
+		if (content) {
+			this.accordion = content;
+			this._cdr.detectChanges();
+		}
+	}
+
+	/**
+	 * The aside index, in the same order as the accordion items it points at. The
+	 * two lists are matched by position, so a section added to the accordion has to
+	 * be added here at the same index.
+	 */
+	readonly settingsSections: { key: string; label: string }[] = [
+		{ key: 'general', label: 'ORGANIZATIONS_PAGE.EDIT.GENERAL_SETTINGS' },
+		{ key: 'design', label: 'ORGANIZATIONS_PAGE.EDIT.DESIGN' },
+		{ key: 'accounting', label: 'ORGANIZATIONS_PAGE.EDIT.ACCOUNTING' },
+		{ key: 'bonus', label: 'ORGANIZATIONS_PAGE.EDIT.BONUS' },
+		{ key: 'invites', label: 'ORGANIZATIONS_PAGE.EDIT.INVITE' },
+		{ key: 'dateLimit', label: 'ORGANIZATIONS_PAGE.EDIT.DATE_LIMIT' },
+		{ key: 'timer', label: 'ORGANIZATIONS_PAGE.EDIT.SETTINGS.TIMER_SETTINGS' },
+		{ key: 'agent', label: 'ORGANIZATIONS_PAGE.EDIT.SETTINGS.AGENT_SETTINGS' },
+		{ key: 'taskSetting', label: 'ORGANIZATIONS_PAGE.EDIT.SETTINGS.TASK_SETTING' },
+		{ key: 'integrations', label: 'ORGANIZATIONS_PAGE.EDIT.INTEGRATIONS' }
+	];
+
+	@ViewChildren(NbAccordionItemComponent) private accordionItems: QueryList<NbAccordionItemComponent>;
+
+	@ViewChildren(NbAccordionItemComponent, { read: ElementRef })
+	private accordionItemElements: QueryList<ElementRef<HTMLElement>>;
+
+	/**
+	 * Whether the section at this position is open.
+	 *
+	 * @param index position in `settingsSections`
+	 */
+	isSectionExpanded(index: number): boolean {
+		return !!this.accordionItems?.get(index)?.expanded;
+	}
+
+	/**
+	 * The section last opened from the aside (General, open on load, to begin with). Several
+	 * sections can be open at once, so being open no longer singles one out: `aria-current` marks
+	 * this one only, while `aria-expanded` reports every open section.
+	 */
+	private currentSectionIndex = 0;
+
+	/**
+	 * Whether the section at this position is the one the aside last took the user to, and is
+	 * still open.
+	 *
+	 * @param index position in `settingsSections`
+	 */
+	isCurrentSection(index: number): boolean {
+		return index === this.currentSectionIndex && this.isSectionExpanded(index);
+	}
+
+	/**
+	 * Toggle a settings section from the aside and bring it into view when opened.
+	 *
+	 * @param index position in `settingsSections`
+	 */
+	toggleSection(index: number): void {
+		const item = this.accordionItems?.get(index);
+		if (!item) {
+			return;
+		}
+		item.toggle();
+		if (!item.expanded) {
+			return;
+		}
+		this.currentSectionIndex = index;
+		setTimeout(() => {
+			// A second click may have closed it again before this runs.
+			if (!item.expanded) {
+				return;
+			}
+			this.accordionItemElements?.get(index)?.nativeElement?.scrollIntoView({
+				behavior: 'smooth',
+				block: 'start'
+			});
+			const header = this.accordionItemElements
+				?.get(index)
+				?.nativeElement?.querySelector('nb-accordion-item-header') as HTMLElement | null;
+			header?.focus();
+		}, 0);
+	}
+
+	static buildTaskSettingForm(fb: UntypedFormBuilder): UntypedFormGroup {
+		return fb.group({
+			isTasksPrivacyEnabled: [],
+			isTasksMultipleAssigneesEnabled: [],
+			isTasksManualTimeEnabled: [],
+			isTasksGroupEstimationEnabled: [],
+			isTasksEstimationInHoursEnabled: [],
+			isTasksEstimationInStoryPointsEnabled: [],
+			isTasksProofOfCompletionEnabled: [],
+			tasksProofOfCompletionType: [], // Enum
+			isTasksLinkedEnabled: [],
+			isTasksCommentsEnabled: [],
+			isTasksHistoryEnabled: [],
+			isTasksAcceptanceCriteriaEnabled: [],
+			isTasksDraftsEnabled: [],
+			isTasksNotifyLeftEnabled: [],
+			tasksNotifyLeftPeriodDays: [],
+			isTasksAutoCloseEnabled: [],
+			tasksAutoClosePeriodDays: [],
+			isTasksAutoArchiveEnabled: [],
+			tasksAutoArchivePeriodDays: [],
+			isTasksAutoStatusEnabled: []
+		});
+	}
+
+	/**
+	 * Check if the form is enforced.
+	 */
+	public get isEnforced(): boolean {
+		return this.form.get('enforced').value;
+	}
 
 	constructor(
-		private readonly router: Router,
-		private readonly fb: FormBuilder,
-		private readonly organizationService: OrganizationsService,
-		private readonly toastrService: ToastrService,
-		private readonly organizationEditStore: OrganizationEditStore,
 		public readonly translateService: TranslateService,
-		private readonly store: Store,
-		private readonly accountingTemlateService: AccountingTemplateService
+		public readonly themeService: NbThemeService,
+		private readonly _route: ActivatedRoute,
+		private readonly _router: Router,
+		private readonly _fb: UntypedFormBuilder,
+		private readonly _cdr: ChangeDetectorRef,
+		private readonly _organizationService: OrganizationsService,
+		private readonly _organizationTaskSettingService: OrganizationTaskSettingService,
+		private readonly _toastrService: ToastrService,
+		private readonly _organizationEditStore: OrganizationEditStore,
+		private readonly _store: Store,
+		private readonly _accountingTemplateService: AccountingTemplateService,
+		private readonly _dialogService: NbDialogService
 	) {
-		super(translateService);
+		super(themeService, translateService);
 	}
 
-	getTimeWithOffset(zone: string) {
-		let cutZone = zone;
-		if (zone.includes('/')) {
-			cutZone = zone.split('/')[1];
-		}
-
-		const offset = timezone.tz(zone).format('zZ');
-
-		return '(' + offset + ') ' + cutZone;
+	ngOnInit(): void {
+		this._route.parent.data
+			.pipe(
+				debounceTime(100),
+				filter((data) => {
+					return !!data && (!!data.organization || !!data.organizationTaskSetting);
+				}),
+				map(({ organization, organizationTaskSetting }) => {
+					return { organization, organizationTaskSetting };
+				}),
+				tap((data: { organization: IOrganization; organizationTaskSetting: IOrganizationTaskSetting }) => {
+					this.organization = data.organization;
+					this.organizationTaskSetting = data.organizationTaskSetting;
+				}),
+				tap(
+					(data: { organization: IOrganization; organizationTaskSetting: IOrganizationTaskSetting }) =>
+						(this.regionCode = data.organization.regionCode)
+				),
+				tap(() => this._setFormValues()),
+				tap(() => this._getTemplates()),
+				untilDestroyed(this)
+			)
+			.subscribe();
 	}
 
-	dateFormatPreview(format: string) {
-		this.form.valueChanges.pipe(untilDestroyed(this)).subscribe((val) => {
-			this.regionCode = val.regionCode;
+	ngAfterViewInit(): void {
+		/**
+		 * Organization upwork organization integration ID controls value changes
+		 */
+		const upworkOrganizationId = <FormControl>this.form.get('upworkOrganizationId');
+		const upworkOrganizationName = <FormControl>this.form.get('upworkOrganizationName');
+
+		/**
+		 * Emits an event every time the value of the control changes.
+		 * It also emits an event each time you call enable() or disable()
+		 */
+		upworkOrganizationId.valueChanges
+			.pipe(
+				tap((value: IOrganization['upworkOrganizationId']) => {
+					if (value) {
+						upworkOrganizationName.setValidators([Validators.required]);
+					} else {
+						upworkOrganizationName.setValidators(null);
+					}
+					upworkOrganizationName.updateValueAndValidity();
+				})
+			)
+			.subscribe();
+
+		/**
+		 * Emits an event every time the value of the control changes.
+		 * It also emits an event each time you call enable() or disable()
+		 */
+		const regionCode = <FormControl>this.form.get('regionCode');
+		regionCode.valueChanges
+			.pipe(
+				tap((value: IOrganization['regionCode']) => {
+					this.regionCode = value;
+					applyEEAUKFormRestrictions(this.form, this.isEEAOrUK, this.keepExistingAgentRestriction);
+				}),
+				untilDestroyed(this)
+			)
+			.subscribe();
+
+		const timeZone = <FormControl>this.form.get('timeZone');
+		timeZone.valueChanges
+			.pipe(
+				tap(() => applyEEAUKFormRestrictions(this.form, this.isEEAOrUK, this.keepExistingAgentRestriction)),
+				untilDestroyed(this)
+			)
+			.subscribe();
+
+		/**
+		 * Emits an event every time the value of the control changes.
+		 * It also emits an event each time you call enable() or disable()
+		 */
+		const bonusTypeControl = <FormControl>this.form.get('bonusType');
+		bonusTypeControl.valueChanges
+			.pipe(
+				tap((bonusType: IOrganization['bonusType']) => {
+					this.onChangedBonusPercentage(bonusType as BonusTypeEnum);
+				}),
+				untilDestroyed(this)
+			)
+			.subscribe();
+
+		/**
+		 * Emits an event every time the value of the control changes.
+		 * It also emits an event each time you call enable() or disable()
+		 */
+		const invitesAllowedControl = <FormControl>this.form.get('invitesAllowed');
+		invitesAllowedControl.valueChanges
+			.pipe(
+				tap((invitesAllowed: IOrganization['invitesAllowed']) => {
+					this.toggleInviteExpiryPeriod(invitesAllowed);
+				}),
+				untilDestroyed(this)
+			)
+			.subscribe();
+
+		/**
+		 * Emits an event every time the value of the control changes.
+		 * It also emits an event each time you call enable() or disable()
+		 */
+		const isTasksProofOfCompletionEnabledControl = <FormControl>(
+			this.taskSettingForm.get('isTasksProofOfCompletionEnabled')
+		);
+		isTasksProofOfCompletionEnabledControl.valueChanges
+			.pipe(
+				tap((taskProofOfCompletionEnabled: IOrganizationTaskSetting['isTasksProofOfCompletionEnabled']) => {
+					this.toggleTasksProofOfCompletionType(taskProofOfCompletionEnabled);
+				}),
+				untilDestroyed(this)
+			)
+			.subscribe();
+
+		/**
+		 * Emits an event every time the value of the control changes.
+		 * It also emits an event each time you call enable() or disable()
+		 */
+		const isTasksNotifyLeftEnabledControl = <FormControl>this.taskSettingForm.get('isTasksNotifyLeftEnabled');
+		isTasksNotifyLeftEnabledControl.valueChanges
+			.pipe(
+				tap((taskNotifyEnabled: IOrganizationTaskSetting['isTasksNotifyLeftEnabled']) => {
+					this.toggleTasksNotifyLeftPeriodDays(taskNotifyEnabled);
+				}),
+				untilDestroyed(this)
+			)
+			.subscribe();
+
+		/**
+		 * Emits an event every time the value of the control changes.
+		 * It also emits an event each time you call enable() or disable()
+		 */
+		const isTasksAutoCloseEnabledControl = <FormControl>this.taskSettingForm.get('isTasksAutoCloseEnabled');
+		isTasksAutoCloseEnabledControl.valueChanges
+			.pipe(
+				tap((taskAutoCloseEnabled: IOrganizationTaskSetting['isTasksAutoCloseEnabled']) => {
+					this.toggleTasksAutoClosePeriodDays(taskAutoCloseEnabled);
+				}),
+				untilDestroyed(this)
+			)
+			.subscribe();
+
+		/**
+		 * Emits an event every time the value of the control changes.
+		 * It also emits an event each time you call enable() or disable()
+		 */
+		const isTasksAutoArchiveEnabledControl = <FormControl>this.taskSettingForm.get('isTasksAutoArchiveEnabled');
+		isTasksAutoArchiveEnabledControl.valueChanges
+			.pipe(
+				tap((taskAutoArchiveEnabled: IOrganizationTaskSetting['isTasksAutoArchiveEnabled']) => {
+					this.toggleTasksAutoArchivePeriodDays(taskAutoArchiveEnabled);
+				}),
+				untilDestroyed(this)
+			)
+			.subscribe();
+
+		bindAgentRestrictionListeners(
+			this.form,
+			() => this.isEEAOrUK,
+			(field) => this.organization?.[field],
+			this.translateService,
+			untilDestroyed(this),
+			() => (this.acknowledgeAgentExitLogoutRestriction = true)
+		);
+
+		this.screenshotCaptureAcknowledgement.bind(untilDestroyed(this));
+	}
+
+	/**
+	 * Opens the screen capture acknowledgement dialog: resolves to the statements confirmed, or `null` if cancelled.
+	 */
+	private async _askForScreenshotCaptureAcknowledgement(): Promise<IScreenshotCaptureAcknowledgement | null> {
+		const dialog = this._dialogService.open(ScreenshotCaptureAcknowledgementDialogComponent, {
+			context: { organizationName: this.organization?.name },
+			closeOnBackdropClick: false
 		});
-
-		moment.locale(this.regionCode);
-		return moment().format(format);
+		return (await firstValueFrom(dialog.onClose, { defaultValue: null })) ?? null;
 	}
 
-	numberFormatPreview(format: string) {
+	/**
+	 * Returns a preview of the current date based on the specified date format
+	 * and the regionCode locale (defaults to English if none is provided).
+	 *
+	 * @param format - A string representing the desired date format (e.g., 'YYYY-MM-DD')
+	 * @returns A formatted date string based on the specified format
+	 */
+	dateFormatPreview(format: string): string | undefined {
+		if (!format) return;
+
+		const locale = this.regionCode || RegionsEnum.EN;
+		return moment().locale(locale).format(format);
+	}
+
+	/**
+	 * Returns a preview of a formatted number (e.g., 12345.67) based on the specified currency format.
+	 * The function selects the appropriate locale based on the provided currency and formats the number.
+	 *
+	 * @param format - A string representing the desired currency format (e.g., 'USD', 'BGN', 'ILS')
+	 * @returns A formatted number string in the specified currency
+	 */
+	numberFormatPreview(format: string): string {
 		const number = 12345.67;
-		let code: string;
-		switch (format) {
-			case CurrenciesEnum.BGN:
-				code = 'bg';
-				break;
-			case CurrenciesEnum.USD:
-				code = 'en';
-				break;
-			case CurrenciesEnum.ILS:
-				code = 'he';
-				break;
-		}
-		return number.toLocaleString(`${code}`, {
+		const currencyLocaleMap = {
+			[CurrenciesEnum.BGN]: 'bg', // Bulgarian
+			[CurrenciesEnum.USD]: 'en', // US English
+			[CurrenciesEnum.ILS]: 'he' // Hebrew (Israel)
+		};
+
+		// Get the locale code based on the provided currency format
+		const locale = currencyLocaleMap[format] || 'en'; // Default to 'en' if no match
+
+		// Format the number using the selected locale
+		return number.toLocaleString(locale, {
 			style: 'currency',
-			currency: `${format}`,
+			currency: format,
 			currencyDisplay: 'symbol'
 		});
 	}
 
-	ngOnInit(): void {
-		this.store.selectedOrganization$
-			.pipe(
-				filter((organization) => !!organization),
-				untilDestroyed(this)
-			)
-			.subscribe((organization) => {
-				this._loadOrganizationData(organization);
-				this.getTemplates();
-			});
-	}
+	/**
+	 * Update organization settings
+	 */
+	async updateOrganizationSettings(): Promise<void> {
+		// Validate the form and check if organization exists
+		if (this.form.invalid || !this.organization) {
+			return;
+		}
 
-	async updateOrganizationSettings() {
-		this.organizationService
-			.update(this.organization.id, this.form.getRawValue())
-			.then((organization: IOrganization) => {
-				if (organization) {
-					this.organizationEditStore.organizationAction = {
-						organization,
-						action: CrudActionEnum.UPDATED
-					};
-					this.store.selectedOrganization = organization;
-				}
-			});
+		// Issue #9872: turning screen capture on for an EEA/UK organization needs the admin's acknowledgement. If
+		// they cancel, the toggle is back off and nothing is saved, so they can review before saving again.
+		if (!(await this.screenshotCaptureAcknowledgement.confirm())) {
+			return;
+		}
 
+		// Extract organization ID and update organization settings
+		const { id: organizationId, name } = this.organization;
+
+		try {
+			// `form.value` leaves out disabled controls, which is what keeps e.g. a disabled
+			// `bonusPercentage` from being saved as null. The agent exit/logout toggles are the
+			// exception: in EEA/UK they are disabled AND forced on, and that value must be sent.
+			const { allowAgentAppExit, allowLogoutFromAgentApp } = this.form.getRawValue();
+			const organization: IOrganization = await this._organizationService.update(organizationId, {
+				...this.form.value,
+				allowAgentAppExit,
+				allowLogoutFromAgentApp,
+				acknowledgeAgentExitLogoutRestriction: this.acknowledgeAgentExitLogoutRestriction,
+				...this.screenshotCaptureAcknowledgement.payload
+			});
+			this.acknowledgeAgentExitLogoutRestriction = false;
+			this.screenshotCaptureAcknowledgement.reset();
+
+			// Update the organization in the store
+			this._organizationEditStore.organizationAction = {
+				organization,
+				action: CrudActionEnum.UPDATED
+			};
+			this._store.selectedOrganization = organization;
+		} catch (error) {
+			console.error('Error while updating organization settings', error);
+			// Shows why the save was refused (e.g. SCREENSHOT_CAPTURE_ACKNOWLEDGEMENT_REQUIRED).
+			this._toastrService.danger(error);
+			return; // Exit early if an error occurs
+		}
+
+		// Update organization task settings
+		this.updateOrganizationTaskSetting();
+
+		// Save selected templates
 		await this.saveTemplate(this.selectedInvoiceTemplate);
 		await this.saveTemplate(this.selectedEstimateTemplate);
 		await this.saveTemplate(this.selectedReceiptTemplate);
 
-		this.toastrService.success(
-			`TOASTR.MESSAGE.ORGANIZATION_SETTINGS_UPDATED`,
-			{
-				name: this.organization.name
-			}
-		);
+		// Show success message
+		this._toastrService.success(`TOASTR.MESSAGE.ORGANIZATION_SETTINGS_UPDATED`, { name });
+
+		// Navigate back
 		this.goBack();
 	}
 
-	goBack() {
-		this.router.navigate([
-			`/pages/organizations/edit/${this.organization.id}`
-		]);
-	}
-
-	loadDefaultBonusPercentage(bonusType: BonusTypeEnum) {
-		const bonusPercentageControl = this.form.get('bonusPercentage');
-
-		switch (bonusType) {
-			case BonusTypeEnum.PROFIT_BASED_BONUS:
-				bonusPercentageControl.setValue(75);
-				bonusPercentageControl.enable();
-				break;
-			case BonusTypeEnum.REVENUE_BASED_BONUS:
-				bonusPercentageControl.setValue(10);
-				bonusPercentageControl.enable();
-				break;
-			default:
-				bonusPercentageControl.setValue(null);
-				bonusPercentageControl.disable();
-				break;
-		}
-	}
-	private _initializedForm() {
+	/**
+	 * Update organization task settings.
+	 *
+	 * @returns A subscription for the create or update operation.
+	 *
+	 * @throws Throws an error and displays a toastr message if the operation fails.
+	 */
+	updateOrganizationTaskSetting() {
+		// Check if the organization is available.
 		if (!this.organization) {
 			return;
 		}
 
-		this.form = this.fb.group({
-			defaultValueDateType: [
-				this.organization.defaultValueDateType,
-				Validators.required
-			],
-			regionCode: [this.organization.regionCode],
-			defaultAlignmentType: [this.organization.defaultAlignmentType],
-			brandColor: [this.organization.brandColor],
-			dateFormat: [this.organization.dateFormat],
-			timeZone: [this.organization.timeZone],
-			startWeekOn: [this.organization.startWeekOn],
-			defaultStartTime: [this.organization.defaultStartTime],
-			defaultEndTime: [this.organization.defaultEndTime],
-			numberFormat: [this.organization.numberFormat],
-			bonusType: [this.organization.bonusType],
-			bonusPercentage: [
-				{
-					value: this.organization.bonusPercentage,
-					disabled: !this.organization.bonusType
-				},
-				[Validators.min(0), Validators.max(100)]
-			],
-			invitesAllowed: [this.organization.invitesAllowed || false],
-			inviteExpiryPeriod: [
-				{
-					value: this.organization.inviteExpiryPeriod || 7,
-					disabled: !this.organization.invitesAllowed
-				},
-				[Validators.min(1)]
-			],
-			fiscalStartDate: [
-				formatDate(
-					new Date(`01/01/${new Date().getFullYear()}`),
-					'yyyy-MM-dd',
-					'en'
-				)
-			],
-			fiscalEndDate: [
-				formatDate(
-					new Date(`12/31/${new Date().getFullYear()}`),
-					'yyyy-MM-dd',
-					'en'
-				)
-			],
-			futureDateAllowed: [this.organization.futureDateAllowed || false],
-			allowManualTime: [this.organization.allowManualTime],
-			allowModifyTime: [this.organization.allowModifyTime],
-			allowDeleteTime: [this.organization.allowDeleteTime],
-			requireReason: [this.organization.requireReason],
-			requireDescription: [this.organization.requireDescription],
-			requireProject: [this.organization.requireProject],
-			requireTask: [this.organization.requireTask],
-			requireClient: [this.organization.requireClient],
-			timeFormat: [this.organization.timeFormat || 12],
-			separateInvoiceItemTaxAndDiscount: [
-				this.organization.separateInvoiceItemTaxAndDiscount
-			],
-			defaultInvoiceEstimateTerms: [
-				this.organization.defaultInvoiceEstimateTerms || ''
-			],
-			fiscalInformation: [this.organization.fiscalInformation || ''],
-			currencyPosition: [this.organization.currencyPosition || 'LEFT'],
-			discountAfterTax: [this.organization.discountAfterTax],
-			convertAcceptedEstimates: [
-				this.organization.convertAcceptedEstimates || false
-			],
-			daysUntilDue: [this.organization.daysUntilDue || null],
-			invoiceTemplate: [
-				this.selectedInvoiceTemplate
-					? this.selectedInvoiceTemplate.id
-					: null
-			],
-			estimateTemplate: [
-				this.selectedEstimateTemplate
-					? this.selectedEstimateTemplate.id
-					: null
-			],
-			receiptTemplate: [
-				this.selectedReceiptTemplate
-					? this.selectedReceiptTemplate.id
-					: null
-			],
-			isDefault: [this.organization.isDefault]
+		// Extract organization information from the current organization.
+		const { id: organizationId, tenantId } = this.organization;
+
+		// Prepare the task setting input.
+		const input: IOrganizationTaskSetting = {
+			...this.taskSettingForm.value,
+			organizationId,
+			tenantId
+		};
+
+		// Determine the service method based on the existence of organizationTaskSetting.
+		const method$ = this.organizationTaskSetting
+			? this._organizationTaskSettingService.update(this.organizationTaskSetting.id, input)
+			: this._organizationTaskSettingService.create(input);
+
+		// Perform the create or update operation and subscribe to the result.
+		return method$.subscribe({
+			next: () => {
+				// You can add success logic here if needed, like displaying a success message.
+			},
+			error: () => {
+				// Display a toastr error message if the operation fails.
+				this._toastrService.error(`TOASTR.MESSAGE.ORGANIZATION_TASK_SETTINGS_UPDATE_ERROR`);
+			}
 		});
 	}
 
-	toggleSeparateTaxing($event) {
-		this.organization.separateInvoiceItemTaxAndDiscount = $event;
+	goBack(): void {
+		if (this.organization && this.organization.id) {
+			this._router.navigate([`/pages/organizations/edit/${this.organization.id}`]);
+		} else {
+			// Handle the case where the organization ID is not available
+			console.warn('Organization ID is not available for navigation.');
+		}
 	}
 
-	toggleExpiry(checked) {
-		const inviteExpiryControl = this.form.get('inviteExpiryPeriod');
-		checked ? inviteExpiryControl.enable() : inviteExpiryControl.disable();
+	/**
+	 * Helper function to get the default bonus based on the bonus type.
+	 *
+	 * @param bonusType - The type of bonus to determine the default value for.
+	 * @returns The default bonus percentage based on the bonus type.
+	 */
+	private getDefaultBonus(bonusType: BonusTypeEnum): number {
+		switch (bonusType) {
+			case BonusTypeEnum.PROFIT_BASED_BONUS:
+				return DEFAULT_PROFIT_BASED_BONUS;
+			case BonusTypeEnum.REVENUE_BASED_BONUS:
+				return DEFAULT_REVENUE_BASED_BONUS;
+			default:
+				return 0;
+		}
 	}
 
-	toggleDiscountAfterTax($event) {
-		this.organization.discountAfterTax = $event;
+	/**
+	 * Handles changes to the bonus type and updates the bonus percentage control accordingly.
+	 *
+	 * @param bonusType - The selected bonus type, which determines the default bonus percentage and validation rules.
+	 */
+	onChangedBonusPercentage(bonusType: BonusTypeEnum): void {
+		const bonusPercentageControl = this.form.get('bonusPercentage') as FormControl;
+
+		if (bonusType) {
+			const defaultBonus = this.getDefaultBonus(bonusType);
+			bonusPercentageControl.setValidators([Validators.required, Validators.min(0), Validators.max(100)]);
+			bonusPercentageControl.setValue(this.organization.bonusPercentage || defaultBonus);
+			bonusPercentageControl.enable();
+		} else {
+			bonusPercentageControl.setValidators(null);
+			bonusPercentageControl.setValue(null);
+			bonusPercentageControl.disable();
+		}
+
+		bonusPercentageControl.updateValueAndValidity();
 	}
 
-	toggleEstimateConverting($event) {
-		this.organization.convertAcceptedEstimates = $event;
+	/**
+	 * Invite expire toggle switch
+	 * Enabled/Disabled InviteExpiryPeriod form control
+	 *
+	 * @param inviteExpiry - Determines whether the invite expiry feature is enabled or disabled.
+	 */
+	toggleInviteExpiryPeriod(inviteExpiry: boolean): void {
+		const inviteExpiryPeriodControl = this.form.get('inviteExpiryPeriod') as FormControl;
+		const { inviteExpiryPeriod } = this.organization;
+
+		if (inviteExpiry) {
+			inviteExpiryPeriodControl.enable();
+			inviteExpiryPeriodControl.setValidators([Validators.required, Validators.min(1)]);
+		} else {
+			inviteExpiryPeriodControl.disable();
+			inviteExpiryPeriodControl.setValidators(null);
+		}
+
+		inviteExpiryPeriodControl.setValue(inviteExpiryPeriod || DEFAULT_INVITE_EXPIRY_PERIOD);
+		inviteExpiryPeriodControl.updateValueAndValidity();
 	}
 
-	async getTemplates() {
-		const result = await this.accountingTemlateService.getAll(
-			['organization'],
-			{
-				languageCode: this.store.preferredLanguage
+	/**
+	 * Tasks Proof Of Completion toggle switch
+	 * Enabled/Disabled tasksProofOfCompletionType form control
+	 *
+	 * @param taskProofCompletion
+	 * @returns
+	 */
+	toggleTasksProofOfCompletionType(taskProofCompletion: boolean) {
+		const taskProofOfCompletionTypeControl = <FormControl>this.taskSettingForm.get('tasksProofOfCompletionType');
+		const { tasksProofOfCompletionType } = this.organizationTaskSetting || {};
+
+		if (taskProofCompletion) {
+			taskProofOfCompletionTypeControl.enable();
+			taskProofOfCompletionTypeControl.setValidators([Validators.required]);
+		} else {
+			taskProofOfCompletionTypeControl.disable();
+			taskProofOfCompletionTypeControl.setValidators(null);
+		}
+		taskProofOfCompletionTypeControl.setValue(tasksProofOfCompletionType || DEFAULT_PROOF_COMPLETION_TYPE);
+		taskProofOfCompletionTypeControl.updateValueAndValidity();
+	}
+
+	/**
+	 * Task Notify Left Period toggle switch
+	 * Enabled/Disabled tasksNotifyLeftPeriodDays form control
+	 *
+	 * @param taskNotify
+	 * @returns
+	 */
+	toggleTasksNotifyLeftPeriodDays(taskNotify: boolean) {
+		const taskNotifyPeriodControl = <FormControl>this.taskSettingForm.get('tasksNotifyLeftPeriodDays');
+		const { tasksNotifyLeftPeriodDays } = this.organizationTaskSetting || {};
+
+		if (taskNotify) {
+			taskNotifyPeriodControl.enable();
+			taskNotifyPeriodControl.setValidators([Validators.required, Validators.min(1)]);
+		} else {
+			taskNotifyPeriodControl.disable();
+			taskNotifyPeriodControl.setValidators(null);
+		}
+		taskNotifyPeriodControl.setValue(tasksNotifyLeftPeriodDays || DEFAULT_TASK_NOTIFY_PERIOD);
+		taskNotifyPeriodControl.updateValueAndValidity();
+	}
+
+	/**
+	 * Tasks Auto Close toggle switch
+	 * Enabled/Disabled tasksAutoClosePeriodDays form control
+	 *
+	 * @param taskAutoClose
+	 * @returns
+	 */
+	toggleTasksAutoClosePeriodDays(taskAutoClose: boolean) {
+		const taskAutoClosePeriodControl = <FormControl>this.taskSettingForm.get('tasksAutoClosePeriodDays');
+		const { tasksAutoClosePeriodDays } = this.organizationTaskSetting || {};
+
+		if (taskAutoClose) {
+			taskAutoClosePeriodControl.enable();
+			taskAutoClosePeriodControl.setValidators([Validators.required, Validators.min(1)]);
+		} else {
+			taskAutoClosePeriodControl.disable();
+			taskAutoClosePeriodControl.setValidators(null);
+		}
+		taskAutoClosePeriodControl.setValue(tasksAutoClosePeriodDays || DEFAULT_AUTO_CLOSE_ISSUE_PERIOD);
+		taskAutoClosePeriodControl.updateValueAndValidity();
+	}
+
+	/**
+	 * Tasks Auto Archive toggle switch
+	 * Enabled/Disabled tasksAutoArchivePeriodDays form control
+	 *
+	 * @param taskAutoArchive
+	 * @returns
+	 */
+	toggleTasksAutoArchivePeriodDays(taskAutoArchive: boolean) {
+		const taskAutoArchivePeriodControl = <FormControl>this.taskSettingForm.get('tasksAutoArchivePeriodDays');
+		const { tasksAutoArchivePeriodDays } = this.organizationTaskSetting || {};
+
+		if (taskAutoArchive) {
+			taskAutoArchivePeriodControl.enable();
+			taskAutoArchivePeriodControl.setValidators([Validators.required, Validators.min(1)]);
+		} else {
+			taskAutoArchivePeriodControl.disable();
+			taskAutoArchivePeriodControl.setValidators(null);
+		}
+		taskAutoArchivePeriodControl.setValue(tasksAutoArchivePeriodDays || DEFAULT_AUTO_CLOSE_ISSUE_PERIOD);
+		taskAutoArchivePeriodControl.updateValueAndValidity();
+	}
+
+	/**
+	 * Retrieves the accounting templates for the current organization and categorizes them
+	 * into invoice, estimate, and receipt templates.
+	 *
+	 * @returns A Promise that resolves when the templates are successfully retrieved and categorized.
+	 */
+	private async _getTemplates(): Promise<void> {
+		if (!this.organization) {
+			return;
+		}
+
+		const { id: organizationId, tenantId } = this.organization;
+
+		const { items = [] } = await this._accountingTemplateService.getAll([], {
+			languageCode: this._store.preferredLanguage,
+			organizationId,
+			tenantId
+		});
+
+		// Function to ensure no duplicate templates are added to the lists
+		const addUniqueTemplate = (templates: IAccountingTemplate[], template: IAccountingTemplate) => {
+			if (!templates.some((t) => t.id === template.id)) {
+				templates.push(template);
 			}
-		);
+		};
 
-		result.items.forEach((item) => {
-			switch (item.templateType) {
+		items.forEach((template: IAccountingTemplate) => {
+			switch (template.templateType) {
 				case AccountingTemplateTypeEnum.INVOICE:
-					this.invoiceTemplates.push(item);
+					addUniqueTemplate(this.invoiceTemplates, template);
 					break;
 				case AccountingTemplateTypeEnum.ESTIMATE:
-					this.estimateTemplates.push(item);
+					addUniqueTemplate(this.estimateTemplates, template);
 					break;
 				case AccountingTemplateTypeEnum.RECEIPT:
-					this.receiptTemplates.push(item);
+					addUniqueTemplate(this.receiptTemplates, template);
 					break;
 				default:
+					// Ignore templates that don't match predefined types
 					break;
 			}
 		});
 	}
 
-	async selectTemplate(event) {
-		const template = await this.accountingTemlateService.getById(event);
+	/**
+	 * Selects a specific template based on the event (template ID) and assigns
+	 * it to the correct template type (INVOICE, ESTIMATE, or RECEIPT).
+	 *
+	 * @param event - The ID of the template selected by the user.
+	 */
+	async selectTemplate(event: string): Promise<void> {
+		const template = await this._accountingTemplateService.getById(event);
+
+		// Attach organization details to the template
 		template['organization'] = this.organization;
 		template['organizationId'] = this.organization.id;
+
+		// Assign the template based on its type
 		switch (template.templateType) {
 			case AccountingTemplateTypeEnum.INVOICE:
 				this.selectedInvoiceTemplate = template;
@@ -331,37 +926,123 @@ export class EditOrganizationOtherSettingsComponent
 				this.selectedReceiptTemplate = template;
 				break;
 			default:
+				// Handle unknown template types if needed
 				break;
 		}
 	}
 
-	async saveTemplate(template: IAccountingTemplate) {
+	/**
+	 * Saves an updated accounting template by calling the accounting template service.
+	 *
+	 * @param template - The accounting template to be saved.
+	 */
+	async saveTemplate(template: IAccountingTemplate): Promise<void> {
 		if (template) {
-			await this.accountingTemlateService.updateTemplate(
-				template.id,
-				template
-			);
+			await this._accountingTemplateService.updateTemplate(template.id, template);
 		}
 	}
 
-	private async _loadOrganizationData(organization) {
-		if (!organization) {
+	/**
+	 * Sets the value of the `FormGroup`. It accepts an object that matches
+	 *
+	 * ### Set the complete value for the form group
+	 *
+	 * @returns
+	 */
+	private _setFormValues() {
+		if (!this.organization) {
 			return;
 		}
-		const id = organization.id;
-		const { tenantId } = this.store.user;
-		const { items } = await this.organizationService.getAll(
-			['contact', 'tags', 'accountingTemplates'],
-			{
-				id,
-				tenantId
-			}
-		);
-		this.organization = items[0];
-		this.organizationEditStore.selectedOrganization = this.organization;
+		this.acknowledgeAgentExitLogoutRestriction = false;
+		this.screenshotCaptureAcknowledgement.reset();
+		this._organizationEditStore.selectedOrganization = this.organization;
+		this._setDefaultAccountingTemplates();
 
+		this.form.patchValue({
+			...this.organization, // This will patch all matching form controls
+			fiscalStartDate: this.organization.fiscalStartDate, // Apply specific formatting/transformation if needed
+			fiscalEndDate: this.organization.fiscalEndDate // Apply specific formatting/transformation if needed
+		});
+
+		applyEEAUKFormRestrictions(this.form, this.isEEAOrUK, this.keepExistingAgentRestriction);
+
+		this.form.updateValueAndValidity();
+
+		const {
+			isTasksPrivacyEnabled = false,
+			isTasksMultipleAssigneesEnabled = false,
+			isTasksManualTimeEnabled = false,
+			isTasksGroupEstimationEnabled = false,
+			isTasksEstimationInHoursEnabled = false,
+			isTasksEstimationInStoryPointsEnabled = false,
+			isTasksProofOfCompletionEnabled = false,
+			tasksProofOfCompletionType = DEFAULT_PROOF_COMPLETION_TYPE,
+			isTasksLinkedEnabled = false,
+			isTasksCommentsEnabled = false,
+			isTasksHistoryEnabled = false,
+			isTasksAcceptanceCriteriaEnabled = false,
+			isTasksDraftsEnabled = false,
+			isTasksNotifyLeftEnabled = false,
+			tasksNotifyLeftPeriodDays = DEFAULT_TASK_NOTIFY_PERIOD,
+			isTasksAutoCloseEnabled = false,
+			tasksAutoClosePeriodDays = DEFAULT_AUTO_CLOSE_ISSUE_PERIOD,
+			isTasksAutoArchiveEnabled = false,
+			tasksAutoArchivePeriodDays = DEFAULT_AUTO_ARCHIVE_ISSUE_PERIOD,
+			isTasksAutoStatusEnabled = false
+		} = this.organizationTaskSetting || {};
+
+		this.taskSettingForm.patchValue({
+			isTasksPrivacyEnabled,
+			isTasksMultipleAssigneesEnabled,
+			isTasksManualTimeEnabled,
+			isTasksGroupEstimationEnabled,
+			isTasksEstimationInHoursEnabled,
+			isTasksEstimationInStoryPointsEnabled,
+			isTasksProofOfCompletionEnabled,
+			tasksProofOfCompletionType,
+			isTasksLinkedEnabled,
+			isTasksCommentsEnabled,
+			isTasksHistoryEnabled,
+			isTasksAcceptanceCriteriaEnabled,
+			isTasksDraftsEnabled,
+			isTasksNotifyLeftEnabled,
+			tasksNotifyLeftPeriodDays,
+			isTasksAutoCloseEnabled,
+			tasksAutoClosePeriodDays,
+			isTasksAutoArchiveEnabled,
+			tasksAutoArchivePeriodDays,
+			isTasksAutoStatusEnabled
+		});
+
+		this.taskSettingForm.updateValueAndValidity();
+
+		/**
+		 * Default selected accounting templates dropdowns
+		 */
+		const invoiceTemplateControl = this.form.get('invoiceTemplate') as FormControl;
+		invoiceTemplateControl.setValue(this.selectedInvoiceTemplate ? this.selectedInvoiceTemplate.id : null);
+		invoiceTemplateControl.updateValueAndValidity();
+
+		const estimateTemplateControl = this.form.get('estimateTemplate') as FormControl;
+		estimateTemplateControl.setValue(this.selectedEstimateTemplate ? this.selectedEstimateTemplate.id : null);
+		estimateTemplateControl.updateValueAndValidity();
+
+		const receiptTemplateControl = this.form.get('receiptTemplate') as FormControl;
+		receiptTemplateControl.setValue(this.selectedReceiptTemplate ? this.selectedReceiptTemplate.id : null);
+		receiptTemplateControl.updateValueAndValidity();
+	}
+
+	/**
+	 * Set default organization selected accounting templates
+	 *
+	 * @returns
+	 */
+	private _setDefaultAccountingTemplates() {
+		if (!this.organization || isEmpty(this.organization.accountingTemplates)) {
+			return;
+		}
 		if (this.organization.accountingTemplates) {
-			this.organization.accountingTemplates.forEach((template) => {
+			this.organization.accountingTemplates.forEach((template: IAccountingTemplate) => {
 				switch (template.templateType) {
 					case AccountingTemplateTypeEnum.INVOICE:
 						this.selectedInvoiceTemplate = template;
@@ -377,9 +1058,7 @@ export class EditOrganizationOtherSettingsComponent
 				}
 			});
 		}
-
-		this._initializedForm();
 	}
 
-	ngOnDestroy() {}
+	ngOnDestroy(): void {}
 }

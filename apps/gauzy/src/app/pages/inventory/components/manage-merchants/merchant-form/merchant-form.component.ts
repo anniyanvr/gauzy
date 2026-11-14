@@ -1,43 +1,29 @@
-import { Component, OnInit, ViewChild } from '@angular/core';
+import { AfterViewInit, Component, OnDestroy, OnInit, ViewChild, ChangeDetectionStrategy } from '@angular/core';
 import { Router, ActivatedRoute } from '@angular/router';
-import { FormGroup, FormBuilder, Validators } from '@angular/forms';
+import { UntypedFormGroup, UntypedFormBuilder, Validators } from '@angular/forms';
 import { UntilDestroy, untilDestroyed } from '@ngneat/until-destroy';
 import { TranslateService } from '@ngx-translate/core';
 import { NbDialogService, NbStepperComponent } from '@nebular/theme';
 import { Subject, firstValueFrom } from 'rxjs';
-import { filter, tap } from 'rxjs/operators';
+import { debounceTime, filter, tap } from 'rxjs/operators';
 import { LatLng } from 'leaflet';
-import {
-	ITag,
-	IMerchant,
-	IWarehouse,
-	IImageAsset,
-	IOrganization,
-} from '@gauzy/contracts';
-import { LocationFormComponent, LeafletMapComponent } from './../../../../../@shared/forms';
-import {
-	ToastrService,
-	Store,
-	WarehouseService,
-	ImageAssetService,
-	MerchantService
-} from './../../../../../@core/services';
-import { SelectAssetComponent } from './../../../../../@shared/select-asset-modal/select-asset.component';
-import { TranslationBaseComponent } from './../../../../../@shared/language-base/translation-base.component';
+import { ITag, IMerchant, IWarehouse, IImageAsset, IOrganization } from '@gauzy/contracts';
+import { distinctUntilChange } from '@gauzy/ui-core/common';
+import { WarehouseService, ImageAssetService, MerchantService, ToastrService, Store } from '@gauzy/ui-core/core';
+import { TranslationBaseComponent } from '@gauzy/ui-core/i18n';
+import { FormHelpers, LocationFormComponent, LeafletMapComponent, SelectAssetComponent } from '@gauzy/ui-core/shared';
 
-
-
-@UntilDestroy()
+@UntilDestroy({ checkProperties: true })
 @Component({
-	selector: 'ga-merchant-form',
-	templateUrl: './merchant-form.component.html',
-	styleUrls: ['./merchant-form.component.scss']
+    selector: 'ga-merchant-form',
+    templateUrl: './merchant-form.component.html',
+    styleUrls: ['./merchant-form.component.scss'],
+    changeDetection: ChangeDetectionStrategy.Eager,
+    standalone: false
 })
-export class MerchantFormComponent
-	extends TranslationBaseComponent
-	implements OnInit {
+export class MerchantFormComponent extends TranslationBaseComponent implements AfterViewInit, OnInit, OnDestroy {
+	FormHelpers: typeof FormHelpers = FormHelpers;
 
-	merchantId: string;
 	organization: IOrganization;
 	hoverState: boolean;
 	warehouses: IWarehouse[] = [];
@@ -45,27 +31,27 @@ export class MerchantFormComponent
 	image: IImageAsset = null;
 	images: IImageAsset[] = [];
 	merchant: IMerchant;
-	
+
 	private newImageUploadedEvent$ = new Subject<any>();
-	
+
 	/**
 	 * Location Mutation Form
 	 */
-	readonly locationForm: FormGroup = LocationFormComponent.buildForm(this.fb);
+	readonly locationForm: UntypedFormGroup = LocationFormComponent.buildForm(this.fb);
 
 	/**
 	 * Merchant Mutation Form
 	 */
-	public form: FormGroup = MerchantFormComponent.buildForm(this.fb);
-	static buildForm(fb: FormBuilder): FormGroup {
+	public form: UntypedFormGroup = MerchantFormComponent.buildForm(this.fb);
+	static buildForm(fb: UntypedFormBuilder): UntypedFormGroup {
 		return fb.group({
 			logo: [],
 			tags: [],
-			name: ['', Validators.required ],
-			code: ['', Validators.required ],
-			currency: ['', Validators.required ],
-			email: ['', Validators.email ],
-			phone: ['', Validators.pattern('^[+]*[(]{0,1}[0-9]{1,4}[)]{0,1}[-\s\./0-9]*$') ],
+			name: [null, Validators.required],
+			code: [null, Validators.required],
+			currency: [null, Validators.required],
+			email: [null, [Validators.required, Validators.email]],
+			phone: [null, Validators.pattern('^[+]*[(]{0,1}[0-9]{1,4}[)]{0,1}[-s./0-9]*$')],
 			fax: [],
 			fiscalInformation: [],
 			website: [],
@@ -95,7 +81,7 @@ export class MerchantFormComponent
 	constructor(
 		public readonly translateService: TranslateService,
 		private readonly toastrService: ToastrService,
-		private readonly fb: FormBuilder,
+		private readonly fb: UntypedFormBuilder,
 		private readonly store: Store,
 		private readonly warehouseService: WarehouseService,
 		private readonly dialogService: NbDialogService,
@@ -103,35 +89,34 @@ export class MerchantFormComponent
 		private readonly merchantService: MerchantService,
 		private readonly router: Router,
 		private readonly route: ActivatedRoute
-
 	) {
 		super(translateService);
 	}
 
-
 	ngOnInit(): void {
-		this.route.params
-			.pipe(
-				filter((params) => !!params.id),
-				tap(({ id }) => this.merchantId = id),
-				untilDestroyed(this)
-			)
-			.subscribe(async (params) => {
-				if (params.id) {
-					this.merchant = await this.merchantService.getById(
-						params.id,
-						['logo', 'contact', 'warehouses', 'tags']
-					);					
-					this._patchForm();
-					this._patchLocationForm();
-				}
-			});
 		this.store.selectedOrganization$
 			.pipe(
+				debounceTime(100),
+				distinctUntilChange(),
 				filter((organization: IOrganization) => !!organization),
-				tap((organization: IOrganization) => this.organization = organization),
+				tap((organization: IOrganization) => (this.organization = organization)),
 				tap(() => this._getWarehouses()),
 				tap(() => this._getAssetsImages()),
+				untilDestroyed(this)
+			)
+			.subscribe();
+	}
+
+	ngAfterViewInit(): void {
+		this.route.data
+			.pipe(
+				debounceTime(100),
+				filter((data) => !!data && !!data.merchant),
+				tap(({ merchant }) => (this.merchant = merchant)),
+				tap(() => {
+					this._patchForm();
+					this._patchLocationForm();
+				}),
 				untilDestroyed(this)
 			)
 			.subscribe();
@@ -145,18 +130,14 @@ export class MerchantFormComponent
 		const { id: organizationId } = this.organization;
 		const { tenantId } = this.store.user;
 
-		this.images = (
-			await this.imageAssetService.getAll({ tenantId, organizationId })
-		).items;
+		this.images = (await this.imageAssetService.getAll({ tenantId, organizationId })).items;
 	}
 
 	private async _getWarehouses() {
 		const { id: organizationId } = this.organization;
 		const { tenantId } = this.store.user;
 
-		this.warehouses = (
-			await this.warehouseService.getAll({ findInput: { organizationId, tenantId } })
-		).items;
+		this.warehouses = (await this.warehouseService.getAll({ organizationId, tenantId })).items;
 	}
 
 	private _patchForm() {
@@ -177,7 +158,7 @@ export class MerchantFormComponent
 
 		this.image = merchant.logo;
 		this.selectedWarehouses = merchant.warehouses.map((warehouse) => warehouse.id);
-	};
+	}
 
 	private _patchLocationForm() {
 		if (!this.merchant || !this.merchant.contact) return;
@@ -191,10 +172,7 @@ export class MerchantFormComponent
 			address2: contact.address2,
 			loc: {
 				type: 'Point',
-				coordinates: [
-					contact.latitude,
-					contact.longitude
-				]
+				coordinates: [contact.latitude, contact.longitude]
 			}
 		});
 
@@ -236,11 +214,13 @@ export class MerchantFormComponent
 		const { coordinates } = locationFormValue['loc'];
 		delete locationFormValue['loc'];
 
-		const [ latitude, longitude ] = coordinates;
+		const [latitude, longitude] = coordinates;
 
 		const request = {
 			...this.form.getRawValue(),
-			warehouses: this.selectedWarehouses.map(id => { return { id } }),
+			warehouses: this.selectedWarehouses.map((id) => {
+				return { id };
+			}),
 			logo: this.image,
 			tenantId,
 			organizationId,
@@ -250,10 +230,11 @@ export class MerchantFormComponent
 				latitude,
 				longitude
 			}
-		}
+		};
 
 		if (!this.merchant) {
-			await this.merchantService.create(request)
+			await this.merchantService
+				.create(request)
 				.then(() => {
 					this.toastrService.success('INVENTORY_PAGE.MERCHANT_CREATED_SUCCESSFULLY', {
 						name: request.name
@@ -268,14 +249,15 @@ export class MerchantFormComponent
 					this.cancel();
 				});
 		} else {
-			await this.merchantService.update({...request, id: this.merchant.id})
+			await this.merchantService
+				.update({ ...request, id: this.merchant.id })
 				.then(() => {
 					this.toastrService.success('INVENTORY_PAGE.MERCHANT_UPDATED_SUCCESSFULLY', {
 						name: request.name
 					});
 				})
 				.catch(() => {
-					this.toastrService.danger( 'INVENTORY_PAGE.COULD_NOT_UPDATE_MERCHANT', null, {
+					this.toastrService.danger('INVENTORY_PAGE.COULD_NOT_UPDATE_MERCHANT', null, {
 						name: request.name
 					});
 				})
@@ -286,9 +268,7 @@ export class MerchantFormComponent
 	}
 
 	cancel() {
-		this.router.navigate([
-			'/pages/organization/inventory/merchants'
-		]);
+		this.router.navigate(['/pages/organization/inventory/merchants']);
 	}
 
 	selectedTagsEvent(tags: ITag[]) {
@@ -297,7 +277,9 @@ export class MerchantFormComponent
 	}
 
 	onCoordinatesChanges($event) {
-		const { loc: { coordinates } } = this.locationFormDirective.getValue();
+		const {
+			loc: { coordinates }
+		} = this.locationFormDirective.getValue();
 		const [lat, lng] = coordinates;
 		this.leafletTemplate.addMarker(new LatLng(lat, lng));
 	}
@@ -316,10 +298,5 @@ export class MerchantFormComponent
 		});
 	}
 
-	isInvalidControl(control: string) {
-		if (!this.form.contains(control)) {
-			return true;
-		}
-		return this.form.get(control).touched && this.form.get(control).invalid;
-	}
+	ngOnDestroy(): void {}
 }

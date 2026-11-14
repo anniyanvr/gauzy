@@ -1,12 +1,25 @@
 import { NgModule } from '@angular/core';
 import { RouterModule, Routes } from '@angular/router';
-import { FeatureToggleComponent } from '../../../@shared/feature-toggle/feature-toggle.component';
+import { PermissionsGuard } from '@gauzy/ui-core/core';
+import { PermissionsEnum } from '@gauzy/contracts';
 import { FeatureComponent } from './feature.component';
+import { FeatureToggleComponent } from '@gauzy/ui-core/shared';
+
+export function redirectTo() {
+	return '/pages/dashboard';
+}
 
 const routes: Routes = [
 	{
 		path: '',
 		component: FeatureComponent,
+		canActivate: [PermissionsGuard],
+		data: {
+			permissions: {
+				only: [PermissionsEnum.ALL_ORG_VIEW],
+				redirectTo
+			}
+		},
 		children: [
 			{
 				path: '',

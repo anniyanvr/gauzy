@@ -1,28 +1,22 @@
-import { OnInit, OnDestroy, Component } from '@angular/core';
+import { OnInit, OnDestroy, Component, ChangeDetectionStrategy } from '@angular/core';
 import { Subject } from 'rxjs';
 import { TranslateService } from '@ngx-translate/core';
-import { TranslationBaseComponent } from 'apps/gauzy/src/app/@shared/language-base/translation-base.component';
-import { CandidateStore } from 'apps/gauzy/src/app/@core/services/candidate-store.service';
+import { TranslationBaseComponent } from '@gauzy/ui-core/i18n';
 import { takeUntil } from 'rxjs/operators';
-import { FormGroup, FormBuilder, FormArray, Validators } from '@angular/forms';
-import { CandidateSkillsService } from 'apps/gauzy/src/app/@core/services/candidate-skills.service';
-import {
-	ISkill,
-	ComponentLayoutStyleEnum,
-	IOrganization
-} from '@gauzy/contracts';
-import { ComponentEnum } from 'apps/gauzy/src/app/@core/constants/layout.constants';
-import { Store } from 'apps/gauzy/src/app/@core/services/store.service';
-import { LocalDataSource } from 'ng2-smart-table';
-import { ToastrService } from 'apps/gauzy/src/app/@core/services/toastr.service';
+import { UntypedFormGroup, UntypedFormBuilder, FormArray, Validators } from '@angular/forms';
+import { ISkill, ComponentLayoutStyleEnum, IOrganization } from '@gauzy/contracts';
+import { ComponentEnum } from '@gauzy/ui-core/common';
+import { LocalDataSource } from 'angular2-smart-table';
+import { CandidateSkillsService, CandidateStore, Store, ToastrService } from '@gauzy/ui-core/core';
 
 @Component({
-	selector: 'ga-edit-candidate-skills',
-	templateUrl: './edit-candidate-skills.component.html'
+    selector: 'ga-edit-candidate-skills',
+    templateUrl: './edit-candidate-skills.component.html',
+    styleUrls: ['edit-candidate-skills.component.scss'],
+    changeDetection: ChangeDetectionStrategy.Eager,
+    standalone: false
 })
-export class EditCandidateSkillsComponent
-	extends TranslationBaseComponent
-	implements OnInit, OnDestroy {
+export class EditCandidateSkillsComponent extends TranslationBaseComponent implements OnInit, OnDestroy {
 	private _ngDestroy$ = new Subject<void>();
 	selectedOrganization: IOrganization;
 	showAddCard: boolean;
@@ -30,7 +24,7 @@ export class EditCandidateSkillsComponent
 	skillId = null;
 	candidateId: string;
 	skillList: ISkill[] = [];
-	form: FormGroup;
+	form: UntypedFormGroup;
 	viewComponentName: ComponentEnum;
 	dataLayoutStyle = ComponentLayoutStyleEnum.TABLE;
 	settingsSmartTable: object;
@@ -40,7 +34,7 @@ export class EditCandidateSkillsComponent
 		readonly translateService: TranslateService,
 		private candidateStore: CandidateStore,
 		private store: Store,
-		private fb: FormBuilder,
+		private fb: UntypedFormBuilder,
 		private candidateSkillsService: CandidateSkillsService
 	) {
 		super(translateService);
@@ -48,21 +42,19 @@ export class EditCandidateSkillsComponent
 	}
 
 	ngOnInit() {
-		this.candidateStore.selectedCandidate$
-			.pipe(takeUntil(this._ngDestroy$))
-			.subscribe((candidate) => {
-				if (candidate) {
-					this.selectedOrganization = this.store.selectedOrganization;
-					this.candidateId = candidate.id;
-					this._initializeForm();
-					this.loadSkills();
-					this.loadSmartTable();
-					this._applyTranslationOnSmartTable();
-				}
-			});
+		this.candidateStore.selectedCandidate$.pipe(takeUntil(this._ngDestroy$)).subscribe((candidate) => {
+			if (candidate) {
+				this.selectedOrganization = this.store.selectedOrganization;
+				this.candidateId = candidate.id;
+				this._initializeForm();
+				this.loadSkills();
+				this.loadSmartTable();
+				this._applyTranslationOnSmartTable();
+			}
+		});
 	}
 	private async _initializeForm() {
-		this.form = new FormGroup({
+		this.form = new UntypedFormGroup({
 			skills: this.fb.array([])
 		});
 		const skillForm = this.skills;
@@ -102,12 +94,9 @@ export class EditCandidateSkillsComponent
 	async removeSkill(skill: any) {
 		try {
 			await this.candidateSkillsService.delete(skill.id);
-			this.toastrService.success(
-				'TOASTR.MESSAGE.CANDIDATE_SKILL_DELETED',
-				{
-					name: skill.name
-				}
-			);
+			this.toastrService.success('TOASTR.MESSAGE.CANDIDATE_SKILL_DELETED', {
+				name: skill.name
+			});
 			this.loadSkills();
 		} catch (error) {
 			this.toastrError(error);
@@ -131,12 +120,9 @@ export class EditCandidateSkillsComponent
 					name: name
 				});
 				this.loadSkills();
-				this.toastrService.success(
-					'TOASTR.MESSAGE.CANDIDATE_SKILL_UPDATED',
-					{
-						name
-					}
-				);
+				this.toastrService.success('TOASTR.MESSAGE.CANDIDATE_SKILL_UPDATED', {
+					name
+				});
 				this.skills.reset();
 				this.showEditDiv[index] = !this.showEditDiv[index];
 				this.showAddCard = false;
@@ -156,9 +142,7 @@ export class EditCandidateSkillsComponent
 			actions: false,
 			columns: {
 				name: {
-					title: this.getTranslation(
-						'CANDIDATES_PAGE.EDIT_CANDIDATE.NAME'
-					),
+					title: this.getTranslation('CANDIDATES_PAGE.EDIT_CANDIDATE.NAME'),
 					type: 'string'
 				}
 			}
@@ -189,12 +173,9 @@ export class EditCandidateSkillsComponent
 					organizationId,
 					tenantId
 				});
-				this.toastrService.success(
-					'TOASTR.MESSAGE.CANDIDATE_SKILL_CREATED',
-					{
-						name: formValue.name
-					}
-				);
+				this.toastrService.success('TOASTR.MESSAGE.CANDIDATE_SKILL_CREATED', {
+					name: formValue.name
+				});
 				this.loadSkills();
 			} catch (error) {
 				this.toastrError(error);

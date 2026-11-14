@@ -13,25 +13,22 @@ import {
 	NbTooltipModule,
 	NbRadioModule
 } from '@nebular/theme';
-import { Ng2SmartTableModule } from 'ng2-smart-table';
-import { ThemeModule } from '../../@theme/theme.module';
-import { ApprovalsComponent } from './approvals.component';
-import { SharedModule } from '../../@shared/shared.module';
-import { ApprovalsRoutingModule } from './approvals-routing.module';
-import { RequestApprovalService } from '../../@core/services/request-approval.service';
-import { RequestApprovalMutationModule } from '../../@shared/approvals/approvals-mutation.module';
-import { RequestApprovalActionComponent } from './table-components/request-approval-action/request-approval-action.component';
-import { CardGridModule } from '../../@shared/card-grid/card-grid.module';
-import { CommonModule } from '@angular/common';
 import { NgxPermissionsModule } from 'ngx-permissions';
-import { TranslateModule } from '../../@shared/translate/translate.module';
-import { HeaderTitleModule } from '../../@shared/components/header-title/header-title.module';
+import { TranslatePipe } from '@ngx-translate/core';
+import {
+	SmartDataViewLayoutModule,
+	CardGridModule,
+	RecordViewModule,
+	RequestApprovalMutationModule,
+	SharedModule
+} from '@gauzy/ui-core/shared';
+import { RequestApprovalService } from '@gauzy/ui-core/core';
+import { ApprovalsComponent } from './approvals.component';
+import { ApprovalsRoutingModule } from './approvals-routing.module';
+import { RequestApprovalActionComponent } from './table-components/request-approval-action/request-approval-action.component';
 
 @NgModule({
 	imports: [
-		CommonModule,
-		SharedModule,
-		ThemeModule,
 		NbBadgeModule,
 		NbButtonModule,
 		NbCardModule,
@@ -42,15 +39,16 @@ import { HeaderTitleModule } from '../../@shared/components/header-title/header-
 		NbRouteTabsetModule,
 		NbSelectModule,
 		NbSpinnerModule,
-		Ng2SmartTableModule,
 		CardGridModule,
 		NbTooltipModule,
 		NbRadioModule,
 		ApprovalsRoutingModule,
+		SharedModule,
+		RecordViewModule,
 		RequestApprovalMutationModule,
-		TranslateModule,
+		TranslatePipe,
 		NgxPermissionsModule.forChild(),
-		HeaderTitleModule
+		SmartDataViewLayoutModule
 	],
 	declarations: [ApprovalsComponent, RequestApprovalActionComponent],
 	providers: [RequestApprovalService]

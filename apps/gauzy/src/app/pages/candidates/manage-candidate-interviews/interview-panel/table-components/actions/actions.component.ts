@@ -1,13 +1,6 @@
-import {
-	Component,
-	Input,
-	EventEmitter,
-	Output,
-	OnInit,
-	OnDestroy
-} from '@angular/core';
+import { Component, Input, EventEmitter, Output, OnInit, OnDestroy, ChangeDetectionStrategy } from '@angular/core';
 import { ICandidateInterview } from '@gauzy/contracts';
-import { TranslationBaseComponent } from '../../../../../../@shared/language-base/translation-base.component';
+import { TranslationBaseComponent } from '@gauzy/ui-core/i18n';
 import { TranslateService } from '@ngx-translate/core';
 
 @Component({
@@ -15,89 +8,71 @@ import { TranslateService } from '@ngx-translate/core';
 	template: `
 		<div class="update">
 			<div class="badges">
-				<div
-					class="badge badge-primary"
-					*ngIf="isPastInterview(rowData)"
-				>
+				@if (isPastInterview(rowData)) {
+				<div class="badge badge-primary">
 					{{ 'CANDIDATES_PAGE.MANAGE_INTERVIEWS.PAST' | translate }}
 				</div>
-				<div
-					class="badge badge-warning"
-					*ngIf="rowData.isArchived && rowData.showArchive"
-				>
+				} @if (rowData.isArchived && rowData.showArchive) {
+				<div class="badge badge-warning">
 					{{ 'CANDIDATES_PAGE.ARCHIVED' | translate }}
 				</div>
+				}
 			</div>
 			<span class="title"> updated: </span>
 			<span class="title">
-				{{ rowData?.updatedAt | date: 'short' }}
+				{{ $safeNavigationMigration(rowData?.updatedAt) | date : 'short' }}
 			</span>
+			@if (!rowData.hideActions) {
 			<div class="btn">
+				@if (isPastInterview(rowData)) {
 				<nb-icon
-					*ngIf="isPastInterview(rowData)"
 					(click)="addFeedback()"
-					nbTooltip="{{
-						'CANDIDATES_PAGE.MANAGE_INTERVIEWS.ADD_FEEDBACK'
-							| translate
-					}} 
+					nbTooltip="{{ 'CANDIDATES_PAGE.MANAGE_INTERVIEWS.ADD_FEEDBACK' | translate }}
 					({{ rowData.feedbacks.length }}/{{ rowData.interviewers.length }})"
 					nbTooltipPlacement="top"
 					icon="message-square-outline"
 					class="icons enabled"
 				></nb-icon>
+				} @else {
 				<nb-icon
-					*ngIf="!isPastInterview(rowData)"
-					(click)="addFeedback()"
-					nbTooltip="{{
-						'CANDIDATES_PAGE.MANAGE_INTERVIEWS.ADD_FEEDBACK'
-							| translate
-					}} "
+					nbTooltip="{{ 'CANDIDATES_PAGE.MANAGE_INTERVIEWS.ADD_FEEDBACK' | translate }} "
 					nbTooltipPlacement="top"
 					icon="message-square-outline"
 					class="icons disabled"
 				></nb-icon>
+				}
 				<nb-icon
 					(click)="editInterview()"
 					icon="edit-outline"
-					nbTooltip="{{
-						'CANDIDATES_PAGE.MANAGE_INTERVIEWS.EDIT' | translate
-					}}"
+					nbTooltip="{{ 'CANDIDATES_PAGE.MANAGE_INTERVIEWS.EDIT' | translate }}"
 					nbTooltipPlacement="top"
 					class="icons ml-2"
-					[ngClass]="{
-						enabled: !isPastInterview(rowData),
-						disabled: isPastInterview(rowData)
-					}"
+					[class.enabled]="!isPastInterview(rowData)"
+					[class.disabled]="isPastInterview(rowData)"
 				>
 				</nb-icon>
+				@if (rowData.showArchive) {
 				<nb-icon
 					(click)="archive()"
-					nbTooltip="{{
-						'CANDIDATES_PAGE.MANAGE_INTERVIEWS.ARCHIVE' | translate
-					}}"
-					*ngIf="rowData.showArchive"
+					nbTooltip="{{ 'CANDIDATES_PAGE.MANAGE_INTERVIEWS.ARCHIVE' | translate }}"
 					nbTooltipPlacement="top"
 					icon="archive-outline"
 					class="icons ml-2"
-					[ngClass]="{
-						enabled: !rowData.isArchived,
-						disabled: rowData.isArchived
-					}"
+					[class.enabled]="!rowData.isArchived"
+					[class.disabled]="rowData.isArchived"
 				></nb-icon>
+				}
 				<nb-icon
 					(click)="removeInterview()"
 					icon="close"
 					class="icons ml-2"
-					nbTooltip="{{
-						'CANDIDATES_PAGE.MANAGE_INTERVIEWS.DELETE' | translate
-					}}"
+					nbTooltip="{{ 'CANDIDATES_PAGE.MANAGE_INTERVIEWS.DELETE' | translate }}"
 					nbTooltipPlacement="top"
-					[ngClass]="{
-						enabled: !isPastInterview(rowData),
-						disabled: isPastInterview(rowData)
-					}"
+					[class.enabled]="!isPastInterview(rowData)"
+					[class.disabled]="isPastInterview(rowData)"
 				></nb-icon>
 			</div>
+			}
 		</div>
 	`,
 	styles: [
@@ -115,14 +90,18 @@ import { TranslateService } from '@ngx-translate/core';
 			}
 			.badge {
 				text-align: center;
-				padding: 5px;
-				margin: 0 3px;
+				padding: 4px 8px;
+				font-size: 12px;
+				font-weight: 600;
+				line-height: 15px;
+				letter-spacing: 0em;
+				text-align: left;
 			}
 			.update {
 				display: flex;
 				flex-direction: column;
 				justify-content: center;
-				align-items: center;
+				align-items: flex-start;
 			}
 			.title {
 				color: #8f9bb3;
@@ -148,19 +127,21 @@ import { TranslateService } from '@ngx-translate/core';
 				align-items: center;
 			}
 		`
-	]
+	],
+	changeDetection: ChangeDetectionStrategy.Eager,
+	standalone: false
 })
-export class InterviewActionsTableComponent
-	extends TranslationBaseComponent
-	implements OnInit, OnDestroy {
+export class InterviewActionsTableComponent extends TranslationBaseComponent implements OnInit, OnDestroy {
 	@Input() rowData: any;
 	@Output() updateResult = new EventEmitter<any>();
-	constructor(readonly translateService: TranslateService) {
+
+	constructor(public readonly translateService: TranslateService) {
 		super(translateService);
 	}
 
 	ngOnInit() {}
 	ngOnDestroy() {}
+
 	isPastInterview(interview: ICandidateInterview) {
 		const now = new Date().getTime();
 		if (new Date(interview.startTime).getTime() > now) {
@@ -169,28 +150,46 @@ export class InterviewActionsTableComponent
 			return true;
 		}
 	}
+
 	removeInterview() {
+		if (this.isPastInterview(this.rowData)) {
+			return;
+		}
 		const params = {
 			type: 'remove',
 			data: this.rowData
 		};
 		this.updateResult.emit(params);
 	}
+
 	archive() {
+		// Enabled if !rowData.isArchived
+		if (this.rowData.isArchived) {
+			return;
+		}
 		const params = {
 			type: 'archive',
 			data: this.rowData
 		};
 		this.updateResult.emit(params);
 	}
+
 	addFeedback() {
+		// Only allow feedback on past interviews
+		if (!this.isPastInterview(this.rowData)) {
+			return;
+		}
 		const params = {
 			type: 'feedback',
 			data: this.rowData
 		};
 		this.updateResult.emit(params);
 	}
+
 	editInterview() {
+		if (this.isPastInterview(this.rowData)) {
+			return;
+		}
 		const params = {
 			type: 'edit',
 			data: this.rowData

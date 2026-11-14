@@ -1,6 +1,6 @@
-import { ThemeModule } from '../../../../@theme/theme.module';
-import { FormsModule, ReactiveFormsModule } from '@angular/forms';
 import { NgModule } from '@angular/core';
+import { CommonModule } from '@angular/common';
+import { FormsModule, ReactiveFormsModule } from '@angular/forms';
 import {
 	NbCardModule,
 	NbButtonModule,
@@ -12,16 +12,15 @@ import {
 	NbCheckboxModule,
 	NbTooltipModule
 } from '@nebular/theme';
-import { EventTypeMutationComponent } from './event-type-mutation.component';
 import { NgSelectModule } from '@ng-select/ng-select';
-import { EmployeeMultiSelectModule } from './../../../../@shared/employee/employee-multi-select/employee-multi-select.module';
-import { TagsColorInputModule } from '../../../../@shared/tags/tags-color-input/tags-color-input.module';
-import { TranslateModule } from '../../../../@shared/translate/translate.module';
+import { TranslatePipe } from '@ngx-translate/core';
+import { EmployeeMultiSelectModule, TagsColorInputModule } from '@gauzy/ui-core/shared';
+import { EventTypeMutationComponent } from './event-type-mutation.component';
 
 @NgModule({
 	imports: [
 		TagsColorInputModule,
-		ThemeModule,
+		CommonModule,
 		NbCardModule,
 		NbButtonModule,
 		NbIconModule,
@@ -35,7 +34,7 @@ import { TranslateModule } from '../../../../@shared/translate/translate.module'
 		EmployeeMultiSelectModule,
 		NbCheckboxModule,
 		NbTooltipModule,
-		TranslateModule
+		TranslatePipe
 	],
 	exports: [EventTypeMutationComponent],
 	declarations: [EventTypeMutationComponent],

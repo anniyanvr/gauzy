@@ -1,11 +1,14 @@
-import { Component, Input } from '@angular/core';
-import { ViewCell } from 'ng2-smart-table';
+import { Component, Input, ChangeDetectionStrategy } from '@angular/core';
+
 
 @Component({
-	templateUrl: './employee-work-status.component.html',
-	styleUrls: ['./employee-work-status.component.scss']
+    selector: 'ga-employee-work-status',
+    templateUrl: './employee-work-status.component.html',
+    styleUrls: ['./employee-work-status.component.scss'],
+    changeDetection: ChangeDetectionStrategy.Eager,
+    standalone: false
 })
-export class EmployeeWorkStatusComponent implements ViewCell {
+export class EmployeeWorkStatusComponent {
 	@Input()
 	rowData: any;
 

@@ -1,259 +1,244 @@
-import { Component, OnInit } from '@angular/core';
-import { ElectronService } from 'ngx-electron';
-import { AppService } from './app.service';
-import { AuthStrategy } from './auth/auth-strategy.service';
+import { AfterViewInit, Component, NgZone, OnInit, Renderer2, ChangeDetectionStrategy } from '@angular/core';
+import { Router, RouterOutlet } from '@angular/router';
 import {
-	Router
-} from '@angular/router';
+	ActivityWatchElectronService,
+	AuthStrategy,
+	ElectronService,
+	LanguageElectronService,
+	Store,
+	TimeTrackerDateManager,
+	TokenRefreshService
+} from '@gauzy/desktop-ui-lib';
+import { NbToastrService } from '@nebular/theme';
+import { UntilDestroy, untilDestroyed } from '@ngneat/until-destroy';
+import { TranslateService } from '@ngx-translate/core';
+import { catchError, exhaustMap, filter, from, interval, map, Observable, of, tap } from 'rxjs';
+import { concatMap, switchMap, take, takeWhile } from 'rxjs/operators';
+import { AppService } from './app.service';
 
+@UntilDestroy({ checkProperties: true })
 @Component({
 	selector: 'gauzy-root',
 	template: '<router-outlet></router-outlet>',
-	styleUrls: ['./app.component.scss']
+	styleUrls: ['./app.component.scss'],
+	changeDetection: ChangeDetectionStrategy.Eager,
+	imports: [RouterOutlet]
 })
-export class AppComponent implements OnInit {
+export class AppComponent implements OnInit, AfterViewInit {
 	constructor(
 		private electronService: ElectronService,
 		private appService: AppService,
 		private authStrategy: AuthStrategy,
-		private router: Router
+		public readonly translate: TranslateService,
+		private store: Store,
+		private toastrService: NbToastrService,
+		private _ngZone: NgZone,
+		private _renderer: Renderer2,
+		readonly activityWatchElectronService: ActivityWatchElectronService,
+		readonly languageElectronService: LanguageElectronService,
+		private readonly tokenRefreshService: TokenRefreshService,
+		private readonly router: Router
 	) {
-		this.electronService.ipcRenderer.on('collect_data', (event, arg) => {
-			this.appService
-				.collectevents(arg.tpURL, arg.tp, arg.start, arg.end)
-				.then((res) => {
-					event.sender.send('data_push_activity', {
-						timerId: arg.timerId,
-						windowEvent: res,
-						type: 'APP'
-					});
-				});
-		});
-
-		this.electronService.ipcRenderer.on('collect_afk', (event, arg) => {
-			this.appService
-				.collectAfk(arg.tpURL, arg.tp, arg.start, arg.end)
-				.then((res) => {
-					event.sender.send('data_push_afk', {
-						timerId: arg.timerId,
-						start: arg.start,
-						afk: res
-					});
-				});
-		});
-
-		this.electronService.ipcRenderer.on(
-			'collect_chrome_activities',
-			(event, arg) => {
-				this.appService
-					.collectChromeActivityFromAW(arg.tpURL, arg.start, arg.end)
-					.then((res) => {
-						event.sender.send('data_push_activity', {
-							timerId: arg.timerId,
-							windowEvent: res,
-							type: 'URL'
-						});
-					});
-			}
-		);
-
-		this.electronService.ipcRenderer.on(
-			'collect_firefox_activities',
-			(event, arg) => {
-				this.appService
-					.collectFirefoxActivityFromAw(arg.tpURL, arg.start, arg.end)
-					.then((res) => {
-						event.sender.send('data_push_activity', {
-							timerId: arg.timerId,
-							windowEvent: res,
-							type: 'URL'
-						});
-					});
-			}
-		);
-
-		this.electronService.ipcRenderer.on('set_time_sheet', (event, arg) => {
-			this.appService.pushToTimesheet(arg).then((res: any) => {
-				arg.timesheetId = res.id;
-				this.appService.setTimeLog(arg).then((result: any) => {
-					event.sender.send('return_time_sheet', {
-						timerId: arg.timerId,
-						timeSheetId: res.id,
-						timeLogId: result.id
-					});
-				});
-			});
-		});
-
-		this.electronService.ipcRenderer.on(
-			'update_time_sheet',
-			(event, arg) => {
-				this.appService.updateToTimeSheet(arg).then((res: any) => {
-					this.appService.updateTimeLog(arg);
-				});
-			}
-		);
-
-		this.electronService.ipcRenderer.on(
-			'set_auth_user',
-			(event, arg) => {}
-		);
-
-		this.electronService.ipcRenderer.on('set_time_slot', (event, arg) => {
-			this.appService
-				.pushToTimeslot(arg)
-				.then((res: any) => {
-					if (res.id) {
-						if (arg.idsAw) {
-							event.sender.send('remove_aw_local_data', {
-								idsAw: arg.idsAw
-							});
-						}
-						if (arg.idsWakatime) {
-							event.sender.send('remove_wakatime_local_data', {
-								idsWakatime: arg.idsWakatime
-							});
-						}
-						if (arg.idAfk) {
-							event.sender.send('remove_afk_local_Data', {
-								idAfk: arg.idAfk
-							});
-						}
-						const timeLogs = res.timeLogs;
-						event.sender.send('return_time_slot', {
-							timerId: arg.timerId,
-							timeSlotId: res.id,
-							quitApp: arg.quitApp,
-							timeLogs: timeLogs
-						});
-					}
-				})
-				.catch((e) => {
-					event.sender.send('failed_save_time_slot', {
-						params: e.error.params,
-						message: e.message
-					});
-				});
-		});
-
-		this.electronService.ipcRenderer.on(
-			'update_time_slot',
-			(event, arg) => {
-				this.appService.updateToTimeSlot(arg);
-			}
-		);
-
-		this.electronService.ipcRenderer.on('set_activity', (event, arg) => {
-			this.appService.pushToActivity(arg).then((res: any) => {
-				event.sender.send('return_activity', {
-					activityIds: arg.sourceIds
-				});
-			});
-		});
-
-		this.electronService.ipcRenderer.on(
-			'update_to_activity',
-			(event, arg) => {
-				this.appService.updateToActivity(arg);
-			}
-		);
-
-		this.electronService.ipcRenderer.on('set_time_log', (event, arg) => {
-			this.appService.setTimeLog(arg).then((res: any) => {
-				event.sender.send('return_time_log', {
-					timerId: arg.timerId,
-					timeLogId: res.id
-				});
-			});
-		});
-
-		this.electronService.ipcRenderer.on(
-			'update_time_log_stop',
-			(event, arg) => {
-				console.log('Time Log Stopped');
-				this.appService.updateTimeLog(arg);
-			}
-		);
-
-		this.electronService.ipcRenderer.on('time_toggle', (event, arg) => {
-			this.appService.toggleApi(arg).then((res) => {
-				event.sender.send('return_toggle_api', {
-					result: res,
-					timerId: arg.timerId
-				});
-			});
-		});
-
-		this.electronService.ipcRenderer.on(
-			'update_toggle_timer',
-			(event, arg) => {
-				this.appService.toggleApi(arg);
-			}
-		);
-
-		this.electronService.ipcRenderer.on('server_ping', (event, arg) => {
-			const pinghost = setInterval(() => {
-				this.appService
-					.pingServer(arg)
-					.then((res) => {
-						console.log('Server Found');
-						event.sender.send('server_is_ready');
-						clearInterval(pinghost);
-					})
-					.catch((e) => {
-						console.log('error', e.status);
-						if (e.status === 404) {
-							event.sender.send('server_is_ready');
-							clearInterval(pinghost);
-						}
-					});
-			}, 1000);
-		});
-
-		this.electronService.ipcRenderer.on(
-			'upload_screen_shot',
-			(event, arg) => {
-				this.appService.uploadScreenCapture(arg).then((res) => {
-					console.log('Screenshot Uploaded', res);
-				});
-			}
-		);
-
-		this.electronService.ipcRenderer.on(
-			'server_ping_restart',
-			(event, arg) => {
-				const pinghost = setInterval(() => {
-					this.appService
-						.pingServer(arg)
-						.then((res) => {
-							console.log('server found');
-							event.sender.send('server_already_start');
-							clearInterval(pinghost);
-						})
-						.catch((e) => {
-							console.log('error', e.status);
-							if (e.status === 404) {
-								event.sender.send('server_already_start');
-								clearInterval(pinghost);
-							}
-						});
-				}, 3000);
-			}
-		);
-
-		this.electronService.ipcRenderer.on('logout_timer', (event, arg) => {
-			console.log(event, arg);
-		});
-
-		this.electronService.ipcRenderer.on('logout', () => {
-			this.authStrategy.logout().toPromise().then(res => {				
-				this.electronService.ipcRenderer.send('navigate_to_login');
-			})
-		});
+		activityWatchElectronService.setupActivitiesCollection();
 	}
 
 	ngOnInit(): void {
-		console.log('On Init');
+		const nebularLinkMedia = document.querySelector('link[media="print"]');
+		if (nebularLinkMedia) this._renderer?.setAttribute(nebularLinkMedia, 'media', 'all');
+
 		this.electronService.ipcRenderer.send('app_is_init');
+	}
+
+	ngAfterViewInit(): void {
+		this.languageElectronService.initialize();
+
+		this.electronService
+			.fromEvent('timer_tracker_show')
+			.pipe(
+				take(1),
+				tap(() => this.tokenRefreshService.start()),
+				untilDestroyed(this)
+			)
+			.subscribe();
+
+		this.electronService
+			.fromEvent<{ host: string }>('server_ping')
+			.pipe(
+				switchMap((arg) =>
+					interval(1000).pipe(
+						exhaustMap(() => {
+							return from(this.electronService.ipcRenderer.invoke('IS_OFFLINE')).pipe(
+								switchMap((isOfflineMode) => {
+									if (isOfflineMode) {
+										return of(200);
+									}
+									return from(this.appService.pingServer(arg)).pipe(
+										map(() => 200),
+										catchError((err) => of(err?.status ?? 0))
+									);
+								})
+							)
+						}),
+						tap((status) => {
+							this.store.serverConnection = status;
+						}),
+						takeWhile((status) => status !== 200 && !this.store.userId, true),
+						filter((status) => status === 200 || !!this.store.userId),
+						//take(1),
+						tap(() => {
+							console.log('Server Ready');
+							this.electronService.ipcRenderer.send('server_is_ready');
+						})
+					)
+				)
+			)
+			.pipe(untilDestroyed(this))
+			.subscribe();
+
+		this.electronService
+			.fromEvent('open_child_window')
+			.pipe(
+				tap((arg) => this.openChildWindow('#/log-history')),
+				untilDestroyed(this)
+			)
+			.subscribe();
+
+		this.electronService.ipcRenderer.on('server_ping_restart', (event, arg) =>
+			this._ngZone.run(() => {
+				const pingHost = setInterval(async () => {
+					try {
+						await this.appService.pingServer(arg);
+						console.log('Server Found');
+						event.sender.send('server_already_start');
+						this.store.serverConnection = 200;
+						clearInterval(pingHost);
+					} catch (error) {
+						console.log('ping status result', error.status);
+						this.store.serverConnection = 0;
+						if (this.store.userId) {
+							event.sender.send('server_already_start');
+							clearInterval(pingHost);
+						}
+					}
+				}, 3000);
+			})
+		);
+
+		this.electronService.ipcRenderer.on('logout_timer', (event, arg) =>
+			this._ngZone.run(() => {
+				console.log(event, arg);
+			})
+		);
+
+		this.electronService
+			.fromEvent<boolean>('__logout__')
+			.pipe(
+				tap(() => this.tokenRefreshService.stop()),
+				// Ensure logout runs sequentially
+				concatMap((shouldRestart) =>
+					this.performLogout().pipe(
+						map(() => shouldRestart),
+						catchError(() => of(shouldRestart)) // Logout failure should not block UI flow
+					)
+				),
+				tap((shouldRestart) => this.handlePostLogout(shouldRestart)),
+				untilDestroyed(this)
+			)
+			.subscribe();
+
+		this.electronService.ipcRenderer.on('social_auth_success', (event, arg) =>
+			this._ngZone.run(async () => {
+				try {
+					this.store.userId = arg.userId;
+					this.store.token = arg.token;
+					await this.authFromSocial(arg);
+				} catch (error) {
+					console.log('ERROR', error);
+				}
+			})
+		);
+
+		// A provider sign-in for an address with several workspaces ends at the workspace picker, with a one-time
+		// sign-in code instead of a token: the timer's own picker confirms the code, lists the workspaces and signs
+		// in to the one chosen. The code goes in the navigation state, never in the URL.
+		this.electronService.ipcRenderer.on('social_auth_workspaces', (event, arg) =>
+			this._ngZone.run(async () => {
+				if (!arg?.email || !arg?.code) {
+					return;
+				}
+				try {
+					await this.router.navigate(['/auth/magic-sign-in'], {
+						state: { email: arg.email, code: arg.code }
+					});
+				} catch (error) {
+					console.log('ERROR', error);
+				}
+			})
+		);
+	}
+
+	async authFromSocial(arg) {
+		const jwtParsed: any = await this.jwtDecode(arg.token);
+		if (jwtParsed) {
+			if (jwtParsed.employeeId) {
+				const user: any = await this.appService.getUserDetail();
+				TimeTrackerDateManager.organization = user?.employee?.organization;
+				this.store.organizationId = user?.employee?.organizationId;
+				this.store.tenantId = jwtParsed.tenantId;
+				this.store.user = user;
+				this.electronService.ipcRenderer.send('auth_success', {
+					user: user,
+					token: arg.token,
+					userId: arg.userId,
+					employeeId: jwtParsed.employeeId,
+					tenantId: jwtParsed.tenantId,
+					organizationId: user.employee ? user.employee.organizationId : null
+				});
+			} else {
+				this.toastrService.show('Your account is not an employee', `Warning`, {
+					status: 'danger'
+				});
+			}
+		}
+	}
+
+	async jwtDecode(token) {
+		try {
+			return JSON.parse(Buffer.from(token.split('.')[1], 'base64').toString());
+		} catch (e) {
+			return null;
+		}
+	}
+
+	private performLogout(): Observable<void> {
+		return this.authStrategy.logout().pipe(
+			take(1),
+			map(() => void 0)
+		);
+	}
+
+	private handlePostLogout(shouldRestart: boolean): void {
+		if (shouldRestart === true) {
+			this.electronService.ipcRenderer.send('restart_and_update');
+			return;
+		}
+
+		this.electronService.ipcRenderer.send('navigate_to_login');
+		this.router.navigate(['/auth/login']);
+	}
+
+	private openChildWindow(url: string): void {
+		// Build the full file:// URL. window.location.href may be a directory URL
+		// (ending with '/') so we normalize it to point at index.html explicitly.
+		// setWindowOpenHandler in desktop-window-timer.ts intercepts this call and
+		// injects the correct webPreferences + window dimensions.
+		let base = window.location.href.split('#')[0];
+		if (base.endsWith('/')) {
+			base += 'index.html';
+		}
+		// Using a named target ('gauzy-log-history') prevents duplicate windows:
+		// if a window with that name is already open, window.open() focuses it
+		// instead of creating a new one — both browsers and Electron respect this.
+		window.open(`${base}${url}`, 'gauzy-log-history');
 	}
 }

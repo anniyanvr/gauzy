@@ -1,27 +1,43 @@
-import {
-	AfterViewInit,
-	ChangeDetectorRef,
-	Component,
-	OnDestroy,
-	OnInit
-} from '@angular/core';
-import { IGetActivitiesInput } from '@gauzy/contracts';
-import * as moment from 'moment';
+import { AfterViewInit, ChangeDetectorRef, Component, OnDestroy, OnInit, ViewChild, ChangeDetectionStrategy } from '@angular/core';
+import { Observable } from 'rxjs';
+import { IGetActivitiesInput, ITimeLogFilters, ReportGroupByFilter, ReportGroupFilterEnum } from '@gauzy/contracts';
+import { TranslateService } from '@ngx-translate/core';
+import { UntilDestroy } from '@ngneat/until-destroy';
+import { DateRangePickerBuilderService, Store, TimesheetFilterService } from '@gauzy/ui-core/core';
+import { BaseSelectorFilterComponent, GauzyFiltersComponent, TimeZoneService } from '@gauzy/ui-core/shared';
 
+@UntilDestroy({ checkProperties: true })
 @Component({
 	selector: 'ga-apps-urls-report',
 	templateUrl: './apps-urls-report.component.html',
-	styleUrls: ['./apps-urls-report.component.scss']
+	styleUrls: ['./apps-urls-report.component.scss'],
+	changeDetection: ChangeDetectionStrategy.Eager,
+	standalone: false
 })
-export class AppsUrlsReportComponent implements OnInit, AfterViewInit, OnDestroy {
-	today: Date = new Date();
-	logRequest: IGetActivitiesInput = {
-		startDate: moment(this.today).startOf('week').toDate(),
-		endDate: moment(this.today).endOf('week').toDate()
-	};
+export class AppsUrlsReportComponent extends BaseSelectorFilterComponent implements OnInit, AfterViewInit, OnDestroy {
 	filters: IGetActivitiesInput;
 
-	constructor(private readonly cd: ChangeDetectorRef) {}
+	/**
+	 * Owned here rather than by the grid so the control can be projected into the
+	 * filter row, where it reads as the first of this page's filters instead of
+	 * as a second row of chrome beneath them. The grid takes it as an input and
+	 * refetches on change.
+	 */
+	groupBy: ReportGroupByFilter = ReportGroupFilterEnum.date;
+
+	@ViewChild(GauzyFiltersComponent) gauzyFiltersComponent: GauzyFiltersComponent;
+	datePickerConfig$: Observable<any> = this.dateRangePickerBuilderService.datePickerConfig$;
+
+	constructor(
+		private readonly cd: ChangeDetectorRef,
+		protected readonly store: Store,
+		public readonly translateService: TranslateService,
+		private readonly timesheetFilterService: TimesheetFilterService,
+		protected readonly dateRangePickerBuilderService: DateRangePickerBuilderService,
+		protected readonly timeZoneService: TimeZoneService
+	) {
+		super(store, translateService, dateRangePickerBuilderService, timeZoneService);
+	}
 
 	ngOnInit() {}
 
@@ -29,9 +45,11 @@ export class AppsUrlsReportComponent implements OnInit, AfterViewInit, OnDestroy
 		this.cd.detectChanges();
 	}
 
-	filtersChange($event) {
-		this.logRequest = $event;
-		this.filters = Object.assign({}, this.logRequest);
+	filtersChange(filters: ITimeLogFilters) {
+		if (this.gauzyFiltersComponent.saveFilters) {
+			this.timesheetFilterService.filter = filters;
+		}
+		this.filters = Object.assign({}, filters);
 	}
 
 	ngOnDestroy() {}

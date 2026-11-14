@@ -1,53 +1,43 @@
-import { Component, OnInit, ViewChild, OnDestroy } from '@angular/core';
+import { Component, OnInit, OnDestroy, ChangeDetectionStrategy } from '@angular/core';
 import { TranslateService } from '@ngx-translate/core';
-import { Router, NavigationEnd, RouterEvent } from '@angular/router';
-import {
-	IEquipmentSharing,
-	ComponentLayoutStyleEnum,
-	IEquipmentSharingPolicy,
-	IOrganization,
-	IEquipmentSharingPolicyFindInput
-} from '@gauzy/contracts';
-import { LocalDataSource, Ng2SmartTableComponent } from 'ng2-smart-table';
-import { FormGroup } from '@angular/forms';
+import { HttpClient } from '@angular/common/http';
+import { UntypedFormGroup } from '@angular/forms';
 import { NbDialogService } from '@nebular/theme';
 import { filter, tap } from 'rxjs/operators';
-import { firstValueFrom } from 'rxjs';
+import { firstValueFrom, Subject, debounceTime } from 'rxjs';
 import { UntilDestroy, untilDestroyed } from '@ngneat/until-destroy';
-import { TranslationBaseComponent } from '../../@shared/language-base';
-import { DeleteConfirmationComponent } from '../../@shared/user/forms';
-import { EquipmentSharingPolicyService, Store, ToastrService } from '../../@core/services';
-import { ComponentEnum } from '../../@core/constants';
-import { EquipmentSharingPolicyMutationComponent } from '../../@shared/equipment-sharing-policy';
+import { IEquipmentSharing, ComponentLayoutStyleEnum, IEquipmentSharingPolicy, IOrganization } from '@gauzy/contracts';
+import { EquipmentSharingPolicyService, ServerDataSource, Store, ToastrService } from '@gauzy/ui-core/core';
+import { API_PREFIX, ComponentEnum, distinctUntilChange } from '@gauzy/ui-core/common';
+import {
+	DeleteConfirmationComponent,
+	EquipmentSharingPolicyMutationComponent,
+	IPaginationBase,
+	InputFilterComponent,
+	PaginationFilterBaseComponent
+} from '@gauzy/ui-core/shared';
 
 @UntilDestroy({ checkProperties: true })
 @Component({
-	templateUrl: './equipment-sharing-policy.component.html',
-	styleUrls: ['./equipment-sharing-policy.component.scss']
+    templateUrl: './equipment-sharing-policy.component.html',
+    styleUrls: ['./equipment-sharing-policy.component.scss'],
+    changeDetection: ChangeDetectionStrategy.Eager,
+    standalone: false
 })
-export class EquipmentSharingPolicyComponent
-	extends TranslationBaseComponent
-	implements OnInit, OnDestroy {
+export class EquipmentSharingPolicyComponent extends PaginationFilterBaseComponent implements OnInit, OnDestroy {
 	settingsSmartTable: object;
 	loading: boolean;
 	selectedEquipmentSharingPolicy: IEquipmentSharingPolicy;
-	smartTableSource = new LocalDataSource();
-	form: FormGroup;
+	smartTableSource: ServerDataSource;
+	form: UntypedFormGroup;
 	disableButton = true;
 	equipmentSharingPolicyData: IEquipmentSharingPolicy[];
 	viewComponentName: ComponentEnum;
 	dataLayoutStyle = ComponentLayoutStyleEnum.TABLE;
+	componentLayoutStyleEnum = ComponentLayoutStyleEnum;
 	selectedOrganization: IOrganization;
-
-	equipmentSharingPolicyTable: Ng2SmartTableComponent;
-	@ViewChild('equipmentSharingPolicyTable') set content(
-		content: Ng2SmartTableComponent
-	) {
-		if (content) {
-			this.equipmentSharingPolicyTable = content;
-			this.onChangedSource();
-		}
-	}
+	equipmentSharingPolicy$: Subject<boolean> = this.subject$;
+	private _refresh$: Subject<any> = new Subject();
 
 	constructor(
 		readonly translateService: TranslateService,
@@ -55,7 +45,7 @@ export class EquipmentSharingPolicyComponent
 		private readonly dialogService: NbDialogService,
 		private readonly toastrService: ToastrService,
 		private readonly store: Store,
-		private readonly router: Router
+		private readonly httpClient: HttpClient
 	) {
 		super(translateService);
 		this.setView();
@@ -64,66 +54,86 @@ export class EquipmentSharingPolicyComponent
 	ngOnInit(): void {
 		this.loadSmartTable();
 		this._applyTranslationOnSmartTable();
-		this.store.selectedOrganization$
+		this.equipmentSharingPolicy$
 			.pipe(
-				filter((organization) => !!organization),
-				tap(
-					(organization) => (this.selectedOrganization = organization)
-				),
+				debounceTime(100),
+				tap(() => this.clearItem()),
+				tap(() => this.loadEquipmentSharingPolicies()),
 				untilDestroyed(this)
 			)
-			.subscribe((organization) => {
-				if (organization) {
-					this.loadSettings();
-				}
-			});
-		this.router.events
-			.pipe(untilDestroyed(this))
-			.subscribe((event: RouterEvent) => {
-				if (event instanceof NavigationEnd) {
-					this.setView();
-				}
-			});
+			.subscribe();
+		this.pagination$
+			.pipe(
+				debounceTime(100),
+				distinctUntilChange(),
+				tap(() => this.equipmentSharingPolicy$.next(true)),
+				untilDestroyed(this)
+			)
+			.subscribe();
+		this.store.selectedOrganization$
+			.pipe(
+				debounceTime(300),
+				distinctUntilChange(),
+				filter((organization: IOrganization) => !!organization),
+				tap((organization: IOrganization) => (this.selectedOrganization = organization)),
+				tap(() => this._refresh$.next(true)),
+				tap(() => this.equipmentSharingPolicy$.next(true)),
+				untilDestroyed(this)
+			)
+			.subscribe();
+		this._refresh$
+			.pipe(
+				filter(() => this.dataLayoutStyle === ComponentLayoutStyleEnum.CARDS_GRID),
+				tap(() => this.refreshPagination()),
+				tap(() => (this.equipmentSharingPolicyData = [])),
+				untilDestroyed(this)
+			)
+			.subscribe();
 	}
 
 	setView() {
 		this.viewComponentName = ComponentEnum.EQUIPMENT_SHARING_POLICY;
 		this.store
 			.componentLayout$(this.viewComponentName)
-			.pipe(untilDestroyed(this))
-			.subscribe((componentLayout) => {
-				this.dataLayoutStyle = componentLayout;
-			});
-	}
-
-	/*
-	 * Table on changed source event
-	 */
-	onChangedSource() {
-		this.equipmentSharingPolicyTable.source.onChangedSource
 			.pipe(
-				untilDestroyed(this),
-				tap(() => this.clearItem())
+				distinctUntilChange(),
+				tap((componentLayout) => (this.dataLayoutStyle = componentLayout)),
+				tap(() => this.refreshPagination()),
+				filter((componentLayout) => componentLayout === ComponentLayoutStyleEnum.CARDS_GRID),
+				tap(() => (this.equipmentSharingPolicyData = [])),
+				tap(() => this.equipmentSharingPolicy$.next(true)),
+				untilDestroyed(this)
 			)
 			.subscribe();
 	}
 
 	async loadSmartTable() {
+		const pagination: IPaginationBase = this.getPagination();
 		this.settingsSmartTable = {
 			actions: false,
+			editable: true,
+			selectedRowIndex: -1,
+			noDataMessage: this.getTranslation('SM_TABLE.NO_DATA.EQUIPMENT_SHARING_POLICY'),
+			pager: {
+				display: false,
+				perPage: pagination ? pagination.itemsPerPage : this.minItemPerPage
+			},
 			columns: {
 				name: {
-					title: this.getTranslation(
-						'EQUIPMENT_SHARING_POLICY_PAGE.EQUIPMENT_SHARING_POLICY_NAME'
-					),
-					type: 'string'
+					title: this.getTranslation('EQUIPMENT_SHARING_POLICY_PAGE.EQUIPMENT_SHARING_POLICY_NAME'),
+					type: 'string',
+					filter: {
+						type: 'custom',
+						component: InputFilterComponent
+					},
+					filterFunction: (name: string) => {
+						this.setFilter({ field: 'name', search: name });
+					}
 				},
 				description: {
-					title: this.getTranslation(
-						'EQUIPMENT_SHARING_POLICY_PAGE.EQUIPMENT_SHARING_POLICY_DESCRIPTION'
-					),
+					title: this.getTranslation('EQUIPMENT_SHARING_POLICY_PAGE.EQUIPMENT_SHARING_POLICY_DESCRIPTION'),
 					type: 'string',
-					filter: false
+					isFilterable: false
 				}
 			}
 		};
@@ -136,29 +146,24 @@ export class EquipmentSharingPolicyComponent
 				data: selectedItem
 			});
 		}
-		const dialog = this.dialogService.open(
-			EquipmentSharingPolicyMutationComponent,
-			{
-				context: {
-					equipmentSharingPolicy: this.selectedEquipmentSharingPolicy,
-					selectedOrganization: this.selectedOrganization
-				}
+		const dialog = this.dialogService.open(EquipmentSharingPolicyMutationComponent, {
+			context: {
+				equipmentSharingPolicy: this.selectedEquipmentSharingPolicy,
+				selectedOrganization: this.selectedOrganization
 			}
-		);
+		});
 		const equipmentSharingPolicy = await firstValueFrom(dialog.onClose);
 		this.selectedEquipmentSharingPolicy = null;
 		this.disableButton = true;
 
 		if (equipmentSharingPolicy) {
-			this.toastrService.success(
-				'EQUIPMENT_SHARING_POLICY_PAGE.MESSAGES.EQUIPMENT_REQUEST_SAVED',
-				{
-					name: equipmentSharingPolicy.name
-				}
-			);
+			this.toastrService.success('EQUIPMENT_SHARING_POLICY_PAGE.MESSAGES.EQUIPMENT_REQUEST_SAVED', {
+				name: equipmentSharingPolicy.name
+			});
+			this._refresh$.next(true);
+			this.equipmentSharingPolicy$.next(true);
 		}
 
-		this.loadSettings();
 		this.clearItem();
 	}
 
@@ -169,23 +174,16 @@ export class EquipmentSharingPolicyComponent
 				data: selectedItem
 			});
 		}
-		const result = await firstValueFrom(this.dialogService
-			.open(DeleteConfirmationComponent)
-			.onClose);
+		const result = await firstValueFrom(this.dialogService.open(DeleteConfirmationComponent).onClose);
 
 		if (result) {
-			await this.equipmentSharingPolicyService.delete(
-				this.selectedEquipmentSharingPolicy.id
-			);
-
-			this.loadSettings();
+			await this.equipmentSharingPolicyService.delete(this.selectedEquipmentSharingPolicy.id);
+			this._refresh$.next(true);
+			this.equipmentSharingPolicy$.next(true);
 			this.clearItem();
-			this.toastrService.success(
-				'EQUIPMENT_SHARING_POLICY_PAGE.MESSAGES.EQUIPMENT_REQUEST_DELETED',
-				{
-					name: this.selectedEquipmentSharingPolicy.name
-				}
-			);
+			this.toastrService.success('EQUIPMENT_SHARING_POLICY_PAGE.MESSAGES.EQUIPMENT_REQUEST_DELETED', {
+				name: this.selectedEquipmentSharingPolicy.name
+			});
 		}
 	}
 
@@ -194,37 +192,55 @@ export class EquipmentSharingPolicyComponent
 		this.selectedEquipmentSharingPolicy = isSelected ? data : null;
 	}
 
-	async loadSettings() {
-		this.loading = true;
-
-		let findInput: IEquipmentSharingPolicyFindInput;
-		let policies = [];
-		if (this.selectedOrganization) {
-			const { tenantId } = this.store.user;
-			const { id: organizationId } = this.selectedOrganization;
-			findInput = {
-				organizationId,
-				tenantId
-			};
+	setSmartTableSource() {
+		if (!this.selectedOrganization) {
+			return;
 		}
-		policies = (
-			await this.equipmentSharingPolicyService.getAll(
-				['organization'],
-				findInput
-			)
-		).items;
+		const { tenantId } = this.store.user;
+		const { id: organizationId } = this.selectedOrganization;
+		this.loading = true;
+		this.smartTableSource = new ServerDataSource(this.httpClient, {
+			endPoint: `${API_PREFIX}/equipment-sharing-policy/pagination`,
+			relations: [],
+			where: {
+				...{ organizationId, tenantId },
+				...this.filters.where
+			},
+			finalize: () => {
+				if (this.dataLayoutStyle === ComponentLayoutStyleEnum.CARDS_GRID) {
+					this.equipmentSharingPolicyData.push(...this.smartTableSource.getData());
+				}
+				this.setPagination({
+					...this.getPagination(),
+					totalItems: this.smartTableSource.count()
+				});
+				this.loading = false;
+			}
+		});
+	}
 
-		this.loading = false;
-		this.equipmentSharingPolicyData = policies;
-		this.smartTableSource.load(policies);
+	private async loadEquipmentSharingPolicies() {
+		if (!this.selectedOrganization) {
+			return;
+		}
+		try {
+			this.setSmartTableSource();
+
+			const { activePage, itemsPerPage } = this.getPagination();
+			this.smartTableSource.setPaging(activePage, itemsPerPage, false);
+
+			if (this.dataLayoutStyle === ComponentLayoutStyleEnum.CARDS_GRID) {
+				await this.smartTableSource.getElements();
+			}
+		} catch (error) {
+			this.toastrService.danger(error);
+		}
 	}
 
 	_applyTranslationOnSmartTable() {
-		this.translateService.onLangChange
-			.pipe(untilDestroyed(this))
-			.subscribe(() => {
-				this.loadSmartTable();
-			});
+		this.translateService.onLangChange.pipe(untilDestroyed(this)).subscribe(() => {
+			this.loadSmartTable();
+		});
 	}
 
 	/*
@@ -235,20 +251,6 @@ export class EquipmentSharingPolicyComponent
 			isSelected: false,
 			data: null
 		});
-		this.deselectAll();
-	}
-	/*
-	 * Deselect all table rows
-	 */
-	deselectAll() {
-		if (
-			this.equipmentSharingPolicyTable &&
-			this.equipmentSharingPolicyTable.grid
-		) {
-			this.equipmentSharingPolicyTable.grid.dataSet['willSelect'] =
-				'false';
-			this.equipmentSharingPolicyTable.grid.dataSet.deselectAll();
-		}
 	}
 
 	ngOnDestroy() {}

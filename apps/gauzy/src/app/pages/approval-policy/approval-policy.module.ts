@@ -1,4 +1,3 @@
-import { CardGridModule } from './../../@shared/card-grid/card-grid.module';
 import { NgModule } from '@angular/core';
 import {
 	NbBadgeModule,
@@ -14,22 +13,20 @@ import {
 	NbTooltipModule,
 	NbRadioModule
 } from '@nebular/theme';
-import { Ng2SmartTableModule } from 'ng2-smart-table';
-import { ThemeModule } from '../../@theme/theme.module';
-import { ApprovalPolicyComponent } from './approval-policy.component';
-import { SharedModule } from '../../@shared/shared.module';
-import { ApprovalPolicyRoutingModule } from './approval-policy-routing.module';
-import { ApprovalPolicyService } from '../../@core/services/approval-policy.service';
-import { ApprovalPolicyMutationModule } from '../../@shared/approval-policy/approval-policy-mutation.module';
-import { BackNavigationModule } from '../../@shared/back-navigation/back-navigation.module';
 import { NgxPermissionsModule } from 'ngx-permissions';
-import { TranslateModule } from '../../@shared/translate/translate.module';
-import { HeaderTitleModule } from '../../@shared/components/header-title/header-title.module';
+import { TranslatePipe } from '@ngx-translate/core';
+import { ApprovalPolicyService } from '@gauzy/ui-core/core';
+import {
+	SmartDataViewLayoutModule,
+	ApprovalPolicyMutationModule,
+	CardGridModule,
+	SharedModule
+} from '@gauzy/ui-core/shared';
+import { ApprovalPolicyComponent } from './approval-policy.component';
+import { ApprovalPolicyRoutingModule } from './approval-policy-routing.module';
 
 @NgModule({
 	imports: [
-		SharedModule,
-		ThemeModule,
 		NbBadgeModule,
 		NbButtonModule,
 		NbCardModule,
@@ -40,16 +37,15 @@ import { HeaderTitleModule } from '../../@shared/components/header-title/header-
 		NbRouteTabsetModule,
 		NbSelectModule,
 		NbSpinnerModule,
-		Ng2SmartTableModule,
 		NbTooltipModule,
 		NbRadioModule,
+		SharedModule,
 		CardGridModule,
 		ApprovalPolicyMutationModule,
 		ApprovalPolicyRoutingModule,
-		BackNavigationModule,
-		TranslateModule,
+		TranslatePipe,
 		NgxPermissionsModule.forChild(),
-		HeaderTitleModule
+		SmartDataViewLayoutModule
 	],
 	declarations: [ApprovalPolicyComponent],
 	providers: [ApprovalPolicyService]

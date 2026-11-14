@@ -1,12 +1,12 @@
-import { Component, Input } from '@angular/core';
-import { ViewCell } from 'ng2-smart-table';
+import { Component, Input, ChangeDetectionStrategy } from '@angular/core';
 
 @Component({
-	templateUrl: './employee-average-expenses.component.html'
+    selector: 'ga-employee-average-expenses',
+    templateUrl: './employee-average-expenses.component.html',
+    changeDetection: ChangeDetectionStrategy.Eager,
+    standalone: false
 })
-export class EmployeeAverageExpensesComponent implements ViewCell {
-	@Input()
-	rowData: any;
-
-	value: string | number;
+export class EmployeeAverageExpensesComponent {
+	@Input() rowData: any;
+	@Input() value: string | number;
 }

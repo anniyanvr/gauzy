@@ -1,44 +1,47 @@
-import { Component, OnInit, OnDestroy } from '@angular/core';
-import { IEmployee, IOrganization } from '@gauzy/contracts';
-import { EmployeesService } from '../../../@core/services';
-import { DefaultEditor } from 'ng2-smart-table';
-import { Store } from '../../../@core/services/store.service';
+import { Component, OnInit, OnDestroy, ChangeDetectionStrategy } from '@angular/core';
+import { DefaultEditor } from 'angular2-smart-table';
 import { filter, tap } from 'rxjs/operators';
 import { UntilDestroy, untilDestroyed } from '@ngneat/until-destroy';
+import { IEmployee, IOrganization } from '@gauzy/contracts';
+import { isNotEmpty } from '@gauzy/ui-core/common';
+import { DateRangePickerBuilderService, EmployeesService, Store } from '@gauzy/ui-core/core';
+
 @UntilDestroy({ checkProperties: true })
 @Component({
-	template: `
+    template: `
 		<nb-select
-			fullWidth
-			placeholder="{{ 'INVOICES_PAGE.SELECT_EMPLOYEE' | translate }}"
-			[(ngModel)]="employee"
-			(selectedChange)="selectEmployee($event)"
-		>
-			<nb-option *ngFor="let employee of employees" [value]="employee">
-				<img
-					src="{{ employee.user.imageUrl }}"
-					alt="Smiley face"
-					height="40"
-					width="40"
-					style="margin-right:10px"
-				/>
-				{{ employee.user.firstName }}
-				{{ employee.user.lastName }}
-			</nb-option>
-		</nb-select>
-	`,
-	styles: []
+		  fullWidth
+		  [placeholder]="'INVOICES_PAGE.SELECT_EMPLOYEE' | translate"
+		  [(ngModel)]="employee"
+		  (selectedChange)="selectEmployee($event)"
+		  >
+		  @for (employee of employees; track employee) {
+		    <nb-option [value]="employee">
+		      <img
+		        [src]="employee.user.imageUrl"
+		        alt="Smiley face"
+		        height="40"
+		        width="40"
+		        style="margin-right:10px"
+		        />
+		        {{ employee.fullName }}
+		      </nb-option>
+		    }
+		  </nb-select>
+		`,
+    styles: [],
+    changeDetection: ChangeDetectionStrategy.Eager,
+    standalone: false
 })
-export class InvoiceEmployeesSelectorComponent
-	extends DefaultEditor
-	implements OnInit, OnDestroy {
-	employee: IEmployee;
-	employees: IEmployee[];
-	organization: IOrganization;
+export class InvoiceEmployeesSelectorComponent extends DefaultEditor implements OnInit, OnDestroy {
+	public employee: IEmployee;
+	public employees: IEmployee[] = [];
+	public organization: IOrganization;
 
 	constructor(
-		readonly employeeService: EmployeesService,
-		private store: Store
+		private readonly employeeService: EmployeesService,
+		private readonly store: Store,
+		private readonly dateRangePickerBuilderService: DateRangePickerBuilderService
 	) {
 		super();
 	}
@@ -46,32 +49,54 @@ export class InvoiceEmployeesSelectorComponent
 	ngOnInit() {
 		this.store.selectedOrganization$
 			.pipe(
-				filter((organization) => !!organization),
-				tap((organization) => (this.organization = organization)),
-				tap(() => this._loadEmployees()),
+				filter((organization: IOrganization) => !!organization),
+				tap((organization: IOrganization) => (this.organization = organization)),
+				tap(() => this._getWorkingEmployees()),
 				untilDestroyed(this)
 			)
 			.subscribe();
 	}
 
-	private _loadEmployees() {
-		const tenantId = this.store.user.tenantId;
+	/**
+	 * Get working employees of the selected month
+	 */
+	private async _getWorkingEmployees(): Promise<void> {
+		if (!this.organization) {
+			return;
+		}
+
+		const { tenantId } = this.store.user;
 		const { id: organizationId } = this.organization;
-		this.employeeService
-			.getAll(['user'], { organizationId, tenantId })
-			.pipe(untilDestroyed(this))
-			.subscribe(({ items }) => {
-				this.employees = items;
-				if (this.employees.length) {
-					this.employee = this.employees.find(
-						(e) => e.id === this.cell.newValue.id
-					);
-				}
-			});
+		const { selectedDateRange } = this.dateRangePickerBuilderService;
+
+		const { items = [] } = await this.employeeService.getWorking(organizationId, tenantId, selectedDateRange, true);
+		this.employees = items;
+		this.preSelectedEmployee();
 	}
 
-	selectEmployee($event) {
-		this.cell.newValue = $event;
+	/**
+	 * This function is used to pre-select an employee from a list of employees.
+	 * It retrieves the raw value of the cell (presumably containing employee data),
+	 * and then attempts to find a matching employee from the list of employees.
+	 */
+	preSelectedEmployee() {
+		// Get the raw value of the cell, which is assumed to be an employee object
+		const employee: any = this.cell.getRawValue();
+
+		// Check if the list of employees is not empty
+		if (isNotEmpty(this.employees)) {
+			// Find the employee in the list whose ID matches the ID of the employee from the cell
+			this.employee = this.employees.find((item: IEmployee) => item.id === employee.id);
+		}
+	}
+
+	/**
+	 * This function is used to select an employee and set the value of the associated cell.
+	 * @param employee The employee to be selected and set as the cell value.
+	 */
+	selectEmployee(employee: any) {
+		// Set the value of the cell to the specified employee
+		this.cell.setValue(employee);
 	}
 
 	ngOnDestroy() {}

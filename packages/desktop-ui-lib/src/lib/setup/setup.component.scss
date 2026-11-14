@@ -1,3 +1,5 @@
+$border-radius: calc(2 * var(--border-radius));
+
 .button-at-bottom {
   bottom: 0;
 }
@@ -20,8 +22,17 @@
   right: -500px;
 }
 
+$height: calc(100vh - 10.5rem);
+
 .content-body {
   margin-top: 40px;
+  max-height: $height;
+  overflow: overlay;
+  margin-bottom: 10px;
+
+  &.final-step {
+    height: $height;
+  }
 }
 
 .margin-content {
@@ -35,21 +46,16 @@
 
 .button-home {
   font-size: 16px;
-  font-weight: bold;
+  font-weight: 600;
   height: 56px;
   width: 130px;
 }
 
 .top-bottom-space {
-  padding: 1px !important;
+  padding: 0px !important;
 }
 
-::ng-deep
-  .nb-theme-default
-  nb-layout
-  .layout
-  .layout-container
-  .content.center {
+::ng-deep nb-layout .layout .layout-container .content.center {
   width: 960px;
   flex: 0 100 960px !important;
 }
@@ -58,8 +64,14 @@
   margin: auto;
 }
 
-::ng-deep .nb-theme-default nb-stepper .step-content {
+::ng-deep nb-stepper .step-content {
   padding: 0px !important;
+  height: calc(100vh - 3.5rem);
+  display: flex;
+  align-items: center;
+  flex-direction: column;
+  justify-content: space-between;
+  position: relative;
 }
 
 .card-full-height {
@@ -71,14 +83,14 @@
 }
 
 .card-item {
-  border-radius: 15px;
+  border-radius: $border-radius;
   text-align: left;
-  box-shadow: 0px 7px 10px #00000029;
+  box-shadow: var(--gauzy-shadow);
 }
 
 .icon-item {
   font-size: 40px;
-  color: #3366ff;
+  color: var(--text-primary-color);
 }
 
 .card-item-content {
@@ -86,21 +98,22 @@
 }
 
 .card-item-icon {
-  background: #f2f6ff 0 0 no-repeat padding-box;
+  background: var(--gauzy-background-transparent-1) 0 0 no-repeat padding-box;
   text-align: center;
   padding-top: 40px;
-  border-radius: 0 15px 15px 0;
+  border-radius: 0 $border-radius $border-radius 0;
   position: relative;
   left: -15px;
 }
 
 .card-item ::ng-deep nb-card-body {
   padding: 0;
+  overflow: unset;
 }
 
 .card-item-label {
   font-size: 18px;
-  font-weight: bolder;
+  font-weight: 600;
 }
 
 .btn-fixed {
@@ -112,8 +125,9 @@
 }
 
 .button-next-prev {
-  position: fixed;
-  bottom: 24px;
+  display: flex;
+  justify-content: space-between;
+  width: 100%;
 }
 
 .icon-medium {
@@ -121,20 +135,32 @@
 }
 
 .card-small-item {
-  border-radius: 15px;
+  border-radius: $border-radius;
   text-align: left;
-  box-shadow: 0px 7px 10px #00000029;
+  box-shadow: var(--gauzy-shadow);
+  min-height: 6rem;
+
+  nb-card-body {
+    display: flex;
+    justify-content: center;
+    align-items: center;
+  }
 }
 
 .icon-connectivity {
   height: 55px;
   position: relative;
   top: 10px;
+
+  img {
+    filter: hue-rotate(20deg);
+  }
 }
 
-.integraion-label {
-  font-size: 12px;
-  font-weight: bold;
+.integration-label {
+  font-size: 11px;
+  color: var(--gauzy-text-color-2);
+  font-weight: 600;
 }
 
 .margin-form {
@@ -143,13 +169,13 @@
 
 .btn-next {
   font-size: 16px;
-  font-weight: bold;
+  font-weight: 600;
   height: 56px;
-  width: 180px;
+  width: 100%;
 }
 
 .margin-setting-content {
-  margin-top: 10px !important;
+  margin-top: 1rem !important;
 }
 
 .note {
@@ -157,14 +183,50 @@
   line-height: 0px;
 }
 
-::ng-deep .nb-theme-default nb-stepper .header {
+::ng-deep nb-stepper .header {
   pointer-events: none !important;
 }
 
 .progress-setup {
+  width: 50%;
+  overflow: hidden;
+  z-index: 1;
   position: absolute;
-  bottom: 45px;
-  width: 95%;
+  bottom: 1rem;
+  left: 25%;
+
+  .progress-anim {
+    transition: .75s;
+    transform: translateY(100%);
+
+    .progress-header {
+      transition: .75s;
+      transform: translateY(-100%);
+    }
+
+    .progress-message-container {
+      background: black;
+      border-radius: 1rem;
+      box-shadow: 0 1px 1px 0 black;
+      padding: 1rem;
+    }
+
+
+    .progress-message {
+      overflow: auto;
+      height: 35.125vh;
+
+      .content-text {
+        color: #08c234;
+        font-size: 11px;
+        font-family: monospace !important;
+      }
+    }
+  }
+}
+.progress-setup:hover .progress-anim,
+.progress-setup:hover .progress-header {
+  transform: translateY(0);
 }
 
 .progress-icon {
@@ -187,7 +249,7 @@
 }
 
 .icon-spin {
-  animation: rotate 2s ease-in-out 0s infinite;
+  animation: rotate 2s linear 0s infinite;
 }
 
 @keyframes rotate {
@@ -205,7 +267,30 @@
 
 .btn-check {
   font-size: 16px;
-  font-weight: bold;
+  font-weight: 600;
   height: 56px;
-  width: 120px;
+  width: 100%;
+}
+
+.main-card-body {
+  background-color: var(--gauzy-card-2);
+  padding: 1rem;
+}
+
+h4 {
+  font-weight: 600;
+}
+
+.lang-selector {
+  position: absolute;
+  left: 2rem;
+  top: 4rem;
+}
+
+input {
+  height: 42px !important;
+}
+
+::ng-deep .ssl nb-card {
+  background-color: var(--gauzy-card-2);
 }

@@ -1,106 +1,164 @@
-import { Component, OnInit, ViewChild, OnDestroy } from '@angular/core';
-import { FormGroup, FormBuilder, FormArray, Validators } from '@angular/forms';
-import { Store } from 'apps/gauzy/src/app/@core/services/store.service';
-import {
-	IOrganizationDocument,
-	ComponentLayoutStyleEnum,
-	IOrganization
-} from '@gauzy/contracts';
-import { ToastrService } from 'apps/gauzy/src/app/@core/services/toastr.service';
-import { OrganizationDocumentsService } from 'apps/gauzy/src/app/@core/services/organization-documents.service';
-import { filter, first } from 'rxjs/operators';
-import { NbDialogService } from '@nebular/theme';
-import { DeleteConfirmationComponent } from 'apps/gauzy/src/app/@shared/user/forms/delete-confirmation/delete-confirmation.component';
-import { UploadDocumentComponent } from './upload-document/upload-document.component';
-import { ComponentEnum } from '../../@core/constants/layout.constants';
-import { TranslationBaseComponent } from '../../@shared/language-base/translation-base.component';
+import { Component, OnInit, ViewChild, OnDestroy, TemplateRef, ChangeDetectionStrategy } from '@angular/core';
+import { UntypedFormGroup, UntypedFormBuilder, FormArray, Validators, AbstractControl } from '@angular/forms';
+import { IOrganizationDocument, ComponentLayoutStyleEnum, IOrganization } from '@gauzy/contracts';
+import { distinctUntilChange } from '@gauzy/ui-core/common';
+import { debounceTime, filter, first, tap } from 'rxjs/operators';
+import { NbDialogRef, NbDialogService } from '@nebular/theme';
 import { TranslateService } from '@ngx-translate/core';
-import { LocalDataSource } from 'ng2-smart-table';
-import { DocumentUrlTableComponent } from '../../@shared/table-components/document-url/document-url.component';
-import { DocumentDateTableComponent } from '../../@shared/table-components/document-date/document-date.component';
+import { LocalDataSource } from 'angular2-smart-table';
 import { UntilDestroy, untilDestroyed } from '@ngneat/until-destroy';
+import { UploadDocumentComponent } from './upload-document/upload-document.component';
+import { ComponentEnum } from '@gauzy/ui-core/common';
+import { ErrorHandlingService, OrganizationDocumentsService, Store, ToastrService } from '@gauzy/ui-core/core';
+import {
+	DeleteConfirmationComponent,
+	DocumentDateTableComponent,
+	DocumentUrlTableComponent,
+	IPaginationBase,
+	PaginationFilterBaseComponent
+} from '@gauzy/ui-core/shared';
+import { ActivatedRoute } from '@angular/router';
+import { Subject } from 'rxjs';
 
 @UntilDestroy({ checkProperties: true })
 @Component({
 	selector: 'ga-documents',
-	templateUrl: './documents.component.html'
+	templateUrl: './documents.component.html',
+	styleUrls: ['documents.component.scss'],
+	changeDetection: ChangeDetectionStrategy.Eager,
+	standalone: false
 })
-export class DocumentsComponent
-	extends TranslationBaseComponent
-	implements OnInit, OnDestroy {
-	@ViewChild('uploadDoc')
-	uploadDoc: UploadDocumentComponent;
-	organizationId: string;
-	form: FormGroup;
-	formDocument: FormGroup;
+export class DocumentsComponent extends PaginationFilterBaseComponent implements OnInit, OnDestroy {
+	@ViewChild('uploadDoc') uploadDoc: UploadDocumentComponent;
+	@ViewChild('addEditTemplate') addEditTemplate: TemplateRef<any>;
+
+	addEditDialogRef: NbDialogRef<any>;
+	formDocument: UntypedFormGroup;
 	documentUrl = '';
 	documentId = null;
-	documentList: IOrganizationDocument[];
-	showAddCard = false;
+	documentList: IOrganizationDocument[] = [];
 	loading = false;
 	settingsSmartTable: object;
 	smartTableSource = new LocalDataSource();
 	viewComponentName: ComponentEnum;
+	componentLayoutStyleEnum = ComponentLayoutStyleEnum;
 	dataLayoutStyle = ComponentLayoutStyleEnum.TABLE;
-	selectedOrganization: IOrganization;
+	organization: IOrganization;
+	disabled: boolean = true;
+	selectedDocument: IOrganizationDocument;
+	selected = {
+		document: null,
+		state: false
+	};
+	private _refresh$: Subject<any> = new Subject();
+
+	/*
+	 * Organization Document Mutation Form
+	 */
+	public form: UntypedFormGroup = DocumentsComponent.buildForm(this.fb);
+	static buildForm(fb: UntypedFormBuilder): UntypedFormGroup {
+		const form = fb.group({
+			documents: fb.array([])
+		});
+		const documentForm = form.controls.documents as FormArray;
+		documentForm.push(
+			fb.group({
+				name: [null, Validators.required],
+				documentUrl: [null, Validators.required],
+				documentId: [null]
+			})
+		);
+		return form;
+	}
 
 	constructor(
-		private readonly fb: FormBuilder,
-		private dialogService: NbDialogService,
-		private store: Store,
-		readonly translateService: TranslateService,
-		private organizationDocumentsService: OrganizationDocumentsService,
-		private toastrService: ToastrService
+		private readonly fb: UntypedFormBuilder,
+		private readonly dialogService: NbDialogService,
+		private readonly store: Store,
+		public readonly translateService: TranslateService,
+		private readonly organizationDocumentsService: OrganizationDocumentsService,
+		private readonly toastrService: ToastrService,
+		private readonly route: ActivatedRoute,
+		private readonly _errorHandlingService: ErrorHandlingService
 	) {
 		super(translateService);
 		this.setView();
 	}
 
 	ngOnInit() {
-		this.store.selectedOrganization$
+		this.subject$
 			.pipe(
-				filter((organization) => !!organization),
+				tap(() => this._loadDocuments()),
 				untilDestroyed(this)
 			)
-			.subscribe((organization: IOrganization) => {
-				if (organization) {
-					this.selectedOrganization = organization;
-					this._loadDocuments();
-				}
-			});
+			.subscribe();
+		this.pagination$
+			.pipe(
+				distinctUntilChange(),
+				tap(() => this.subject$.next(true)),
+				untilDestroyed(this)
+			)
+			.subscribe();
 		this._applyTranslationOnSmartTable();
-		this.loadSmartTable();
-		this._initializeForm();
+
+		this.loadSmartTableSetting();
+		this.store.selectedOrganization$
+			.pipe(
+				distinctUntilChange(),
+				filter((organization: IOrganization) => !!organization),
+				tap((organization: IOrganization) => (this.organization = organization)),
+				tap(() => this._refresh$.next(true)),
+				tap(() => this._loadDocuments()),
+				untilDestroyed(this)
+			)
+			.subscribe();
+		this.route.queryParamMap
+			.pipe(
+				filter((params) => !!params && params.get('openAddDialog') === 'true'),
+				debounceTime(1000),
+				tap(() => this.openDialog(this.addEditTemplate, false)),
+				untilDestroyed(this)
+			)
+			.subscribe();
+		this._refresh$
+			.pipe(
+				filter(() => this._isGridLayout),
+				tap(() => this.refreshPagination()),
+				tap(() => (this.documentList = [])),
+				untilDestroyed(this)
+			)
+			.subscribe();
 	}
 
 	documents(): FormArray {
 		return this.form.get('documents') as FormArray;
 	}
 
-	private _initializeForm() {
-		this.form = new FormGroup({
-			documents: this.fb.array([])
-		});
-		const documentForm = this.documents() as FormArray;
-		documentForm.push(
-			this.fb.group({
-				name: ['', Validators.required],
-				documentUrl: ['', Validators.required]
-			})
-		);
+	get documentControls(): AbstractControl[] {
+		return (this.form.get('documents') as FormArray).controls;
 	}
+
 	setView() {
 		this.viewComponentName = ComponentEnum.DOCUMENTS;
 		this.store
 			.componentLayout$(this.viewComponentName)
-			.pipe(untilDestroyed(this))
-			.subscribe((componentLayout) => {
-				this.dataLayoutStyle = componentLayout;
-			});
+			.pipe(
+				distinctUntilChange(),
+				tap((componentLayout: ComponentLayoutStyleEnum) => (this.dataLayoutStyle = componentLayout)),
+				tap(() => this.refreshPagination()),
+				tap(() => (this.documentList = [])),
+				tap(() => this.subject$.next(true)),
+				untilDestroyed(this)
+			)
+			.subscribe();
 	}
 
-	async loadSmartTable() {
+	loadSmartTableSetting() {
+		const pagination: IPaginationBase = this.getPagination();
 		this.settingsSmartTable = {
+			pager: {
+				perPage: pagination ? pagination : 10
+			},
 			actions: false,
 			columns: {
 				name: {
@@ -108,9 +166,7 @@ export class DocumentsComponent
 					type: 'string'
 				},
 				documentUrl: {
-					title: this.getTranslation(
-						'ORGANIZATIONS_PAGE.DOCUMENT_URL'
-					),
+					title: this.getTranslation('ORGANIZATIONS_PAGE.DOCUMENT_URL'),
 					type: 'custom',
 					renderComponent: DocumentUrlTableComponent
 				},
@@ -123,17 +179,19 @@ export class DocumentsComponent
 		};
 	}
 
+	private get _isGridLayout(): boolean {
+		return this.componentLayoutStyleEnum.CARDS_GRID === this.dataLayoutStyle;
+	}
+
 	submitForm() {
 		const documentForm = this.documents() as FormArray;
 		const formValue = { ...documentForm.value[0] };
 		this.formDocument = this.uploadDoc.form;
 		formValue.documentUrl = this.formDocument.get('docUrl').value;
+		formValue.documentId = this.formDocument.get('documentId').value;
 
 		if (this.documentId !== null) {
-			formValue.documentUrl =
-				formValue.documentUrl === ''
-					? this.documentUrl
-					: formValue.documentUrl;
+			formValue.documentUrl = formValue.documentUrl === '' ? this.documentUrl : formValue.documentUrl;
 
 			if (formValue.name !== '') {
 				this._updateDocument(formValue);
@@ -150,96 +208,107 @@ export class DocumentsComponent
 	}
 
 	private _createDocument(formValue: IOrganizationDocument) {
+		if (!this.organization) {
+			return;
+		}
+		const { tenantId } = this.store.user;
+		const { id: organizationId } = this.organization;
+
 		this.organizationDocumentsService
 			.create({
 				...formValue,
-				organizationId: this.selectedOrganization.id,
-				tenantId: this.selectedOrganization.tenantId
+				organizationId,
+				tenantId
 			})
-			.pipe(untilDestroyed(this), first())
+			.pipe(first(), untilDestroyed(this))
 			.subscribe(
 				() => {
-					this.toastrService.success(
-						'NOTES.ORGANIZATIONS.EDIT_ORGANIZATION_DOCS.CREATED',
-						{
-							name: formValue.name
-						}
-					);
+					this.toastrService.success('NOTES.ORGANIZATIONS.EDIT_ORGANIZATION_DOCS.CREATED', {
+						name: formValue.name
+					});
+					this.addEditDialogRef.close();
 					this.cancel();
-					this._loadDocuments();
+					this._refresh$.next(true);
+					this.subject$.next(true);
 				},
-				() =>
-					this.toastrService.error(
-						'NOTES.ORGANIZATIONS.EDIT_ORGANIZATION_DOCS.ERR_CREATE'
-					)
+				() => this.toastrService.error('NOTES.ORGANIZATIONS.EDIT_ORGANIZATION_DOCS.ERR_CREATE')
 			);
 	}
 
 	private _loadDocuments() {
+		if (!this.organization) {
+			return;
+		}
+
+		const { tenantId } = this.store.user;
+		const { id: organizationId } = this.organization;
+		const { activePage, itemsPerPage } = this.getPagination();
+
 		this.loading = true;
 		this.organizationDocumentsService
 			.getAll({
-				organizationId: this.selectedOrganization.id,
-				tenantId: this.selectedOrganization.tenantId
+				organizationId,
+				tenantId
 			})
-			.pipe(untilDestroyed(this), first())
-			.subscribe(
-				(data) => {
-					this.documentList = data.items;
-					this.smartTableSource.load(data.items);
+			.pipe(first(), untilDestroyed(this))
+			.subscribe({
+				next: (data) => {
 					this.loading = false;
+					this.smartTableSource.setPaging(activePage, itemsPerPage, false);
+					this.smartTableSource.load(data.items);
+					if (this._isGridLayout) {
+						this._loadGridLayoutData();
+					} else this.documentList = data.items;
+					this.setPagination({
+						...this.getPagination(),
+						totalItems: this.smartTableSource.count()
+					});
 				},
-				() =>
-					this.toastrService.error(
-						'NOTES.ORGANIZATIONS.EDIT_ORGANIZATION_DOCS.ERR_LOAD'
+				error: () =>
+					this._errorHandlingService.handleError(
+						this.getTranslation('NOTES.ORGANIZATIONS.EDIT_ORGANIZATION_DOCS.ERR_LOAD')
 					)
-			);
+			});
+	}
+
+	private async _loadGridLayoutData() {
+		this.documentList.push(...(await this.smartTableSource.getElements()));
 	}
 
 	private _updateDocument(formValue: IOrganizationDocument) {
 		this.organizationDocumentsService
 			.update(this.documentId, { ...formValue })
 			.pipe(untilDestroyed(this), first())
-			.subscribe(
-				() => {
+			.subscribe({
+				next: () => {
 					this.toastrService.success(
-						this.getTranslation(
-							'NOTES.ORGANIZATIONS.EDIT_ORGANIZATION_DOCS.UPDATED',
-							{
-								name: formValue.name
-							}
-						)
+						this.getTranslation('NOTES.ORGANIZATIONS.EDIT_ORGANIZATION_DOCS.UPDATED', {
+							name: formValue.name
+						})
 					);
+					this.addEditDialogRef.close();
 					this.cancel();
-					this._loadDocuments();
+					this._refresh$.next(true);
+					this.subject$.next(true);
 				},
-				() =>
-					this.toastrService.error(
-						'NOTES.ORGANIZATIONS.EDIT_ORGANIZATION_DOCS.ERR_UPDATED'
-					)
-			);
-	}
-
-	showCard() {
-		this.showAddCard = !this.showAddCard;
-		this.form.controls.documents.reset();
-		this.documentId = null;
-		this.documentUrl = null;
+				error: () => this.toastrService.error('NOTES.ORGANIZATIONS.EDIT_ORGANIZATION_DOCS.ERR_UPDATED')
+			});
 	}
 
 	editDocument(document: IOrganizationDocument) {
-		this.showAddCard = !this.showAddCard;
 		this.form.controls.documents.patchValue([document]);
 		this.documentId = document.id;
 		this.documentUrl = document.documentUrl;
 	}
 
 	removeDocument(document: IOrganizationDocument) {
+		if (!document) {
+			document = this.selectedDocument;
+		}
 		this.dialogService
 			.open(DeleteConfirmationComponent, {
 				context: {
-					recordType:
-						'NOTES.ORGANIZATIONS.EDIT_ORGANIZATION_DOCS.SELECTED_DOC'
+					recordType: 'NOTES.ORGANIZATIONS.EDIT_ORGANIZATION_DOCS.SELECTED_DOC'
 				}
 			})
 			.onClose.pipe(first())
@@ -248,38 +317,71 @@ export class DocumentsComponent
 					this.organizationDocumentsService
 						.delete(document.id)
 						.pipe(first())
-						.subscribe(
-							() => {
+						.subscribe({
+							next: () => {
 								this.toastrService.success(
-									this.getTranslation(
-										'NOTES.ORGANIZATIONS.EDIT_ORGANIZATION_DOCS.DELETED',
-										{
-											name: document.name
-										}
-									)
+									this.getTranslation('NOTES.ORGANIZATIONS.EDIT_ORGANIZATION_DOCS.DELETED', {
+										name: document.name
+									})
 								);
-								this._loadDocuments();
+								this._refresh$.next(true);
+								this.subject$.next(true);
 							},
-							() =>
-								'NOTES.ORGANIZATIONS.EDIT_ORGANIZATION_DOCS.ERR_DELETED'
-						);
+							error: () =>
+								this._errorHandlingService.handleError(
+									this.getTranslation('NOTES.ORGANIZATIONS.EDIT_ORGANIZATION_DOCS.ERR_DELETED')
+								)
+						});
 				}
 			});
 	}
 
 	cancel() {
-		this.showAddCard = !this.showAddCard;
 		this.form.reset();
 		this.documentUrl = null;
 		this.documentId = null;
+		this.selected = {
+			document: null,
+			state: false
+		};
+		this.disabled = true;
 	}
 
-	_applyTranslationOnSmartTable() {
+	private _applyTranslationOnSmartTable() {
 		this.translateService.onLangChange
-			.pipe(untilDestroyed(this))
-			.subscribe(() => {
-				this.loadSmartTable();
-			});
+			.pipe(
+				tap(() => this.loadSmartTableSetting()),
+				untilDestroyed(this)
+			)
+			.subscribe();
+	}
+
+	edit(document: IOrganizationDocument) {
+		this.selectedDocument = document;
+		this.form.controls.documents.patchValue([document]);
+		this.documentId = document.id;
+		this.documentUrl = document.documentUrl;
+	}
+
+	openDialog(template: TemplateRef<any>, isEditTemplate: boolean) {
+		try {
+			isEditTemplate ? this.edit(this.selectedDocument) : this.cancel();
+			this.addEditDialogRef = this.dialogService.open(template);
+		} catch (error) {
+			console.log('An error occurred on open dialog');
+		}
+	}
+
+	selectDocument(position: any) {
+		if (position.data) position = position.data;
+		const res =
+			this.selected.document && position.id === this.selected.document.id
+				? { state: !this.selected.state }
+				: { state: true };
+		this.disabled = !res.state;
+		this.selected.state = res.state;
+		this.selected.document = position;
+		this.selectedDocument = this.selected.document;
 	}
 
 	ngOnDestroy(): void {}

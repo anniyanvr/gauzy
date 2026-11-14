@@ -1,5 +1,5 @@
 import { NgModule } from '@angular/core';
-import { PipelinesComponent } from './pipelines.component';
+import { CommonModule } from '@angular/common';
 import {
 	NbAccordionModule,
 	NbButtonModule,
@@ -10,27 +10,25 @@ import {
 	NbInputModule,
 	NbSelectModule,
 	NbCheckboxModule,
-	NbSpinnerModule
+	NbSpinnerModule,
+	NbTabsetModule
 } from '@nebular/theme';
-import { PipelinesRouting } from './pipelines.routing';
-import { TranslateModule } from '@ngx-translate/core';
-import { CommonModule } from '@angular/common';
+import { NgxPermissionsModule } from 'ngx-permissions';
+import { DragDropModule } from '@angular/cdk/drag-drop';
+import { TranslatePipe } from '@ngx-translate/core';
+import { SmartDataViewLayoutModule, CardGridModule, SharedModule } from '@gauzy/ui-core/shared';
 import { FormsModule, ReactiveFormsModule } from '@angular/forms';
-import { Ng2SmartTableModule } from 'ng2-smart-table';
 import { PipelineFormComponent } from './pipeline-form/pipeline-form.component';
 import { StageFormComponent } from './stage-form/stage-form.component';
-import { DragDropModule } from '@angular/cdk/drag-drop';
+import { DealsService, PipelinesService } from '@gauzy/ui-core/core';
 import { PipelineDealsComponent } from './pipeline-deals/pipeline-deals.component';
 import { PipelineDealFormComponent } from './pipeline-deals/pipeline-deal-form/pipeline-deal-form.component';
-import { CardGridModule } from '../../@shared/card-grid/card-grid.module';
-import { ThemeModule } from '../../@theme/theme.module';
-import { BackNavigationModule } from '../../@shared/back-navigation/back-navigation.module';
+import { PipelineDealsBoardComponent } from './pipeline-deals/pipeline-deals-board/pipeline-deals-board.component';
 import { PipelineDealExcerptComponent } from './table-components/pipeline-deal-excerpt/pipeline-deal-excerpt.component';
 import { PipelineDealProbabilityComponent } from './table-components/pipeline-deal-probability/pipeline-deal-probability.component';
-import { NgxPermissionsModule } from 'ngx-permissions';
-import { HeaderTitleModule } from '../../@shared/components/header-title/header-title.module';
-import { PaginationModule } from '../../@shared/pagination/pagination.module';
-import { DealsService, PipelinesService } from '../../@core/services';
+import { StageComponent } from './stage/stage.component';
+import { PipelinesRouting } from './pipelines.routing';
+import { PipelinesComponent } from './pipelines.component';
 
 @NgModule({
 	declarations: [
@@ -40,7 +38,8 @@ import { DealsService, PipelinesService } from '../../@core/services';
 		PipelineDealsComponent,
 		PipelineFormComponent,
 		PipelinesComponent,
-		StageFormComponent
+		StageFormComponent,
+		StageComponent
 	],
 	exports: [
 		PipelineDealExcerptComponent,
@@ -50,31 +49,31 @@ import { DealsService, PipelinesService } from '../../@core/services';
 		PipelinesComponent,
 		StageFormComponent
 	],
-	providers: [PipelinesService, DealsService],
 	imports: [
-		NbDialogModule.forChild(),
+		CommonModule,
 		ReactiveFormsModule,
-		Ng2SmartTableModule,
+		NbDialogModule.forChild(),
 		NbAccordionModule,
 		NbFormFieldModule,
 		NbSpinnerModule,
 		PipelinesRouting,
-		TranslateModule,
+		TranslatePipe,
 		DragDropModule,
 		NbButtonModule,
 		NbSelectModule,
 		NbInputModule,
 		NbCheckboxModule,
-		CommonModule,
 		NbCardModule,
 		NbIconModule,
 		FormsModule,
 		CardGridModule,
-		ThemeModule,
-		BackNavigationModule,
+		SharedModule,
 		NgxPermissionsModule.forChild(),
-		HeaderTitleModule,
-		PaginationModule
-	]
+		SmartDataViewLayoutModule,
+		NbTabsetModule,
+		// The deals board: a standalone view of a pipeline's deals, one column per stage.
+		PipelineDealsBoardComponent
+	],
+	providers: [PipelinesService, DealsService]
 })
 export class PipelinesModule {}

@@ -1,15 +1,15 @@
 import { NgModule } from '@angular/core';
 import { RouterModule, Routes } from '@angular/router';
 import { PermissionsEnum } from '@gauzy/contracts';
-import { NgxPermissionsGuard } from 'ngx-permissions';
-import { SMTPComponent } from '../../../@shared/smtp/smtp.component';
+import { PermissionsGuard } from '@gauzy/ui-core/core';
+import { SMTPComponent } from '@gauzy/ui-core/shared';
 import { CustomSmtpComponent } from './custom-smtp.component';
 
 const routes: Routes = [
 	{
 		path: '',
 		component: CustomSmtpComponent,
-		canActivate: [NgxPermissionsGuard],
+		canActivate: [PermissionsGuard],
 		data: {
 			permissions: {
 				only: [PermissionsEnum.CUSTOM_SMTP_VIEW],

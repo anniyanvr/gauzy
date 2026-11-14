@@ -1,54 +1,39 @@
-import { InjectionToken, NgModule } from '@angular/core';
-import { Routes, RouterModule, ActivatedRouteSnapshot } from '@angular/router';
+import { NgModule } from '@angular/core';
+import { Routes, RouterModule } from '@angular/router';
 import { PermissionsEnum } from '@gauzy/contracts';
-import { NgxPermissionsGuard } from 'ngx-permissions';
+import { ExternalRedirectGuard, PermissionsGuard } from '@gauzy/ui-core/core';
 import { ImportExportComponent } from './import-export.component';
+import { ExternalRedirectComponent } from './external-redirect/external-redirect.component';
 
-const externalUrlProvider = new InjectionToken('externalUrlRedirectResolver');
 const routes: Routes = [
 	{
 		path: '',
 		component: ImportExportComponent,
-		canActivate: [NgxPermissionsGuard],
+		canActivate: [PermissionsGuard],
 		data: {
 			permissions: {
-				only: [PermissionsEnum.IMPORT_EXPORT_VIEW],
+				only: [PermissionsEnum.IMPORT_ADD, PermissionsEnum.EXPORT_ADD],
 				redirectTo: '/pages/settings'
 			}
 		}
 	},
 	{
 		path: 'export',
-		loadChildren: () =>
-			import('./export/export.module').then((m) => m.ExportModule)
+		loadChildren: () => import('./export/export.module').then((m) => m.ExportModule)
 	},
 	{
 		path: 'import',
-		loadChildren: () =>
-			import('./import/import.module').then((m) => m.ImportModule)
+		loadChildren: () => import('./import/import.module').then((m) => m.ImportModule)
 	},
 	{
 		path: 'external-redirect',
-		resolve: {
-			url: externalUrlProvider,
-		},
-		canActivate: [externalUrlProvider]
+		component: ExternalRedirectComponent,
+		canActivate: [ExternalRedirectGuard]
 	}
 ];
 
 @NgModule({
 	imports: [RouterModule.forChild(routes)],
-	exports: [RouterModule],
-	providers: [
-        {
-            provide: externalUrlProvider,
-            useValue: (
-				route: ActivatedRouteSnapshot
-			) => {
-                const externalUrl = route.paramMap.get('redirect');
-				window.open(externalUrl, '_blank');
-            }
-        },
-    ],
+	exports: [RouterModule]
 })
 export class ImportExportRoutingModule {}

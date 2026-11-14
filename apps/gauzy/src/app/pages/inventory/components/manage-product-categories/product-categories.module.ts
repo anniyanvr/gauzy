@@ -1,53 +1,42 @@
 import { NgModule } from '@angular/core';
+import { CommonModule } from '@angular/common';
 import { ReactiveFormsModule, FormsModule } from '@angular/forms';
-import { TranslateModule } from '../../../../@shared/translate/translate.module';
-import { ProductCategoryService } from '../../../../@core/services/product-category.service';
-import { Ng2SmartTableModule } from 'ng2-smart-table';
-import { SharedModule } from '../../../../@shared/shared.module';
 import {
 	NbCardModule,
 	NbButtonModule,
 	NbIconModule,
-    NbSpinnerModule,
-    NbInputModule
+	NbSpinnerModule,
+	NbInputModule,
+	NbTooltipModule
 } from '@nebular/theme';
-import { CommonModule } from '@angular/common';
-import { HeaderTitleModule } from '../../../../@shared/components/header-title/header-title.module';
-import { ThemeModule } from '../../../../@theme/theme.module';
+import { NgxPermissionsModule } from 'ngx-permissions';
+import { TranslatePipe } from '@ngx-translate/core';
+import { ProductCategoryService } from '@gauzy/ui-core/core';
+import { SmartDataViewLayoutModule, CardGridModule, ProductMutationModule } from '@gauzy/ui-core/shared';
+import { SharedModule } from '@gauzy/ui-core/shared';
 import { ProductCategoriesComponent } from './product-categories.component';
 import { ProductCategoriesRoutingModule } from './product-categories-routing.module';
-import { ProductMutationModule } from '../../../../@shared/product-mutation/product-mutation.module';
-import { CardGridModule } from '../../../../@shared/card-grid/card-grid.module';
-import { PaginationModule } from '../../../../@shared/pagination/pagination.module';
-
-
-const NB_MODULES = [
-	NbCardModule,
-	NbButtonModule,
-	NbIconModule,
-    NbSpinnerModule,
-    NbInputModule
-];
-
 
 @NgModule({
-    declarations: [ProductCategoriesComponent],
-    imports: [
-        ProductCategoriesRoutingModule,
-        ReactiveFormsModule,
-        FormsModule,
-        TranslateModule,
-        Ng2SmartTableModule,
-        CommonModule,
-        TranslateModule,
-        ...NB_MODULES,
-        SharedModule,
-        HeaderTitleModule,
-        ThemeModule,
-        ProductMutationModule,
-        CardGridModule,
-        PaginationModule
-    ],
-    providers: [ProductCategoryService]
+	declarations: [ProductCategoriesComponent],
+	imports: [
+		CommonModule,
+		FormsModule,
+		ReactiveFormsModule,
+		NbCardModule,
+		NbButtonModule,
+		NbIconModule,
+		NbSpinnerModule,
+		NbInputModule,
+		NbTooltipModule,
+		NgxPermissionsModule.forChild(),
+		TranslatePipe,
+		SharedModule,
+		ProductCategoriesRoutingModule,
+		ProductMutationModule,
+		CardGridModule,
+		SmartDataViewLayoutModule
+	],
+	providers: [ProductCategoryService]
 })
-export class ProductCategoriesModule { }
+export class ProductCategoriesModule {}

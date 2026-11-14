@@ -1,18 +1,17 @@
-import { Component, ViewChild, OnInit } from '@angular/core';
-import { LocalDataSource } from 'ng2-smart-table';
+import { Component, OnInit, ChangeDetectionStrategy } from '@angular/core';
+import { LocalDataSource } from 'angular2-smart-table';
 import { TranslateService } from '@ngx-translate/core';
-import { TranslationBaseComponent } from 'apps/gauzy/src/app/@shared/language-base/translation-base.component';
+import { TranslationBaseComponent } from '@gauzy/ui-core/i18n';
 import { IProductVariant } from '@gauzy/contracts';
+import { firstValueFrom } from 'rxjs';
 import { first } from 'rxjs/operators';
 import { Router } from '@angular/router';
 import { NbDialogService } from '@nebular/theme';
-import { DeleteConfirmationComponent } from 'apps/gauzy/src/app/@shared/user/forms/delete-confirmation/delete-confirmation.component';
-import { ProductVariantService } from 'apps/gauzy/src/app/@core/services/product-variant.service';
-import { EnabledStatusComponent } from '../../table-components/enabled-row.component';
-import { ToastrService } from 'apps/gauzy/src/app/@core/services/toastr.service';
-import { ImageRowComponent } from '../../table-components/image-row.component';
-import { InventoryStore } from 'apps/gauzy/src/app/@core/services/inventory-store.service';
+import { EnabledStatusComponent } from '../../inventory-table-components/enabled-row.component';
+import { ImageRowComponent } from '../../inventory-table-components/image-row.component';
 import { UntilDestroy, untilDestroyed } from '@ngneat/until-destroy';
+import { InventoryStore, ProductVariantService, ToastrService } from '@gauzy/ui-core/core';
+import { DeleteConfirmationComponent } from '@gauzy/ui-core/shared';
 
 export interface SelectedProductVariant {
 	data: IProductVariant;
@@ -22,15 +21,13 @@ export interface SelectedProductVariant {
 @UntilDestroy()
 @Component({
 	selector: 'ngx-variant-table',
-	templateUrl: './variant-table.component.html'
+	templateUrl: './variant-table.component.html',
+	styleUrls: ['./variant-table.component.scss'],
+	changeDetection: ChangeDetectionStrategy.Eager,
+	standalone: false
 })
-export class VariantTableComponent
-	extends TranslationBaseComponent
-	implements OnInit {
-	@ViewChild('variantTable') variantTable;
-
+export class VariantTableComponent extends TranslationBaseComponent implements OnInit {
 	variants: IProductVariant[] = [];
-
 	selectedItem: IProductVariant;
 	settingsSmartTable: object;
 	smartTableSource = new LocalDataSource();
@@ -40,7 +37,7 @@ export class VariantTableComponent
 	constructor(
 		readonly translateService: TranslateService,
 		private router: Router,
-		private dialogService: NbDialogService,
+		private readonly dialogService: NbDialogService,
 		private productVariantService: ProductVariantService,
 		private toastrService: ToastrService,
 		private inventoryStore: InventoryStore
@@ -51,18 +48,16 @@ export class VariantTableComponent
 	async ngOnInit() {
 		this.loadSmartTable();
 
-		this.inventoryStore.activeProduct$
-			.pipe(untilDestroyed(this))
-			.subscribe(async (activeProduct) => {
+		this.inventoryStore.activeProduct$.pipe(untilDestroyed(this)).subscribe(async (activeProduct) => {
+			if (activeProduct.id) {
+				let res = await this.productVariantService.getVariantsByProductId(activeProduct.id);
 
-				if(activeProduct.id) {				
-					let res = await this.productVariantService.getVariantsByProductId(activeProduct.id);
+				this.variants = res.items;
+			}
 
-					this.variants = res.items;
-				}
-				this.loading = false;
-				this.smartTableSource.load(this.variants);
-			});
+			this.loading = false;
+			this.smartTableSource.load(this.variants);
+		});
 
 		this._applyTranslationOnSmartTable();
 	}
@@ -70,6 +65,7 @@ export class VariantTableComponent
 	async loadSmartTable() {
 		this.settingsSmartTable = {
 			actions: false,
+			selectedRowIndex: -1,
 			columns: {
 				image: {
 					title: this.getTranslation('INVENTORY_PAGE.IMAGE'),
@@ -79,14 +75,10 @@ export class VariantTableComponent
 				options: {
 					title: this.getTranslation('INVENTORY_PAGE.OPTIONS'),
 					type: 'string',
-					valuePrepareFunction: (_, variant) => {
-						return variant.options && variant.options.length > 0
-							? variant.options
-								.map((option) => option.name)
-								.join(', ')
-							: this.getTranslation(
-								'INVENTORY_PAGE.NO_OPTIONS_LABEL'
-							);
+					valuePrepareFunction: (_, options) => {
+						return options.value && options.value.length > 0
+							? options.value.map((option) => option.name).join(', ')
+							: this.getTranslation('INVENTORY_PAGE.NO_OPTIONS_LABEL');
 					}
 				},
 				internalReference: {
@@ -113,26 +105,16 @@ export class VariantTableComponent
 	}
 
 	async selectItem({ isSelected, data }) {
-		const selectedItem = isSelected ? data : null;
-		if (this.variantTable) {
-			this.variantTable.grid.dataSet.willSelect = false;
-		}
 		this.disableButton = !isSelected;
-		this.selectedItem = selectedItem;
+		this.selectedItem = isSelected ? data : null;
 	}
 
 	async delete() {
-		const result = await this.dialogService
-			.open(DeleteConfirmationComponent)
-			.onClose.pipe(first())
-			.toPromise();
-
+		const result = await firstValueFrom(this.dialogService.open(DeleteConfirmationComponent).onClose.pipe(first()));
 		if (!result) return;
 
 		try {
-			const res = await this.productVariantService.delete(
-				this.selectedItem.id
-			);
+			const res = await this.productVariantService.delete(this.selectedItem.id);
 
 			if (res.affected > 0) {
 				this.inventoryStore.deleteVariant(this.selectedItem);
@@ -144,9 +126,7 @@ export class VariantTableComponent
 					});
 				}
 
-				this.toastrService.success(
-					'INVENTORY_PAGE.PRODUCT_VARIANT_DELETED'
-				);
+				this.toastrService.success('INVENTORY_PAGE.PRODUCT_VARIANT_DELETED');
 			}
 		} catch {
 			this.toastrService.danger('TOASTR.MESSAGE.SOMETHING_BAD_HAPPENED');

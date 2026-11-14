@@ -1,44 +1,52 @@
 import { NgModule } from '@angular/core';
-import { HttpClientModule } from '@angular/common/http';
-import {
-	NbCardModule,
-	NbButtonModule,
-	NbInputModule,
-	NbIconModule,
-	NbRadioModule,
-	NbToastrModule
-} from '@nebular/theme';
+import { CommonModule } from '@angular/common';
+import { provideHttpClient, withInterceptorsFromDi, withXhr } from '@angular/common/http';
 import { FormsModule } from '@angular/forms';
+import {
+	NbBadgeModule,
+	NbButtonModule,
+	NbCardModule,
+	NbIconModule,
+	NbInputModule,
+	NbRadioModule,
+	NbSpinnerModule,
+	NbToastrModule,
+	NbTooltipModule
+} from '@nebular/theme';
 import { NgxPermissionsModule } from 'ngx-permissions';
-import { ImportComponent } from './import.component';
 import { FileUploadModule } from 'ng2-file-upload';
-import { ThemeModule } from '../../../@theme/theme.module';
+import { ExportAllService } from '@gauzy/ui-core/core';
+import { TranslatePipe } from '@ngx-translate/core';
+import { FileUploaderModule, GauzyButtonActionModule, SharedModule } from '@gauzy/ui-core/shared';
+import { ImportComponent } from './import.component';
 import { ImportRoutingModule } from './import-routing.module';
-import { ExportAllService } from '../../../@core/services/export-all.service';
-import { FileUploaderModule } from '../../../@shared/file-uploader-input/file-uploader-input.module';
-import { TranslateModule } from '../../../@shared/translate/translate.module';
-import { SharedModule } from '../../../@shared/shared.module';
 
 @NgModule({
-	imports: [
-		ImportRoutingModule,
-		ThemeModule,
-		NbCardModule,
-		FormsModule,
-		NbButtonModule,
-		FileUploaderModule,
-		NbIconModule,
-		NbInputModule,
-		NbRadioModule,
-		FileUploadModule,
-		HttpClientModule,
-		NbToastrModule.forRoot(),
-		TranslateModule,
-		NgxPermissionsModule.forChild(),
-		SharedModule
-	],
 	declarations: [ImportComponent],
-	exports: [ImportComponent],
-	providers: [ExportAllService]
+    exports: [ImportComponent],
+	imports: [
+		CommonModule,
+        FormsModule,
+        FileUploadModule,
+        NbBadgeModule,
+        NbButtonModule,
+        NbCardModule,
+        NbIconModule,
+        NbInputModule,
+        NbRadioModule,
+        NbSpinnerModule,
+        NbToastrModule.forRoot(),
+        NbTooltipModule,
+        ImportRoutingModule,
+        NgxPermissionsModule.forChild(),
+        TranslatePipe,
+        SharedModule,
+        FileUploaderModule,
+        GauzyButtonActionModule
+	],
+	providers: [
+		ExportAllService,
+		provideHttpClient(withXhr(), withInterceptorsFromDi())
+	]
 })
 export class ImportModule {}

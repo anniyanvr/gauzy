@@ -1,9 +1,7 @@
-import { Component, OnInit, OnDestroy } from '@angular/core';
-import { TranslationBaseComponent } from '../../../@shared/language-base/translation-base.component';
+import { Component, OnInit, OnDestroy, ChangeDetectionStrategy } from '@angular/core';
 import { TranslateService } from '@ngx-translate/core';
-import { FormBuilder, FormGroup, Validators } from '@angular/forms';
+import { UntypedFormBuilder, UntypedFormGroup, Validators } from '@angular/forms';
 import { NbDialogRef } from '@nebular/theme';
-import { EmployeesService } from '../../../@core/services';
 import { takeUntil } from 'rxjs/operators';
 import { Subject } from 'rxjs';
 import {
@@ -14,19 +12,18 @@ import {
 	KeyResultNumberUnitsEnum,
 	IOrganization
 } from '@gauzy/contracts';
-import { Store } from '../../../@core/services/store.service';
-import { GoalSettingsService } from '../../../@core/services/goal-settings.service';
-import { ToastrService } from '../../../@core/services/toastr.service';
+import { TranslationBaseComponent } from '@gauzy/ui-core/i18n';
+import { EmployeesService, GoalSettingsService, Store, ToastrService } from '@gauzy/ui-core/core';
 
 @Component({
 	selector: 'ga-edit-kpi',
 	templateUrl: './edit-kpi.component.html',
-	styleUrls: ['./edit-kpi.component.scss']
+	styleUrls: ['./edit-kpi.component.scss'],
+	changeDetection: ChangeDetectionStrategy.Eager,
+	standalone: false
 })
-export class EditKpiComponent
-	extends TranslationBaseComponent
-	implements OnInit, OnDestroy {
-	kpiForm: FormGroup;
+export class EditKpiComponent extends TranslationBaseComponent implements OnInit, OnDestroy {
+	kpiForm: UntypedFormGroup;
 	employees: IEmployee[];
 	selectedKPI: IKPI;
 	type: string;
@@ -37,7 +34,7 @@ export class EditKpiComponent
 	private _ngDestroy$ = new Subject<void>();
 	organization: IOrganization;
 	constructor(
-		private fb: FormBuilder,
+		private fb: UntypedFormBuilder,
 		readonly translate: TranslateService,
 		private dialogRef: NbDialogRef<EditKpiComponent>,
 		private employeeService: EmployeesService,
@@ -46,6 +43,17 @@ export class EditKpiComponent
 		private readonly toastrService: ToastrService
 	) {
 		super(translate);
+	}
+
+	get isNumericOrCurrency(): boolean {
+		return (
+			this.kpiForm?.value?.type === KpiMetricEnum.NUMERICAL ||
+			this.kpiForm?.value?.type === KpiMetricEnum.CURRENCY
+		);
+	}
+
+	get kpiColClass(): string {
+		return this.isNumericOrCurrency ? 'col-md-6' : 'col-md-12';
 	}
 
 	ngOnInit(): void {
@@ -57,10 +65,7 @@ export class EditKpiComponent
 			currentValue: [0],
 			targetValue: [1],
 			lead: ['', Validators.required],
-			operator: [
-				KpiOperatorEnum.GREATER_THAN_EQUAL_TO,
-				Validators.required
-			],
+			operator: [KpiOperatorEnum.GREATER_THAN_EQUAL_TO, Validators.required],
 			unit: [KeyResultNumberUnitsEnum.ITEMS]
 		});
 		const { id: organizationId, tenantId } = this.organization;
@@ -71,11 +76,7 @@ export class EditKpiComponent
 				this.employees = employees.items;
 			});
 		if (!!this.selectedKPI) {
-			if (
-				!this.numberUnitsEnum.find(
-					(unit) => unit === this.selectedKPI.unit
-				)
-			) {
+			if (!this.numberUnitsEnum.find((unit) => unit === this.selectedKPI.unit)) {
 				this.numberUnitsEnum.push(this.selectedKPI.unit);
 			}
 			this.kpiForm.patchValue({
@@ -106,16 +107,12 @@ export class EditKpiComponent
 				}
 			});
 		} else {
-			await this.goalSettingsService
-				.updateKPI(this.selectedKPI.id, kpiData)
-				.then((res) => {
-					if (res) {
-						this.toastrService.success(
-							'TOASTR.MESSAGE.KPI_UPDATED'
-						);
-						this.closeDialog(res);
-					}
-				});
+			await this.goalSettingsService.updateKPI(this.selectedKPI.id, kpiData).then((res) => {
+				if (res) {
+					this.toastrService.success('TOASTR.MESSAGE.KPI_UPDATED');
+					this.closeDialog(res);
+				}
+			});
 		}
 	}
 

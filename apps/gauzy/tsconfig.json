@@ -1,14 +1,17 @@
 {
 	"extends": "../../tsconfig.json",
 	"compilerOptions": {
-		"types": ["node", "jest", "googlemaps"],
-		"target": "es2016",
-		"downlevelIteration": true
+		"target": "ES2022",
+		"module": "preserve",
+		"downlevelIteration": true,
+		"useDefineForClassFields": false,
+		"moduleResolution": "bundler"
 	},
 	"angularCompilerOptions": {
 		"fullTemplateTypeCheck": false,
 		"strictTemplates": false,
 		"strictInjectionParameters": false
 	},
-	"include": ["**/*.ts"]	
+	"include": ["**/*.ts", "**/*.tsx", "**/workers/*.js"],
+	"exclude": ["jest.config.ts"]
 }

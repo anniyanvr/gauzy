@@ -1,12 +1,16 @@
-public/features/*.png
-public/reports/*.png
-public/screenshots/**/*.jpg
-public/screenshots/**/*.png
-public/invoices/pdf/*.pdf
+# dependencies
+node_modules/
 
-# Ignore Import/Export Path
-public/import/
-public/export/
+# misc
+npm-debug.log
+dist
+
+# Ignore everything in this public directory
+public/**/*.*
+
+# Except these (.gitkeep) files
+!public/.gitkeep
+!public/**/.gitkeep
 
 data/*
 report.*.json

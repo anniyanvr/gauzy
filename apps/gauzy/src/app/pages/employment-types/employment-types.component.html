@@ -1,45 +1,126 @@
-<nb-card class="card-scroll">
-	<nb-card-header>
-		<div class="header-wrapper">
-			<h4> <ngx-header-title> {{ 'ORGANIZATIONS_PAGE.EMPLOYMENT_TYPES' | translate }} </ngx-header-title> </h4>
-			<div class="header-wrapper">
-				<ga-layout-selector
-					[componentName]="viewComponentName"
-				></ga-layout-selector>
-			</div>
+<nb-card class="m-0">
+	<nb-card-header class="card-custom-header">
+		<div class="card-header-title">
+			<h4>
+				<ngx-header-title [allowEmployee]="false">
+					{{ 'ORGANIZATIONS_PAGE.EMPLOYMENT_TYPES' | translate }}
+				</ngx-header-title>
+			</h4>
 		</div>
 	</nb-card-header>
-	<nb-card-body>
-		<div class="mb-3">
-			<ng-container
-				*ngIf="showAddCard; then editableTemplate; else buttonTemplate"
+	<nb-card-body class="p-0">
+		<div class="gauzy-button-container">
+			<ngx-gauzy-button-action
+				[buttonTemplate]="actionButtons"
+				[componentName]="viewComponentName"
+				[buttonTemplateVisible]="visibleButton"
+				[isDisable]="disabled"
 			>
-			</ng-container>
-			<ng-template #editableTemplate>
-				<form [formGroup]="form" *ngIf="form" class="row">
-					<div
-						class="col-sm-12 col-md-3 d-flex flex-column justify-content-end"
-					>
-						<label class="label">{{
-							'ORGANIZATIONS_PAGE.EMPLOYMENT_TYPE_NAME'
-								| translate
-						}}</label>
+			</ngx-gauzy-button-action>
+		</div>
+		<nb-tabset>
+			<nb-tab [tabTitle]="'ORGANIZATIONS_PAGE.BROWSE' | translate" [tabId]="employmentTypeTabsEnum.BROWSE">
+				@if (dataLayoutStyle === componentLayoutStyleEnum.TABLE && organizationEmploymentTypes?.length) {
+				<div class="table-scroll-container">
+					@for (employmentType of organizationEmploymentTypes; track employmentType.id) {
+					<nb-card class="p-0">
+						<nb-card-body
+							class="custom-table"
+							[class.selected]="selected?.state && employmentType === selected?.employmentType"
+							(click)="selectOrganizationEmploymentType(employmentType)"
+						>
+							<ga-notes-with-tags [rowData]="employmentType"> </ga-notes-with-tags>
+						</nb-card-body>
+					</nb-card>
+					}
+				</div>
+				} @else if (organizationEmploymentTypes?.length === 0) {
+				<div class="no-data">
+					<ngx-no-data-message
+						[message]="'ORGANIZATIONS_PAGE.EMPLOYMENT_TYPE_NO_DATA_MESSAGE' | translate"
+					></ngx-no-data-message>
+				</div>
+				} @else if ( dataLayoutStyle === componentLayoutStyleEnum.CARDS_GRID &&
+				organizationEmploymentTypes?.length ) {
+				<div class="grid">
+					<ga-card-grid
+						[totalItems]="$safeNavigationMigration(pagination?.totalItems)"
+						[settings]="settingsSmartTable"
+						[source]="organizationEmploymentTypes"
+						(onSelectedItem)="selectOrganizationEmploymentType($event)"
+						(scroll)="onScroll()"
+					></ga-card-grid>
+				</div>
+				}
+			</nb-tab>
+			<nb-tab [tabTitle]="'ORGANIZATIONS_PAGE.SEARCH' | translate" [tabId]="employmentTypeTabsEnum.SEARCH">
+				<ga-wip></ga-wip>
+			</nb-tab>
+		</nb-tabset>
+	</nb-card-body>
+</nb-card>
+<ng-template #visibleButton>
+	<button (click)="openDialog(editableTemplate, false)" nbButton class="action" status="success" size="small">
+		<nb-icon icon="plus-outline"></nb-icon>
+		{{ 'BUTTONS.ADD' | translate }}
+	</button>
+</ng-template>
+<ng-template #actionButtons>
+	<div class="actions">
+		<button
+			(click)="openDialog(editableTemplate, true)"
+			nbButton
+			status="basic"
+			class="action primary"
+			[disabled]="disabled"
+			size="small"
+		>
+			<nb-icon icon="edit-outline"></nb-icon>
+			{{ 'BUTTONS.EDIT' | translate }}
+		</button>
+		<button
+			(click)="deleteEmploymentType(selected.employmentType.id, selected.employmentType.name)"
+			nbButton
+			status="basic"
+			class="action"
+			[disabled]="disabled"
+			size="small"
+			[nbTooltip]="'BUTTONS.DELETE' | translate"
+		>
+			<nb-icon status="danger" icon="trash-2-outline"> </nb-icon>
+		</button>
+	</div>
+</ng-template>
+<ng-template #editableTemplate let-ref="dialogRef">
+	<div class="editable">
+		<div class="container">
+			<div class="row">
+				<div class="col-sm-12 d-flex justify-content-end">
+					<i class="fas fa-times" (click)="onCancelClick(ref)"></i>
+				</div>
+			</div>
+			<div class="row mb-3">
+				<h5 class="title mr-3 ml-3">
+					{{ titleKey() | translate }}
+				</h5>
+			</div>
+			@if (form) {
+			<form [formGroup]="form">
+				<div class="row mb-3">
+					<div class="col-sm-12 d-flex flex-column">
+						<label class="label">{{ 'ORGANIZATIONS_PAGE.EMPLOYMENT_TYPE_NAME' | translate }}</label>
 						<input
 							required
 							formControlName="name"
 							nbInput
 							type="text"
-							(keyup)="onKeyEnter($event)"
-							[placeholder]="
-								'ORGANIZATIONS_PAGE.EMPLOYMENT_TYPE_NAME'
-									| translate
-							"
+							[placeholder]="'ORGANIZATIONS_PAGE.EMPLOYMENT_TYPE_NAME' | translate"
 							fullWidth
 						/>
 					</div>
-					<div
-						class="col-sm-12 col-md-3 d-flex flex-column justify-content-end"
-					>
+				</div>
+				<div class="row mb-3">
+					<div class="col-sm-12 d-flex flex-column">
 						<ga-tags-color-input
 							[selectedTags]="tags"
 							(selectedTagsEvent)="selectedTagsEvent($event)"
@@ -47,183 +128,18 @@
 						>
 						</ga-tags-color-input>
 					</div>
-					<div
-						class="col-sm-12 col-md-3 d-flex flex-column justify-content-end"
-					>
-						<button
-							class="w-100 mt-3"
-							(click)="submitForm()"
-							nbButton
-							status="success"
-							[disabled]="form.invalid"
-						>
-							{{ 'BUTTONS.SAVE' | translate }}
-						</button>
-					</div>
-					<div
-						class="col-sm-12 col-md-3 d-flex flex-column justify-content-end"
-					>
-						<button
-							class="w-100 mt-3"
-							(click)="cancel()"
-							nbButton
-							status="danger"
-						>
-							{{ 'BUTTONS.CANCEL' | translate }}
-						</button>
-					</div>
-				</form>
-			</ng-template>
-			<ng-template #buttonTemplate>
-				<button (click)="add()" nbButton status="success">
-					<nb-icon class="mr-1" icon="plus-outline"></nb-icon>
-					{{ 'BUTTONS.ADD' | translate }}
-				</button>
-			</ng-template>
+				</div>
+				<div class="row mb-3">
+					<div class="col-sm-12"></div>
+					<button class="delete mr-3 ml-3" (click)="onCancelClick(ref)" nbButton status="basic" outline>
+						{{ 'BUTTONS.CANCEL' | translate }}
+					</button>
+					<button (click)="onSaveClick(ref)" nbButton status="success" [disabled]="form.invalid">
+						{{ 'BUTTONS.SAVE' | translate }}
+					</button>
+				</div>
+			</form>
+			}
 		</div>
-
-		<div
-			*ngIf="
-				organizationEmploymentTypes?.length &&
-				dataLayoutStyle === 'TABLE'
-			"
-		>
-			<nb-card *ngFor="let employmentType of organizationEmploymentTypes">
-				<nb-card-body
-					style="
-						display: flex;
-						align-items: center;
-						justify-content: space-between;
-						overflow: inherit;
-					"
-				>
-					<ga-notes-with-tags
-						[rowData]="employmentType"
-						*ngIf="employmentType !== selectedOrgEmpType"
-					>
-					</ga-notes-with-tags>
-					<div
-						*ngIf="
-							showEditDiv && employmentType === selectedOrgEmpType
-						"
-						class="row m-0 w-100"
-					>
-						<div
-							class="col-sm-12 col-md-3 d-flex flex-column justify-content-end"
-						>
-							<label class="label">{{
-								'ORGANIZATIONS_PAGE.EMPLOYMENT_TYPE_NAME'
-									| translate
-							}}</label>
-							<input
-								#editInput="ngModel"
-								required
-								nbInput
-								type="text"
-								fullWidth
-								[(ngModel)]="employmentType.name"
-							/>
-						</div>
-						<div
-							class="col-sm-12 col-md-3 d-flex flex-column justify-content-end"
-						>
-							<ga-tags-color-input
-								[selectedTags]="tags"
-								(selectedTagsEvent)="selectedTagsEvent($event)"
-								[isOrgLevel]="true"
-							>
-							</ga-tags-color-input>
-						</div>
-						<div
-							class="col-sm-12 col-md-3 d-flex flex-column justify-content-end"
-						>
-							<button
-								class="w-100 mt-3"
-								(click)="
-									editOrgEmpType(
-										employmentType.id,
-										editInput.value
-									)
-								"
-								nbButton
-								status="success"
-								[disabled]="editInput.invalid"
-							>
-								{{ 'BUTTONS.UPDATE' | translate }}
-							</button>
-						</div>
-						<div
-							class="col-sm-12 col-md-3 d-flex flex-column justify-content-end"
-						>
-							<button
-								class="w-100 mt-3"
-								(click)="cancel()"
-								nbButton
-								status="danger"
-							>
-								{{ 'BUTTONS.CANCEL' | translate }}
-							</button>
-						</div>
-					</div>
-					<nb-actions
-						class="float-right"
-						e="medium"
-						*ngIf="employmentType !== selectedOrgEmpType"
-					>
-						<nb-action
-							(click)="showEditCard(employmentType)"
-							class="d-inline pr-0 pr-2"
-							icon="edit"
-						></nb-action>
-						<nb-action
-							(click)="
-								deleteEmploymentType(
-									employmentType.id,
-									employmentType.name
-								)
-							"
-							class="d-inline pr-0 pl-2"
-							icon="close"
-						></nb-action>
-					</nb-actions>
-				</nb-card-body>
-			</nb-card>
-		</div>
-		<ga-card-grid
-			*ngIf="dataLayoutStyle === 'CARDS_GRID'"
-			[settings]="settingsSmartTable"
-			[source]="organizationEmploymentTypes"
-			[buttonTemplate]="actionButtons"
-		></ga-card-grid>
-		<ng-template
-			#actionButtons
-			let-buttonSize="buttonSize"
-			let-selectedItem="selectedItem"
-		>
-			<button
-				(click)="gridEdit(selectedItem)"
-				nbButton
-				status="info"
-				class="mr-2"
-				[disabled]="!selectedItem"
-				[size]="buttonSize || 'medium'"
-			>
-				<nb-icon class="mr-1" icon="edit-outline"></nb-icon>
-				{{ 'BUTTONS.EDIT' | translate }}
-			</button>
-			<button
-				(click)="
-					deleteEmploymentType(selectedItem.id, selectedItem.name)
-				"
-				nbButton
-				status="danger"
-				class="mr-2"
-				[disabled]="!selectedItem"
-				[size]="buttonSize || 'medium'"
-			>
-				<nb-icon class="mr-1" icon="archive-outline"> </nb-icon>
-				{{ 'BUTTONS.DELETE' | translate }}
-			</button>
-		</ng-template>
-	</nb-card-body>
-</nb-card>
+	</div>
+</ng-template>

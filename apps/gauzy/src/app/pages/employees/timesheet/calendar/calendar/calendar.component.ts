@@ -1,87 +1,87 @@
 // tslint:disable: nx-enforce-module-boundaries
+import { Component, OnInit, ViewChild, AfterViewInit, OnDestroy, TemplateRef, ChangeDetectorRef, ChangeDetectionStrategy } from '@angular/core';
+import { NbDialogService } from '@nebular/theme';
 import {
-	Component,
-	OnInit,
-	ViewChild,
-	AfterViewInit,
-	OnDestroy,
-	TemplateRef,
-	ChangeDetectorRef
-} from '@angular/core';
-import { CalendarOptions, EventInput } from '@fullcalendar/core';
+	CalendarOptions,
+	DateSelectArg,
+	EventClickArg,
+	EventDropArg,
+	EventHoveringArg,
+	EventInput
+} from '@fullcalendar/core';
 import { FullCalendarComponent } from '@fullcalendar/angular';
 import dayGridPlugin from '@fullcalendar/daygrid';
 import timeGrigPlugin from '@fullcalendar/timegrid';
-import interactionPlugin from '@fullcalendar/interaction';
+import interactionPlugin, { DateClickArg, EventResizeDoneArg } from '@fullcalendar/interaction';
 import bootstrapPlugin from '@fullcalendar/bootstrap';
-import * as moment from 'moment';
-import {
-	IGetTimeLogInput,
-	IOrganization,
-	ITimeLog,
-	ITimeLogFilters,
-	OrganizationPermissionsEnum
-} from '@gauzy/contracts';
-import { toUTC, toLocal } from '@gauzy/common-angular';
-import { Store } from './../../../../../@core/services/store.service';
-import { combineLatest, Subject } from 'rxjs';
 import { UntilDestroy, untilDestroyed } from '@ngneat/until-destroy';
-import { debounceTime, filter, tap } from 'rxjs/operators';
-import { NbDialogService } from '@nebular/theme';
-import { TimesheetService } from './../../../../../@shared/timesheet/timesheet.service';
-import { EditTimeLogModalComponent } from './../../../../../@shared/timesheet/edit-time-log-modal/edit-time-log-modal.component';
-import { ViewTimeLogModalComponent } from './../../../../../@shared/timesheet/view-time-log-modal/view-time-log-modal/view-time-log-modal.component';
 import { NgxPermissionsService } from 'ngx-permissions';
-import { TimesheetFilterService } from './../../../../../@shared/timesheet/timesheet-filter.service';
-import * as _ from 'underscore';
+import { TranslateService } from '@ngx-translate/core';
+import * as moment from 'moment';
+import { pick } from 'underscore';
+import { Observable } from 'rxjs';
+import { filter, tap } from 'rxjs/operators';
+import { DateRangePickerBuilderService, Store, TimesheetFilterService, TimesheetService } from '@gauzy/ui-core/core';
+import { isEmpty, toTimezone } from '@gauzy/ui-core/common';
+import { IGetTimeLogInput, ITimeLog, ITimeLogFilters, PermissionsEnum, TimeFormatEnum } from '@gauzy/contracts';
+import {
+	BaseSelectorFilterComponent,
+	EditTimeLogModalComponent,
+	GauzyFiltersComponent,
+	TimeZoneService,
+	ViewTimeLogModalComponent,
+	dayOfWeekAsString
+} from '@gauzy/ui-core/shared';
 
 @UntilDestroy({ checkProperties: true })
 @Component({
-	selector: 'ngx-calendar',
-	templateUrl: './calendar.component.html'
+	selector: 'ngx-calendar-timesheet',
+	templateUrl: './calendar.component.html',
+	styleUrls: ['./calendar.component.scss'],
+	changeDetection: ChangeDetectionStrategy.Eager,
+	standalone: false
 })
-export class CalendarComponent implements OnInit, AfterViewInit, OnDestroy {
-	OrganizationPermissionsEnum = OrganizationPermissionsEnum;
+export class CalendarComponent extends BaseSelectorFilterComponent implements OnInit, AfterViewInit, OnDestroy {
 	@ViewChild('calendar', { static: true }) calendar: FullCalendarComponent;
-	@ViewChild('viewLogTemplate', { static: true })
-	viewLogTemplate: TemplateRef<any>;
+	@ViewChild('viewLogTemplate', { static: true }) viewLogTemplate: TemplateRef<any>;
+	@ViewChild(GauzyFiltersComponent) gauzyFiltersComponent: GauzyFiltersComponent;
+
+	datePickerConfig$: Observable<any> = this.dateRangePickerBuilderService.datePickerConfig$;
+
+	PermissionsEnum = PermissionsEnum;
 	calendarComponent: FullCalendarComponent; // the #calendar in the template
 	calendarOptions: CalendarOptions;
-	updateLogs$: Subject<any> = new Subject();
-	organization: IOrganization;
-	employeeId: string;
-	loading: boolean;
+	filters: ITimeLogFilters;
+	loading: boolean = false;
 	futureDateAllowed: boolean;
-	logRequest: ITimeLogFilters = {};
-	selectedEmployeeId: string | null = null;
-	projectId: string | null = null;
 
 	constructor(
-		private readonly timesheetService: TimesheetService,
-		private readonly store: Store,
+		public readonly translateService: TranslateService,
+		private readonly cdr: ChangeDetectorRef,
 		private readonly nbDialogService: NbDialogService,
+		private readonly timesheetService: TimesheetService,
 		private readonly timesheetFilterService: TimesheetFilterService,
 		private readonly ngxPermissionsService: NgxPermissionsService,
-		private readonly cdr: ChangeDetectorRef
+		protected readonly store: Store,
+		protected readonly dateRangePickerBuilderService: DateRangePickerBuilderService,
+		protected readonly timeZoneService: TimeZoneService
 	) {
+		super(store, translateService, dateRangePickerBuilderService, timeZoneService);
 		this.calendarOptions = {
 			initialView: 'timeGridWeek',
 			headerToolbar: {
-				left: 'prev,next today',
+				left: '',
 				center: 'title',
 				right: 'dayGridMonth,timeGridWeek,timeGridDay'
 			},
 			themeSystem: 'bootstrap',
-			plugins: [
-				dayGridPlugin,
-				timeGrigPlugin,
-				interactionPlugin,
-				bootstrapPlugin
-			],
+			plugins: [dayGridPlugin, timeGrigPlugin, interactionPlugin, bootstrapPlugin],
+			showNonCurrentDates: false,
 			weekends: true,
 			height: 'auto',
 			editable: true,
 			selectable: true,
+			firstDay: 1,
 			selectAllow: this.selectAllow.bind(this),
 			events: this.getEvents.bind(this),
 			eventDrop: this.handleEventDrop.bind(this),
@@ -95,207 +95,270 @@ export class CalendarComponent implements OnInit, AfterViewInit, OnDestroy {
 	}
 
 	ngOnInit() {
-		const storeOrganization$ = this.store.selectedOrganization$;
-		const storeEmployee$ = this.store.selectedEmployee$;
-		const storeProject$ = this.store.selectedProject$;
-		combineLatest([storeOrganization$, storeEmployee$, storeProject$])
+		this.subject$
 			.pipe(
-				filter(([organization]) => !!organization),
-				tap(([organization, employee, project]) => {
-					if (organization) {
-						this.organization = organization;
-						this.selectedEmployeeId = employee ? employee.id : null;
-						this.projectId = project ? project.id : null;
-						this.updateLogs$.next(true);
-					}
-				}),
+				filter(() => !!this.calendar.getApi() && !!this.organization),
+				tap(() => this.setCalendarOptions()),
+				tap(() => this.setCalendarInitialView()),
 				untilDestroyed(this)
 			)
 			.subscribe();
-		this.ngxPermissionsService.permissions$
-			.pipe(untilDestroyed(this))
-			.subscribe(async () => {
-				this.futureDateAllowed = await this.ngxPermissionsService.hasPermission(
-					OrganizationPermissionsEnum.ALLOW_FUTURE_DATE
-				);
-				if (this.calendar.getApi()) {
-					const calendar = this.calendar.getApi();
-					if (
-						await this.ngxPermissionsService.hasPermission(
-							OrganizationPermissionsEnum.ALLOW_MANUAL_TIME
-						)
-					) {
-						calendar.setOption('selectable', true);
-					} else {
-						calendar.setOption('selectable', false);
-					}
-
-					if (
-						await this.ngxPermissionsService.hasPermission(
-							OrganizationPermissionsEnum.ALLOW_MODIFY_TIME
-						)
-					) {
-						calendar.setOption('editable', true);
-					} else {
-						calendar.setOption('editable', false);
-					}
-				}
-			});
-	}
-
-	filtersChange($event: ITimeLogFilters) {
-		this.logRequest = $event;
-		if (this.logRequest.date && this.calendar.getApi()) {
-			this.calendar.getApi().gotoDate(this.logRequest.date);
-		}
-
-		this.timesheetFilterService.filter = $event;
-		this.updateLogs$.next(true);
 	}
 
 	ngAfterViewInit() {
 		this.cdr.detectChanges();
-		this.updateLogs$
-			.pipe(debounceTime(800), untilDestroyed(this))
-			.subscribe(() => {
-				if (this.calendar.getApi()) {
-					this.calendar.getApi().refetchEvents();
-				}
-			});
 	}
 
-	getEvents(arg, callback) {
-		if (!this.organization || !this.logRequest) {
-			return null;
+	/**
+	 * Handles the change in time log filters.
+	 *
+	 * @param filters The new set of filters for time logs.
+	 */
+	filtersChange(filters: ITimeLogFilters): void {
+		if (this.gauzyFiltersComponent.saveFilters) {
+			// Save filters if the saveFilters flag is enabled
+			this.timesheetFilterService.filter = filters;
 		}
 
-		const _startDate = moment(arg.start)
-			.startOf('day')
-			.format('YYYY-MM-DD HH:mm:ss');
-		const _endDate = moment(arg.end)
-			.endOf('day')
-			.format('YYYY-MM-DD HH:mm:ss');
-		const { id: organizationId } = this.organization;
-		const { tenantId } = this.store.user;
-		const appliedFilter = _.pick(
-			this.logRequest,
-			'source',
-			'activityLevel',
-			'logType'
+		// Update component filters
+		this.filters = { ...filters };
+
+		// Notify subscribers about the filter change
+		this.subject$.next(true);
+	}
+
+	/**
+	 * SET calendar options
+	 *
+	 * @returns
+	 */
+	async setCalendarOptions() {
+		if (!this.organization || !this.calendar.getApi()) {
+			return;
+		}
+
+		const calendar = this.calendar.getApi();
+		const { allowManualTime, allowModifyTime, futureDateAllowed, startWeekOn } = this.organization;
+
+		this.futureDateAllowed = futureDateAllowed;
+
+		// Set 'selectable' option based on organization settings and user permissions
+		calendar.setOption(
+			'selectable',
+			(await this.ngxPermissionsService.hasPermission(PermissionsEnum.ALLOW_MANUAL_TIME)) && allowManualTime
 		);
 
-		const employeeIds: string[] = [];
-		if (this.selectedEmployeeId) {
-			employeeIds.push(this.selectedEmployeeId);
+		// Set 'editable' option based on organization settings and user permissions
+		calendar.setOption(
+			'editable',
+			(await this.ngxPermissionsService.hasPermission(PermissionsEnum.ALLOW_MODIFY_TIME)) && allowModifyTime
+		);
+
+		// Set 'firstDay' option to define the start of the week
+		calendar.setOption('firstDay', dayOfWeekAsString(startWeekOn));
+
+		// Set 'slotLabelFormat' option for slot labels
+		calendar.setOption('slotLabelFormat', {
+			hour: '2-digit',
+			minute: '2-digit',
+			hour12: this.filters?.timeFormat === TimeFormatEnum.FORMAT_12_HOURS
+		});
+
+		// Set 'eventTimeFormat' option for event times
+		calendar.setOption('eventTimeFormat', {
+			hour: '2-digit',
+			minute: '2-digit',
+			hour12: this.filters?.timeFormat === TimeFormatEnum.FORMAT_12_HOURS
+		});
+	}
+
+	/**
+	 * Sets the initial view of the calendar based on organization settings and request parameters.
+	 */
+	setCalendarInitialView(): void {
+		if (!this.organization || !this.calendar.getApi()) {
+			return;
 		}
 
-		const projectIds: string[] = [];
-		if (this.projectId) {
-			projectIds.push(this.projectId);
+		const { startDate } = this.request;
+
+		if (this.isMoreThanUnit('weeks')) {
+			// If the time range is more than weeks, set the initial view to month view
+			this.calendar.getApi().changeView('dayGridMonth', startDate);
+		} else if (this.isMoreThanUnit('days')) {
+			// If the time range is more than days, set the initial view to week view
+			this.calendar.getApi().changeView('timeGridWeek', startDate);
+		} else {
+			// Otherwise, set the initial view to day view
+			this.calendar.getApi().changeView('timeGridDay', startDate);
 		}
 
+		// Refresh events after changing the view
+		this.calendar.getApi().refetchEvents();
+	}
+
+	/**
+	 * Fetches events based on the provided arguments and invokes the callback with the events.
+	 *
+	 * @param {Object} arg - The argument containing the start and end dates.
+	 * @param {Function} callback - The callback function to be called with the fetched events.
+	 * @returns {Promise<void>}
+	 */
+	getEvents(arg: any, callback: Function): Promise<void> {
+		if (!this.organization || isEmpty(this.request)) {
+			return;
+		}
+
+		const timeZone = this.timeZoneService.currentTimeZone;
+		const startDate = moment(arg.start).startOf('day').format('YYYY-MM-DD HH:mm:ss');
+		const endDate = moment(arg.end).subtract(1, 'days').endOf('day').format('YYYY-MM-DD HH:mm:ss');
+		const appliedFilter = pick(this.filters, 'source', 'activityLevel', 'logType');
 		const request: IGetTimeLogInput = {
-			organizationId,
-			tenantId,
 			...appliedFilter,
-			startDate: toUTC(_startDate).format('YYYY-MM-DD HH:mm:ss'),
-			endDate: toUTC(_endDate).format('YYYY-MM-DD HH:mm:ss'),
-			...(employeeIds.length > 0 ? { employeeIds } : {}),
-			...(projectIds.length > 0 ? { projectIds } : {})
+			...this.getFilterRequest({ startDate, endDate })
 		};
 
-		this.loading = true;
-		this.timesheetService
-			.getTimeLogs(request)
-			.then((logs: ITimeLog[]) => {
-				const events = logs.map(
-					(log: ITimeLog): EventInput => {
-						const title = log.project
-							? log.project.name
-							: 'No project';
-						return {
-							id: log.id,
-							title: title,
-							start: toLocal(log.startedAt).toDate(),
-							end: toLocal(log.stoppedAt).toDate(),
-							log: log
-						};
-					}
-				);
+		try {
+			this.loading = true;
+			const timeLogs$ = this.timesheetService.getTimeLogs(request, [
+				'project',
+				'task',
+				'organizationContact',
+				'employee.user'
+			]);
+			timeLogs$.then((logs: ITimeLog[]) => {
+				const events = logs.map((log: ITimeLog): EventInput => {
+					const title = log.project ? log.project.name : this.getTranslation('TIMESHEET.NO_PROJECT');
+					return {
+						id: log.id,
+						title: title,
+						start: toTimezone(log.startedAt, timeZone).format('YYYY-MM-DD HH:mm:ss'),
+						end: toTimezone(log.stoppedAt, timeZone).format('YYYY-MM-DD HH:mm:ss'),
+						log: log
+					};
+				});
 				callback(events);
-			})
-			.finally(() => (this.loading = false));
+			});
+		} finally {
+			this.loading = false;
+		}
 	}
 
-	selectAllow({ start, end }) {
+	/**
+	 * Determines if the date selection is allowed based on the criteria.
+	 *
+	 * @param param0 - An object containing the start and end dates of the selection.
+	 * @returns {boolean} - Returns true if the selection is allowed, false otherwise.
+	 */
+	selectAllow({ start, end }): boolean {
 		const isOneDay = moment(start).isSame(moment(end), 'day');
-		return this.futureDateAllowed
-			? isOneDay
-			: isOneDay && moment(end).isSameOrBefore(moment());
+		return this.futureDateAllowed ? isOneDay : isOneDay && moment(end).isSameOrBefore(moment());
 	}
 
-	handleEventClick({ event }) {
+	/**
+	 * Handles the event click action by opening a modal dialog to view the time log details.
+	 *
+	 * @param param0 - An object containing the clicked event.
+	 */
+	handleEventClick({ event }: EventClickArg) {
 		this.nbDialogService.open(ViewTimeLogModalComponent, {
 			context: { timeLog: event.extendedProps.log },
 			dialogClass: 'view-log-dialog'
 		});
 	}
 
-	handleDateClick(event) {
+	/**
+	 * Handles the click event on a date in the calendar.
+	 * Changes the view to the week view starting from the clicked date.
+	 *
+	 * @param event - The click event object.
+	 */
+	handleDateClick(event: DateClickArg): void {
 		if (this.calendar.getApi()) {
 			this.calendar.getApi().changeView('timeGridWeek', event.date);
 		}
 	}
 
-	handleEventSelect(event) {
+	/**
+	 * Handles the selection of an event (time slot) in the calendar.
+	 * Opens a dialog for creating a new event/appointment.
+	 *
+	 * @param event - The event object representing the selected time slot.
+	 */
+	handleEventSelect(event: DateSelectArg): void {
 		this.openDialog({
 			startedAt: event.start,
 			stoppedAt: event.end,
-			employeeId: this.logRequest.employeeIds
-				? this.logRequest.employeeIds[0]
-				: null,
-			projectId: this.logRequest.projectIds
-				? this.logRequest.projectIds[0]
-				: null
+			employeeId: this.request.employeeIds ? this.request.employeeIds[0] : null,
+			projectId: this.request.projectIds ? this.request.projectIds[0] : null
 		});
 	}
 
-	handleEventMouseEnter({ el }) {
+	/**
+	 * Handles the mouse enter event on a FullCalendar event element.
+	 * Adjusts the position of the event element if it has overflow.
+	 *
+	 * @param param0 - An object containing the event element (`el`).
+	 */
+	handleEventMouseEnter({ el }: EventHoveringArg): void {
 		if (this.hasOverflow(el.querySelector('.fc-event-main'))) {
 			el.style.position = 'unset';
 		}
 	}
-	handleEventMouseLeave({ el }) {
+
+	/**
+	 * Handles the mouse leave event on a FullCalendar event element.
+	 * Removes any custom styles applied during mouse enter.
+	 *
+	 * @param param0 - An object containing the event element (`el`).
+	 */
+	handleEventMouseLeave({ el }: EventHoveringArg): void {
 		el.removeAttribute('style');
 	}
 
-	handleEventDrop({ event }) {
-		this.updateTimeLog(event.id, {
+	/**
+	 * Handles the event drop action by updating the time log with the new start and end times.
+	 *
+	 * @param param0 - An object containing the dropped event.
+	 */
+	async handleEventDrop({ event }: EventDropArg) {
+		await this.updateTimeLog(event.id, {
 			startedAt: event.start,
 			stoppedAt: event.end
 		});
 	}
 
-	handleEventResize({ event }) {
-		this.updateTimeLog(event.id, {
+	/**
+	 * Handles the event resize action by updating the time log with the new start and end times.
+	 *
+	 * @param param0 - An object containing the resized event.
+	 */
+	async handleEventResize({ event }: EventResizeDoneArg) {
+		await this.updateTimeLog(event.id, {
 			startedAt: event.start,
 			stoppedAt: event.end
 		});
 	}
 
+	/**
+	 * Checks if an HTML element has overflow content, either horizontally or vertically.
+	 *
+	 * @param el The HTML element to check for overflow.
+	 * @returns True if the element has overflow content, otherwise false.
+	 */
 	hasOverflow(el: HTMLElement) {
 		if (!el) {
 			return;
 		}
 		const curOverflow = el.style ? el.style.overflow : 'hidden';
 
-		if (!curOverflow || curOverflow === 'visible')
-			el.style.overflow = 'hidden';
+		// Temporarily set overflow to hidden if it's not already set or set to visible
+		if (!curOverflow || curOverflow === 'visible') el.style.overflow = 'hidden';
 
-		const isOverflowing =
-			el.clientWidth < el.scrollWidth ||
-			el.clientHeight < el.scrollHeight;
+		// Check if the element has overflow content
+		const isOverflowing = el.clientWidth < el.scrollWidth || el.clientHeight < el.scrollHeight;
 
+		// Restore the original overflow style
 		if (el.style) {
 			el.style.overflow = curOverflow;
 		}
@@ -303,19 +366,50 @@ export class CalendarComponent implements OnInit, AfterViewInit, OnDestroy {
 		return isOverflowing;
 	}
 
+	/**
+	 * Opens a dialog to edit a time log.
+	 *
+	 * @param timeLog An optional parameter representing the time log to be edited.  It can be a complete ITimeLog object or a partial one.
+	 */
 	openDialog(timeLog?: ITimeLog | Partial<ITimeLog>) {
-		this.nbDialogService
-			.open(EditTimeLogModalComponent, { context: { timeLog } })
-			.onClose.subscribe(() => {
-				this.updateLogs$.next(true);
-			});
+		const dialog$ = this.nbDialogService.open(EditTimeLogModalComponent, { context: { timeLog } });
+		dialog$.onClose
+			.pipe(
+				filter((timeLog: ITimeLog) => !!timeLog),
+				tap((timeLog: ITimeLog) =>
+					this.dateRangePickerBuilderService.refreshDateRangePicker(moment(timeLog.startedAt), this.timeZoneService.currentTimeZone)
+				),
+				tap(() => this.subject$.next(true)),
+				untilDestroyed(this)
+			)
+			.subscribe();
 	}
 
-	updateTimeLog(id: string, timeLog: ITimeLog | Partial<ITimeLog>) {
-		this.loading = true;
-		this.timesheetService.updateTime(id, timeLog).then(() => {
-			this.loading = false;
-		});
+	/**
+	 * Updates a time log with the provided ID.
+	 *
+	 * @param id The ID of the time log to be updated.
+	 * @param timeLog The time log data to update. It can be a complete ITimeLog object or a partial one.
+	 * @returns A promise that resolves when the update operation completes.
+	 */
+	async updateTimeLog(id: string, timeLog: ITimeLog | Partial<ITimeLog>): Promise<void> {
+		try {
+			this.loading = true; // Set loading indicator
+			await this.timesheetService.updateTime(id, timeLog); // Call service to update time log
+		} finally {
+			this.loading = false; // Reset loading indicator
+		}
+	}
+
+	/**
+	 * If, selected date range are more than a weeks/days
+	 */
+	isMoreThanUnit(unitOfTime: moment.unitOfTime.Base): boolean {
+		if (!this.request.startDate) {
+			return false;
+		}
+		const { startDate, endDate } = this.request;
+		return moment(endDate).diff(moment(startDate), unitOfTime) > 0;
 	}
 
 	ngOnDestroy() {}

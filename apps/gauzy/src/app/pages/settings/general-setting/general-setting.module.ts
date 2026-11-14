@@ -1,21 +1,48 @@
 import { NgModule } from '@angular/core';
-import { NbCardModule, NbRouteTabsetModule } from '@nebular/theme';
-import { ThemeModule } from '../../../@theme/theme.module';
-import { FeatureToggleModule } from '../../../@shared/feature-toggle/feature-toggle.module';
-import { TranslateModule } from '../../../@shared/translate/translate.module';
+import { CommonModule } from '@angular/common';
+import { ReactiveFormsModule } from '@angular/forms';
+import { RouterModule } from '@angular/router';
+import {
+	NbAccordionModule,
+	NbButtonModule,
+	NbCardModule,
+	NbIconModule,
+	NbInputModule,
+	NbRadioModule,
+	NbRouteTabsetModule,
+	NbSelectModule,
+	NbSpinnerModule,
+	NbToggleModule
+} from '@nebular/theme';
+import { TranslatePipe } from '@ngx-translate/core';
+import { LanguagesService, TenantService } from '@gauzy/ui-core/core';
+import { FeatureToggleModule, ImageUploaderModule, SharedModule } from '@gauzy/ui-core/shared';
 import { GeneralSettingRoutingModule } from './general-setting-routing.module';
 import { GeneralSettingComponent } from './general-setting.component';
+import { PersonalSettingsComponent } from './personal-settings/personal-settings.component';
 
 @NgModule({
 	imports: [
-		ThemeModule,
+		CommonModule,
+		ReactiveFormsModule,
+		RouterModule,
+		NbAccordionModule,
+		NbButtonModule,
 		NbCardModule,
+		NbIconModule,
+		NbInputModule,
+		NbRadioModule,
 		NbRouteTabsetModule,
-		TranslateModule,
+		NbSelectModule,
+		NbSpinnerModule,
+		NbToggleModule,
+		TranslatePipe,
+		GeneralSettingRoutingModule,
 		FeatureToggleModule,
-        GeneralSettingRoutingModule
+		ImageUploaderModule,
+		SharedModule
 	],
-	declarations: [GeneralSettingComponent],
-	providers: []
+	declarations: [GeneralSettingComponent, PersonalSettingsComponent],
+	providers: [LanguagesService, TenantService]
 })
 export class GeneralSettingModule {}

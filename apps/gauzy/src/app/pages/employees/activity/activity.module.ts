@@ -1,23 +1,121 @@
-import { NgModule } from '@angular/core';
-import { CommonModule } from '@angular/common';
-
-import { ActivityRoutingModule } from './activity-routing.module';
-import { LayoutComponent } from './layout/layout.component';
-import { TranslateModule } from '@ngx-translate/core';
-import { NbCardModule, NbRouteTabsetModule } from '@nebular/theme';
-import { ShareModule } from '../../../share/share.module';
-import { HeaderTitleModule } from '../../../@shared/components/header-title/header-title.module';
+import { Inject, NgModule } from '@angular/core';
+import { ROUTES, RouterModule } from '@angular/router';
+import { NbCardModule, NbIconModule, NbSpinnerModule, NbTooltipModule } from '@nebular/theme';
+import { TranslatePipe } from '@ngx-translate/core';
+import { BookmarkQueryParamsResolver, PageRouteRegistryService } from '@gauzy/ui-core/core';
+import { DateRangePickerResolver, DynamicTabsModule, GauzyFiltersModule, SharedModule } from '@gauzy/ui-core/shared';
+import { createActivityRoutes } from './activity.routes';
+import { ActivityLayoutComponent } from './layout/layout.component';
+import { AppUrlActivityComponent } from './app-url-activity/app-url-activity.component';
 
 @NgModule({
-	declarations: [LayoutComponent],
 	imports: [
-		CommonModule,
-		ActivityRoutingModule,
+		RouterModule.forChild([]),
 		NbCardModule,
-		TranslateModule,
-		ShareModule,
-		NbRouteTabsetModule,
-		HeaderTitleModule
+		NbIconModule,
+		NbSpinnerModule,
+		NbTooltipModule,
+		TranslatePipe,
+		DynamicTabsModule,
+		GauzyFiltersModule,
+		SharedModule
+	],
+	declarations: [ActivityLayoutComponent, AppUrlActivityComponent],
+	providers: [
+		{
+			provide: ROUTES,
+			useFactory: (service: PageRouteRegistryService) => createActivityRoutes(service),
+			deps: [PageRouteRegistryService],
+			multi: true
+		}
 	]
 })
-export class ActivityModule {}
+export class ActivityModule {
+	private static hasRegisteredPageRoutes = false; // Flag to check if routes have been registered
+
+	constructor(@Inject(PageRouteRegistryService) readonly _pageRouteRegistryService: PageRouteRegistryService) {
+		// Register the routes
+		this.registerPageRoutes();
+	}
+
+	/**
+	 * Registers page routes for the activity module.
+	 * Ensures that routes are registered only once.
+	 *
+	 * @returns {void}
+	 */
+	registerPageRoutes(): void {
+		if (ActivityModule.hasRegisteredPageRoutes) {
+			return;
+		}
+
+		// Register Time & Activity Page Routes
+		this._pageRouteRegistryService.registerPageRoute({
+			location: 'time-activity-sections',
+			path: 'time-activities',
+			loadChildren: () =>
+				import('./time-activities/time-activities.module').then((m) => m.TimeAndActivitiesModule)
+		});
+
+		// Register Screenshot Page Routes
+		this._pageRouteRegistryService.registerPageRoute({
+			location: 'time-activity-sections',
+			path: 'screenshots',
+			loadChildren: () => import('./screenshot/screenshot.module').then((m) => m.ScreenshotModule)
+		});
+
+		// Register Videos Page Routes
+		this._pageRouteRegistryService.registerPageRoute({
+			location: 'time-activity-sections',
+			path: 'videos',
+			loadChildren: () => import('@gauzy/plugin-videos-ui').then((m) => m.VideoUiModule)
+		});
+
+		// Register App Activity Page Routes
+		this._pageRouteRegistryService.registerPageRoute({
+			location: 'time-activity-sections',
+			path: 'apps',
+			component: AppUrlActivityComponent,
+			data: {
+				datePicker: {
+					unitOfTime: 'day',
+					isLockDatePicker: true,
+					isSaveDatePicker: true,
+					isSingleDatePicker: true,
+					isDisableFutureDate: true
+				},
+				title: 'ACTIVITY.APPS', // Register the title for the page
+				type: 'apps' // Register the type for the page
+			},
+			resolve: {
+				dates: DateRangePickerResolver,
+				bookmarkParams: BookmarkQueryParamsResolver
+			}
+		});
+
+		// Register URL Activity Page Routes
+		this._pageRouteRegistryService.registerPageRoute({
+			location: 'time-activity-sections',
+			path: 'urls',
+			component: AppUrlActivityComponent,
+			data: {
+				datePicker: {
+					unitOfTime: 'day',
+					isLockDatePicker: true,
+					isSaveDatePicker: true,
+					isSingleDatePicker: true,
+					isDisableFutureDate: true
+				},
+				title: 'ACTIVITY.VISITED_SITES', // Register the title for the page
+				type: 'urls' // Register the type for the page
+			},
+			resolve: {
+				dates: DateRangePickerResolver,
+				bookmarkParams: BookmarkQueryParamsResolver
+			}
+		});
+
+		// Set the flag to true
+		ActivityModule.hasRegisteredPageRoutes = true;
+	}
+}

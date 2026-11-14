@@ -1,39 +1,31 @@
 import { NgModule } from '@angular/core';
-import { CommonModule } from '@angular/common';
+import { NbButtonModule, NbCardModule, NbIconModule, NbSelectModule, NbSpinnerModule } from '@nebular/theme';
+import {
+	DailyGridModule,
+	DailyStatisticsModule,
+	GauzyFiltersModule,
+	LineChartModule,
+	SharedModule
+} from '@gauzy/ui-core/shared';
+import { TranslatePipe } from '@ngx-translate/core';
 import { TimeReportsRoutingModule } from './time-reports-routing.module';
 import { TimeReportsComponent } from './time-reports/time-reports.component';
-import { SharedModule } from '../../../@shared/shared.module';
-import { TranslateModule } from '@ngx-translate/core';
-import {
-	NbCardModule,
-	NbIconModule,
-	NbSelectModule,
-	NbSpinnerModule
-} from '@nebular/theme';
-import { FiltersModule } from '../../../@shared/timesheet/filters/filters.module';
-import { FormsModule } from '@angular/forms';
-import { DailyGridModule } from '../../../@shared/report/daily-grid/daily-grid.module';
-import { DailyStatisticsModule } from '../../../@shared/report/daily-statistics/daily-statistics.module';
-import { LineChartModule } from '../../../@shared/report/charts/line-chart/line-chart.module';
-import { HeaderTitleModule } from '../../../@shared/components/header-title/header-title.module';
 
 @NgModule({
 	declarations: [TimeReportsComponent],
 	imports: [
-		CommonModule,
+		NbButtonModule,
+		NbCardModule,
+		NbIconModule,
+		NbSelectModule,
+		NbSpinnerModule,
+		TranslatePipe,
 		SharedModule,
 		DailyGridModule,
 		DailyStatisticsModule,
 		TimeReportsRoutingModule,
 		LineChartModule,
-		TranslateModule,
-		NbIconModule,
-		NbSpinnerModule,
-		NbCardModule,
-		FiltersModule,
-		NbSelectModule,
-		FormsModule,
-		HeaderTitleModule
+		GauzyFiltersModule
 	]
 })
 export class TimeReportsModule {}

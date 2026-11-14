@@ -1,113 +1,110 @@
-import {
-	ITag,
-	IWarehouse,
-	IProductTranslatable,
-	IOrganization
-} from '@gauzy/contracts';
-import { FormGroup } from '@angular/forms';
+import { AfterViewInit, Component, Input, OnInit, ChangeDetectionStrategy } from '@angular/core';
+import { IWarehouse, IOrganization } from '@gauzy/contracts';
+import { distinctUntilChange } from '@gauzy/ui-core/common';
 import { TranslateService } from '@ngx-translate/core';
-import { TranslationBaseComponent } from 'apps/gauzy/src/app/@shared/language-base/translation-base.component';
-import { ToastrService } from 'apps/gauzy/src/app/@core/services/toastr.service';
-import { WarehouseService } from 'apps/gauzy/src/app/@core/services/warehouse.service';
-import { ActivatedRoute } from '@angular/router';
 import { UntilDestroy, untilDestroyed } from '@ngneat/until-destroy';
-import { Store } from 'apps/gauzy/src/app/@core/services/store.service';
-import { Location } from '@angular/common';
-import { Component, OnInit, ViewChild } from '@angular/core';
-import { LocalDataSource, Ng2SmartTableComponent } from 'ng2-smart-table';
-import { InventoryStore } from 'apps/gauzy/src/app/@core';
+import { Cell, LocalDataSource } from 'angular2-smart-table';
 import { NbDialogService } from '@nebular/theme';
+import { filter, firstValueFrom, Subject } from 'rxjs';
+import { debounceTime, tap } from 'rxjs/operators';
+import { InventoryStore, Store, WarehouseService } from '@gauzy/ui-core/core';
 import { SelectProductComponent } from '../select-product-form/select-product-form.component';
-import { firstValueFrom } from 'rxjs';
-import { ImageRowComponent } from '../../table-components/image-row.component';
+import { ImageRowComponent } from '../../inventory-table-components/image-row.component';
 import { ManageQuantityComponent } from '../manage-quantity/manage-quantity.component';
-import { ManageVariantsQuantityComponent } from '../manage-variants-quantity/manage-variants-quantity.component';
+import { IPaginationBase, PaginationFilterBaseComponent } from '@gauzy/ui-core/shared';
+import { ToastrService } from '@gauzy/ui-core/core';
 
-@UntilDestroy()
+@UntilDestroy({ checkProperties: true })
 @Component({
-	selector: 'ga-warehouse-products-table',
-	templateUrl: './warehouse-products-table.component.html',
-	styleUrls: ['./warehouse-products-table.component.scss']
+    selector: 'ga-warehouse-products-table',
+    templateUrl: './warehouse-products-table.component.html',
+    styleUrls: ['./warehouse-products-table.component.scss'],
+    changeDetection: ChangeDetectionStrategy.Eager,
+    standalone: false
 })
-export class WarehouseProductsTableComponent
-	extends TranslationBaseComponent
-	implements OnInit {
-	form: FormGroup;
-	tags: ITag[] = [];
+export class WarehouseProductsTableComponent extends PaginationFilterBaseComponent implements AfterViewInit, OnInit {
 	loading: boolean = true;
-
-	warehouse: IWarehouse;
-	warehouseId: String = '';
 	smartTableSource = new LocalDataSource();
-	warehouseProducts: IProductTranslatable[] = [];
-	organization: IOrganization;
-
 	settingsSmartTable: object;
-	warehoutProductTable: Ng2SmartTableComponent;
 
-	stockData: any = [];
+	public organization: IOrganization;
+	products$: Subject<boolean> = new Subject();
 
-	@ViewChild('warehouseStockTable') set content(
-		content: Ng2SmartTableComponent
-	) {
-		if (content) {
-			this.warehoutProductTable = content;
-		}
-	}
+	@Input() warehouse: IWarehouse;
+	selectedWarehouse: any = {
+		isSelected: false,
+		data: null
+	};
 
 	constructor(
-		private dialogService: NbDialogService,
-		private toastrService: ToastrService,
-		private warehouseService: WarehouseService,
+		private readonly dialogService: NbDialogService,
+		private readonly toastrService: ToastrService,
+		private readonly warehouseService: WarehouseService,
 		readonly translateService: TranslateService,
-		private route: ActivatedRoute,
-		private store: Store,
-		private location: Location,
-		private inventoryStore: InventoryStore
+		private readonly store: Store,
+		private readonly inventoryStore: InventoryStore
 	) {
 		super(translateService);
 	}
 
 	ngOnInit(): void {
-		this.loadSmartTable();
+		this._loadSmartTableSettings();
+	}
 
-		this.setRouteSubscription();
-
-		this.loadItems();
-
+	ngAfterViewInit(): void {
+		this.products$
+			.pipe(
+				debounceTime(100),
+				tap(() => this.loadItems()),
+				untilDestroyed(this)
+			)
+			.subscribe();
 		this.store.selectedOrganization$
-			.pipe(untilDestroyed(this))
-			.subscribe((organization: IOrganization) => {
-				if (organization) {
-					this.organization = organization;
-					this.loadItems();
-				}
-			});
-
+			.pipe(
+				debounceTime(100),
+				distinctUntilChange(),
+				filter((organization: IOrganization) => !!organization),
+				tap((organization: IOrganization) => (this.organization = organization)),
+				tap(() => this.products$.next(true)),
+				untilDestroyed(this)
+			)
+			.subscribe();
 		this.inventoryStore.warehouseProductsCountUpdate$
-			.pipe(untilDestroyed(this))
-			.subscribe(() => {
-				this.loadItems();
-			});
+			.pipe(
+				debounceTime(100),
+				distinctUntilChange(),
+				tap(() => this.products$.next(true)),
+				untilDestroyed(this)
+			)
+			.subscribe();
+		this.pagination$
+			.pipe(
+				debounceTime(100),
+				distinctUntilChange(),
+				tap(() => this.products$.next(true)),
+				untilDestroyed(this)
+			)
+			.subscribe();
 	}
 
-	private setRouteSubscription() {
-		this.route.params
-			.pipe(untilDestroyed(this))
-			.subscribe(async (params) => {
-				this.warehouseId = params.id;
-				this.warehouse = await this.warehouseService.getById(params.id);
-			});
-	}
-
-	async loadSmartTable() {
+	private _loadSmartTableSettings() {
+		const pagination: IPaginationBase = this.getPagination();
 		this.settingsSmartTable = {
 			actions: false,
+			mode: 'external',
+			selectedRowIndex: -1,
+			editable: true,
+			noDataMessage: this.getTranslation('SM_TABLE.NO_DATA.WAREHOUSE_PRODUCT'),
 			columns: {
 				image: {
 					title: this.getTranslation('INVENTORY_PAGE.IMAGE'),
 					type: 'custom',
-					renderComponent: ImageRowComponent
+					isFilterable: false,
+					renderComponent: ImageRowComponent,
+					componentInitFunction: (instance: ImageRowComponent, cell: Cell) => {
+						instance.rowData = cell.getRow().getData();
+						instance.value = cell.getValue();
+					}
 				},
 				name: {
 					title: this.getTranslation('INVENTORY_PAGE.NAME'),
@@ -116,74 +113,76 @@ export class WarehouseProductsTableComponent
 				quantity: {
 					title: this.getTranslation('INVENTORY_PAGE.QUANTITY'),
 					type: 'custom',
-					renderComponent: ManageQuantityComponent
-				},
-				variants: {
-					title: this.getTranslation(
-						'INVENTORY_PAGE.MANAGE_VARIANTS_QUANTITY'
-					),
-					type: 'custom',
-					renderComponent: ManageVariantsQuantityComponent
+					renderComponent: ManageQuantityComponent,
+					componentInitFunction: (instance: ManageQuantityComponent, cell: Cell) => {
+						instance.rowData = cell.getRow().getData();
+						instance.value = cell.getValue();
+					}
 				}
+			},
+			pager: {
+				display: false,
+				perPage: pagination ? pagination.itemsPerPage : this.minItemPerPage
 			}
 		};
 	}
 
 	handleImageUploadError(error) {
-		this.toastrService.danger(
-			error.error.message || error.message,
-			'TOASTR.TITLE.ERROR'
-		);
+		this.toastrService.danger(error.error.message || error.message, 'TOASTR.TITLE.ERROR');
 	}
 
 	async loadItems() {
+		if (!this.organization) {
+			return;
+		}
 		this.loading = true;
-
-		const items = await this.warehouseService.getWarehouseProducts(
-			this.warehouseId
-		);
-
-		this.loading = false;
-		this.stockData = items;
-
-		let mappedItems = items
-			? items.map((item) => {
-					return {
-						...item,
-						name: item.product.translations[0]['name'],
-						featuredImage: item.product.featuredImage,
-						quantity: item.quantity
-					};
-			  })
-			: [];
-
-		this.smartTableSource.load(mappedItems);
+		try {
+			const items = await this.warehouseService.getWarehouseProducts(this.warehouse.id);
+			let mappedItems = items
+				? items.map((item) => {
+						return {
+							...item,
+							name: item.product.translations[0]['name'],
+							featuredImage: item.product.featuredImage,
+							quantity: item.quantity
+						};
+				  })
+				: [];
+			const { activePage, itemsPerPage } = this.getPagination();
+			this.smartTableSource.setPaging(activePage, itemsPerPage);
+			this.smartTableSource.load(mappedItems);
+			this.setPagination({
+				...this.getPagination(),
+				totalItems: this.smartTableSource.count()
+			});
+		} catch (error) {
+		} finally {
+			this.loading = false;
+		}
 	}
 
 	async onAddProduct() {
-		const dialog = this.dialogService.open(SelectProductComponent, {});
-
-		const selectedProducts = await firstValueFrom(dialog.onClose);
-
+		if (!this.organization) {
+			return;
+		}
 		const { tenantId } = this.store.user;
-		const { id: organizationId } = this.store.selectedOrganization || { id: null };
+		const { id: organizationId } = this.store.selectedOrganization;
 
+		const dialog = this.dialogService.open(SelectProductComponent, {});
+		const selectedProducts = await firstValueFrom(dialog.onClose);
 
 		let createWarehouseProductsInput = selectedProducts
 			? selectedProducts.map((pr) => {
 					return {
 						productId: pr.id,
 						variants: pr.variants.map((variant) => variant.id),
-						tenant: { id: tenantId },
-						organization: { id: organizationId }
+						tenantId,
+						organizationId
 					};
 			  })
 			: [];
 
-		let result = await this.warehouseService.addWarehouseProducts(
-			createWarehouseProductsInput,
-			this.warehouseId
-		);
+		let result = await this.warehouseService.addWarehouseProducts(createWarehouseProductsInput, this.warehouse.id);
 
 		if (createWarehouseProductsInput.length && result) {
 			this.toastrService.success('INVENTORY_PAGE.SUCCESSFULLY_ADDED_PRODUCTS');
@@ -192,7 +191,11 @@ export class WarehouseProductsTableComponent
 		this.loadItems();
 	}
 
-	cancel() {
-		this.location.back();
+	public selectWarehouse(event: any) {
+		this.selectedWarehouse = event;
+	}
+
+	public get variants() {
+		return this.selectedWarehouse && this.selectedWarehouse.data ? this.selectedWarehouse.data.variants : [];
 	}
 }

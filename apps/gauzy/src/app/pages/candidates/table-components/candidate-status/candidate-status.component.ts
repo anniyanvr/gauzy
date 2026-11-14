@@ -1,13 +1,12 @@
-import { Component, Input } from '@angular/core';
-import { ViewCell } from 'ng2-smart-table';
+import { Component, Input, ChangeDetectionStrategy } from '@angular/core';
 
 @Component({
-	templateUrl: './candidate-status.component.html',
-	styleUrls: ['./candidate-status.component.scss']
+    templateUrl: './candidate-status.component.html',
+    styleUrls: ['./candidate-status.component.scss'],
+    changeDetection: ChangeDetectionStrategy.Eager,
+    standalone: false
 })
-export class CandidateStatusComponent implements ViewCell {
-	@Input()
-	rowData: any;
-
-	value: string | number;
+export class CandidateStatusComponent {
+	@Input() rowData: any;
+	@Input() value: string | number;
 }

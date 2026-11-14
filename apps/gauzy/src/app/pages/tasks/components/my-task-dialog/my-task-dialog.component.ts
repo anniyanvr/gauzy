@@ -1,16 +1,18 @@
-import { Component, Input, OnInit } from '@angular/core';
-import { ITask, IOrganizationProject, IEmployee, ITag } from '@gauzy/contracts';
-import { FormGroup, FormBuilder, Validators } from '@angular/forms';
+import { Component, Input, OnInit, ChangeDetectionStrategy } from '@angular/core';
+import { BaseEntityEnum, IEmployee, IOrganizationProject, ITag, ITask, TaskStatusEnum } from '@gauzy/contracts';
+import { UntypedFormBuilder, UntypedFormGroup, Validators } from '@angular/forms';
 import { NbDialogRef } from '@nebular/theme';
-import { OrganizationProjectsService } from '../../../../@core/services/organization-projects.service';
-import { Store } from '../../../../@core/services/store.service';
 import { TranslateService } from '@ngx-translate/core';
-import { ErrorHandlingService } from '../../../../@core/services/error-handling.service';
-import { TranslationBaseComponent } from '../../../../@shared/language-base/translation-base.component';
 import * as moment from 'moment';
-import { EmployeesService } from '../../../../@core/services';
 import { firstValueFrom } from 'rxjs';
-import { ToastrService } from 'apps/gauzy/src/app/@core/services/toastr.service';
+import { TranslationBaseComponent } from '@gauzy/ui-core/i18n';
+import {
+	EmployeesService,
+	ErrorHandlingService,
+	OrganizationProjectsService,
+	Store,
+	ToastrService
+} from '@gauzy/ui-core/core';
 
 const initialTaskValue = {
 	title: '',
@@ -27,50 +29,62 @@ const initialTaskValue = {
 @Component({
 	selector: 'ngx-my-task-dialog',
 	templateUrl: './my-task-dialog.component.html',
-	styleUrls: ['./my-task-dialog.component.scss']
+	styleUrls: ['./my-task-dialog.component.scss'],
+	changeDetection: ChangeDetectionStrategy.Eager,
+	standalone: false
 })
-export class MyTaskDialogComponent
-	extends TranslationBaseComponent
-	implements OnInit {
-	form: FormGroup;
+export class MyTaskDialogComponent extends TranslationBaseComponent implements OnInit {
 	selectedTaskId: string;
 	projects: IOrganizationProject[];
-	statuses: string[] = [
-		this.getTranslation('TASKS_PAGE.TODO'),
-		this.getTranslation('TASKS_PAGE.IN_PROGRESS'),
-		this.getTranslation('TASKS_PAGE.FOR_TESTING'),
-		this.getTranslation('TASKS_PAGE.COMPLETED')
-	];
 	employees: IEmployee[] = [];
 	selectedMembers: string[];
 	selectedTask: ITask;
+
+	/** Entity type the record-side Documents panel attaches its links to. */
+	readonly documentEntity = BaseEntityEnum.Task;
 	organizationId: string;
 	selectedTags: any;
 	participants = 'employees';
 	employeeId;
 	tags: ITag[] = [];
 	@Input() task: Partial<ITask> = {};
+	public form: UntypedFormGroup = MyTaskDialogComponent.buildForm(this.fb);
 
 	constructor(
-		public dialogRef: NbDialogRef<MyTaskDialogComponent>,
-		private fb: FormBuilder,
-		private store: Store,
-		private _organizationsStore: Store,
-		private organizationProjectsService: OrganizationProjectsService,
+		public readonly dialogRef: NbDialogRef<MyTaskDialogComponent>,
+		private readonly fb: UntypedFormBuilder,
+		private readonly store: Store,
+		private readonly _organizationsStore: Store,
+		private readonly organizationProjectsService: OrganizationProjectsService,
 		readonly translateService: TranslateService,
 		private readonly toastrService: ToastrService,
-		private errorHandler: ErrorHandlingService,
-		private employeesService: EmployeesService
+		private readonly errorHandler: ErrorHandlingService,
+		private readonly employeesService: EmployeesService
 	) {
 		super(translateService);
 	}
 
-	ngOnInit() {
-		this.loadProjects();
-		this.loadEmployees();
-		this.initializeForm(
-			Object.assign({}, initialTaskValue, this.selectedTask || this.task)
-		);
+	static buildForm(fb: UntypedFormBuilder): UntypedFormGroup {
+		return fb.group({
+			number: [{ value: '', disabled: true }],
+			title: [null, Validators.required],
+			project: [],
+			projectId: [],
+			status: [TaskStatusEnum.OPEN],
+			priority: [],
+			size: [],
+			members: [],
+			estimateDays: [],
+			estimateHours: [null, [Validators.min(0), Validators.max(23)]],
+			estimateMinutes: [null, [Validators.min(0), Validators.max(59)]],
+			dueDate: [],
+			description: [],
+			tags: [],
+			teams: [],
+			taskStatus: [],
+			taskSize: [],
+			taskPriority: []
+		});
 	}
 
 	private async loadProjects() {
@@ -86,6 +100,27 @@ export class MyTaskDialogComponent
 		if (items) this.projects = items;
 	}
 
+	private async loadEmployees() {
+		const organizationId = this._organizationsStore.selectedOrganization.id;
+		if (!organizationId) {
+			return;
+		}
+
+		const { items } = await firstValueFrom(
+			this.employeesService.getAll(['user'], {
+				organization: { id: organizationId }
+			})
+		);
+
+		this.employees = items;
+	}
+
+	async ngOnInit() {
+		await this.loadProjects();
+		await this.loadEmployees();
+		this.initializeForm(Object.assign({}, initialTaskValue, this.selectedTask || this.task));
+	}
+
 	initializeForm({
 		title,
 		description,
@@ -94,38 +129,43 @@ export class MyTaskDialogComponent
 		members,
 		estimate,
 		dueDate,
-		tags
+		tags,
+		priority,
+		size,
+		taskStatus,
+		taskSize,
+		taskPriority
 	}: ITask) {
 		const duration = moment.duration(estimate, 'seconds');
 		// select members from database of default value
 		this.selectedMembers = (members || []).map((member) => member.id);
 		// employee id of logged in user, if value is null, disable the save button
 		this.employeeId = null;
+
 		if (this.store.user) {
-			this.employeeId = this.store.user.employeeId || null;
+			this.employeeId = this.store.user?.employee?.id || null;
 		}
 		// select default id of logged in user
 		if (members === null) {
 			this.selectedMembers = [this.employeeId];
 		}
-		this.form = this.fb.group({
-			title: [title, Validators.required],
-			project: [project],
-			projectId: (project) ? project.id : null,
-			status: [status ? status : this.getTranslation('TASKS_PAGE.TODO')],
-			members: [members],
-			estimateDays: [duration.days() || ''],
-			estimateHours: [
-				duration.hours() || '',
-				[Validators.min(0), Validators.max(23)]
-			],
-			estimateMinutes: [
-				duration.minutes() || '',
-				[Validators.min(0), Validators.max(59)]
-			],
-			dueDate: [dueDate],
-			description: [description],
-			tags: [tags],
+		this.form.patchValue({
+			title,
+			project,
+			projectId: project ? project.id : null,
+			status,
+			priority,
+			size,
+			estimateDays: duration.days(),
+			estimateHours: duration.hours(),
+			estimateMinutes: duration.minutes(),
+			dueDate: dueDate ? new Date(dueDate) : null,
+			description,
+			tags,
+			members: [this.selectedMembers],
+			taskStatus,
+			taskSize,
+			taskPriority,
 			teams: []
 		});
 		this.tags = this.form.get('tags').value || [];
@@ -135,9 +175,7 @@ export class MyTaskDialogComponent
 		this.organizationId = this.store.selectedOrganization.id;
 		try {
 			this.toastrService.success(
-				this.getTranslation(
-					'NOTES.ORGANIZATIONS.EDIT_ORGANIZATIONS_PROJECTS.ADD_PROJECT'
-				),
+				this.getTranslation('NOTES.ORGANIZATIONS.EDIT_ORGANIZATIONS_PROJECTS.ADD_PROJECT'),
 				{ name: name }
 			);
 			return this.organizationProjectsService.create({
@@ -151,12 +189,13 @@ export class MyTaskDialogComponent
 
 	onSave() {
 		if (this.form.valid) {
+			this.form.get('status').setValue(this.form.get('taskStatus').value?.name);
+			this.form.get('priority').setValue(this.form.get('taskPriority').value?.name);
+			this.form.get('size').setValue(this.form.get('taskSize').value?.name);
 			this.form
 				.get('members')
 				.setValue(
-					(this.selectedMembers || [])
-						.map((id) => this.employees.find((e) => e.id === id))
-						.filter((e) => !!e)
+					(this.selectedMembers || []).map((id) => this.employees.find((e) => e.id === id)).filter((e) => !!e)
 				);
 			this.dialogRef.close(this.form.value);
 		}
@@ -168,18 +207,5 @@ export class MyTaskDialogComponent
 
 	selectedProject(project: IOrganizationProject) {
 		this.form.patchValue({ project });
-	}
-
-	private async loadEmployees() {
-		const organizationId = this._organizationsStore.selectedOrganization.id;
-		if (!organizationId) {
-			return;
-		}
-
-		const { items } = await firstValueFrom(this.employeesService
-			.getAll(['user'], { organization: { id: organizationId } })
-		);
-
-		this.employees = items;
 	}
 }

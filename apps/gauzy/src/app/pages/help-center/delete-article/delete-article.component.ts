@@ -1,20 +1,19 @@
 import { IHelpCenterArticle } from '@gauzy/contracts';
-import { Component, OnDestroy, Input, ErrorHandler } from '@angular/core';
+import { Component, OnDestroy, Input, ErrorHandler, ChangeDetectionStrategy } from '@angular/core';
 import { NbDialogRef } from '@nebular/theme';
 import { Subject } from 'rxjs';
 import { TranslateService } from '@ngx-translate/core';
-import { TranslationBaseComponent } from '../../../@shared/language-base/translation-base.component';
-import { HelpCenterArticleService } from '../../../@core/services/help-center-article.service';
-import { HelpCenterAuthorService } from '../../../@core/services/help-center-author.service';
+import { TranslationBaseComponent } from '@gauzy/ui-core/i18n';
+import { HelpCenterArticleService, HelpCenterAuthorService } from '@gauzy/ui-core/core';
 
 @Component({
-	selector: 'ga-article-category',
-	templateUrl: 'delete-article.component.html',
-	styleUrls: ['delete-article.component.scss']
+    selector: 'ga-article-category',
+    templateUrl: 'delete-article.component.html',
+    styleUrls: ['delete-article.component.scss'],
+    changeDetection: ChangeDetectionStrategy.Eager,
+    standalone: false
 })
-export class DeleteArticleComponent
-	extends TranslationBaseComponent
-	implements OnDestroy {
+export class DeleteArticleComponent extends TranslationBaseComponent implements OnDestroy {
 	@Input() article: IHelpCenterArticle;
 	private _ngDestroy$ = new Subject<void>();
 	constructor(
@@ -34,9 +33,7 @@ export class DeleteArticleComponent
 			this.errorHandler.handleError(error);
 		}
 		try {
-			await this.helpCenterAuthorService.deleteBulkByArticleId(
-				this.article.id
-			);
+			await this.helpCenterAuthorService.deleteBulkByArticleId(this.article.id);
 		} catch (error) {
 			this.errorHandler.handleError(error);
 		}

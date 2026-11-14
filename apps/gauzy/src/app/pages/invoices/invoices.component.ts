@@ -8,17 +8,20 @@ import {
 	ViewChildren,
 	TemplateRef,
 	AfterViewInit,
-	ChangeDetectorRef
+	ChangeDetectionStrategy,
+	HostListener
 } from '@angular/core';
 import { HttpClient } from '@angular/common/http';
-import { FormBuilder, FormGroup } from '@angular/forms';
-import { Ng2SmartTableComponent } from 'ng2-smart-table';
+import { UntypedFormBuilder, UntypedFormGroup, Validators } from '@angular/forms';
+import { Angular2SmartTableComponent, Cell } from 'angular2-smart-table';
 import { TranslateService } from '@ngx-translate/core';
 import {
 	NbDialogService,
 	NbMenuItem,
 	NbMenuService,
-	NbPopoverDirective
+	NbPopoverDirective,
+	NbSidebarService,
+	NbTabComponent
 } from '@nebular/theme';
 import {
 	IInvoice,
@@ -34,55 +37,66 @@ import {
 	PermissionsEnum,
 	ICurrency,
 	IInvoiceItemCreateInput,
+	IUser,
 	InvoiceTabsEnum,
-	DiscountTaxTypeEnum
+	DiscountTaxTypeEnum,
+	IDateRangePicker
 } from '@gauzy/contracts';
-import { distinctUntilChange, isNotEmpty } from '@gauzy/common-angular';
+import { distinctUntilChange, isNotEmpty, toUTC } from '@gauzy/ui-core/common';
 import { Router } from '@angular/router';
 import { first, map, filter, tap, debounceTime } from 'rxjs/operators';
-import { Subject, firstValueFrom } from 'rxjs';
+import { Subject, firstValueFrom, combineLatest, BehaviorSubject } from 'rxjs';
 import * as moment from 'moment';
 import { NgxPermissionsService } from 'ngx-permissions';
-import { UntilDestroy, untilDestroyed } from '@ngneat/until-destroy';
-import { DeleteConfirmationComponent } from '../../@shared/user/forms/delete-confirmation/delete-confirmation.component';
-import { PaginationFilterBaseComponent } from '../../@shared/pagination/pagination-filter-base.component';
-import { InvoiceSendMutationComponent } from './invoice-send/invoice-send-mutation.component';
-import { InvoiceEstimateTotalValueComponent, InvoicePaidComponent } from './table-components';
-import { ContactLinksComponent, DateViewComponent, NotesWithTagsComponent } from '../../@shared/table-components';
-import { InvoiceEmailMutationComponent } from './invoice-email/invoice-email-mutation.component';
-import { InvoiceDownloadMutationComponent } from './invoice-download/invoice-download-mutation.component';
-import { API_PREFIX, ComponentEnum } from '../../@core/constants';
-import { StatusBadgeComponent } from '../../@shared/status-badge/status-badge.component';
-import { AddInternalNoteComponent } from './add-internal-note/add-internal-note.component';
-import { PublicLinkComponent } from './public-link/public-link.component';
-import { generateCsv } from '../../@shared/invoice/generate-csv';
+import { API_PREFIX, ComponentEnum } from '@gauzy/ui-core/common';
 import {
+	DateRangePickerBuilderService,
 	InvoiceEstimateHistoryService,
 	InvoiceItemService,
 	InvoicesService,
+	ServerDataSource,
 	Store,
 	ToastrService
-} from '../../@core/services';
-import { ServerDataSource } from '../../@core/utils/smart-table/server.data-source';
+} from '@gauzy/ui-core/core';
+import { UntilDestroy, untilDestroyed } from '@ngneat/until-destroy';
+import {
+	ContactLinksComponent,
+	DateViewComponent,
+	DeleteConfirmationComponent,
+	IPaginationBase,
+	InvoiceTotalValueComponent,
+	NotesWithTagsComponent,
+	PaginationFilterBaseComponent,
+	StatusBadgeComponent,
+	generateCsv,
+	getAdjustDateRangeFutureAllowed
+} from '@gauzy/ui-core/shared';
+import { QUICK_SETTINGS_SIDEBAR_TAG } from '@gauzy/ui-core/theme';
+import { InvoiceSendMutationComponent } from './invoice-send/invoice-send-mutation.component';
+import { InvoicePaidComponent } from './table-components';
+import { InvoiceEmailMutationComponent } from './invoice-email/invoice-email-mutation.component';
+import { InvoiceDownloadMutationComponent } from './invoice-download/invoice-download-mutation.component';
+import { AddInternalNoteComponent } from './add-internal-note/add-internal-note.component';
+import { PublicLinkComponent } from './public-link/public-link.component';
 
 @UntilDestroy({ checkProperties: true })
 @Component({
-	selector: 'ngx-invoices',
-	templateUrl: './invoices.component.html',
-	styleUrls: ['invoices.component.scss']
+    selector: 'ngx-invoices',
+    templateUrl: './invoices.component.html',
+    styleUrls: ['invoices.component.scss'],
+    changeDetection: ChangeDetectionStrategy.Eager,
+    standalone: false
 })
-export class InvoicesComponent
-	extends PaginationFilterBaseComponent
-	implements AfterViewInit, OnInit, OnDestroy {
-
+export class InvoicesComponent extends PaginationFilterBaseComponent implements AfterViewInit, OnInit, OnDestroy {
 	settingsSmartTable: object;
 	smartTableSource: ServerDataSource;
 	selectedInvoice: IInvoice;
-	loading: boolean;
-	disableButton = true;
-	canBeSend = true;
+	loading: boolean = false;
+	disableButton: boolean = true;
+	canBeSend: boolean = true;
 	invoices: IInvoice[] = [];
 	organization: IOrganization;
+	selectedDateRange: IDateRangePicker;
 	viewComponentName: ComponentEnum;
 	componentLayoutStyleEnum = ComponentLayoutStyleEnum;
 	dataLayoutStyle = ComponentLayoutStyleEnum.TABLE;
@@ -90,16 +104,18 @@ export class InvoicesComponent
 	estimateStatusTypes = Object.values(EstimateStatusTypesEnum);
 	settingsContextMenu: NbMenuItem[];
 	contextMenus = [];
-	columns: any;
+	columns: string[] = [];
 	perPage: number = 10;
 	histories: IInvoiceEstimateHistory[] = [];
 	includeArchived = false;
-	subject$: Subject<any> = new Subject();
+	invoices$: Subject<any> = this.subject$;
 	invoiceTabsEnum = InvoiceTabsEnum;
+	nbTab$: Subject<string> = new BehaviorSubject(InvoiceTabsEnum.ACTIONS);
+	private _refresh$: Subject<any> = new Subject();
 
 	/*
-	* getter setter for check esitmate or invoice
-	*/
+	 * getter setter for check estimate or invoice
+	 */
 	private _isEstimate: boolean = false;
 	@Input() set isEstimate(val: boolean) {
 		this._isEstimate = val;
@@ -108,11 +124,13 @@ export class InvoicesComponent
 		return this._isEstimate;
 	}
 
-	invoicesTable: Ng2SmartTableComponent;
-	@ViewChild('invoicesTable') set content(content: Ng2SmartTableComponent) {
-		if (content) {
-			this.invoicesTable = content;
-			this.onChangedSource();
+	/**
+	 *
+	 */
+	invoicesTable: Angular2SmartTableComponent;
+	@ViewChild('invoicesTable', { static: false }) set content(table: Angular2SmartTableComponent) {
+		if (table) {
+			this.invoicesTable = table;
 		}
 	}
 
@@ -120,10 +138,10 @@ export class InvoicesComponent
 	public popups: QueryList<NbPopoverDirective>;
 
 	/*
-	* Search Tab Form 
-	*/
-	public searchForm: FormGroup = InvoicesComponent.searchBuildForm(this.fb);
-	static searchBuildForm(fb: FormBuilder): FormGroup {
+	 * Search Tab Form
+	 */
+	public searchForm: UntypedFormGroup = InvoicesComponent.searchBuildForm(this.fb);
+	static searchBuildForm(fb: UntypedFormBuilder): UntypedFormGroup {
 		return fb.group({
 			invoiceNumber: [],
 			organizationContact: [],
@@ -137,24 +155,39 @@ export class InvoicesComponent
 	}
 
 	/*
-	* History Tab Form 
-	*/
-	public historyForm: FormGroup = InvoicesComponent.historyBuildForm(this.fb);
-	static historyBuildForm(fb: FormBuilder): FormGroup {
+	 * History Tab Form
+	 */
+	public historyForm: UntypedFormGroup = InvoicesComponent.historyBuildForm(this.fb);
+	static historyBuildForm(fb: UntypedFormBuilder): UntypedFormGroup {
 		return fb.group({
-			comment: []
+			comment: ['', Validators.required],
+			title: ['', Validators.required]
 		});
 	}
 
 	/*
-	* Actions Buttons directive 
-	*/
-	@ViewChild('actionButtons', { static : true }) actionButtons : TemplateRef<any>;
+	 * Actions Buttons directive
+	 */
+	@ViewChild('actionButtons', { static: true })
+	actionButtons: TemplateRef<any>;
+
+	/** The ⚙ table-settings popover in the card header. */
+	@ViewChild('settingsTrigger', { read: NbPopoverDirective })
+	settingsPopover: NbPopoverDirective;
+
+	/**
+	 * The ⋮ "more actions" popover, queried on its own: `popups.last` is only
+	 * this one while the settings popover renders too, and it is absent for a
+	 * user without INVOICES_EDIT.
+	 */
+	@ViewChild('moreActionsTrigger', { read: NbPopoverDirective })
+	moreActionsPopover: NbPopoverDirective;
 
 	constructor(
-		private readonly fb: FormBuilder,
+		private readonly fb: UntypedFormBuilder,
 		public readonly translateService: TranslateService,
 		private readonly store: Store,
+		private readonly dateRangePickerBuilderService: DateRangePickerBuilderService,
 		private readonly dialogService: NbDialogService,
 		private readonly toastrService: ToastrService,
 		private readonly invoicesService: InvoicesService,
@@ -164,9 +197,10 @@ export class InvoicesComponent
 		private readonly invoiceEstimateHistoryService: InvoiceEstimateHistoryService,
 		private readonly ngxPermissionsService: NgxPermissionsService,
 		private readonly httpClient: HttpClient,
-		private readonly cdr: ChangeDetectorRef
+		private readonly sidebarService: NbSidebarService
 	) {
 		super(translateService);
+		this.setView();
 	}
 
 	ngOnInit() {
@@ -174,41 +208,97 @@ export class InvoicesComponent
 		this._applyTranslationOnSmartTable();
 		this._loadSmartTableSettings();
 		this.loadMenu();
-		this.setView();
+		this.watchQuickSettingsSidebar();
+	}
+
+	/**
+	 * Closes this page's popovers whenever the header's Quick Settings panel opens.
+	 * The panel and these popovers cover the same top right corner and sit in
+	 * different stacking layers, so only one may be open.
+	 *
+	 * Deliberately does NOT mirror the panel's state into a local flag. `onToggle`
+	 * reports only that a toggle happened, not the state it ended in, so a
+	 * `toggle(compact)` would compact the panel while the mirror recorded
+	 * "expanded" — and a stale mirror then leaves overlapping UI open on the next
+	 * action. There is no need for one: `NbSidebarService.collapse(tag)` is
+	 * idempotent, so the close path can simply always call it.
+	 *
+	 * Only `onExpand` is observed. Reacting to `onCollapse` would be wrong:
+	 * collapsing the panel is also what happens when one of this page's popovers
+	 * has just been opened, so it would immediately hide the popover again.
+	 */
+	private watchQuickSettingsSidebar() {
+		const tag = QUICK_SETTINGS_SIDEBAR_TAG;
+
+		this.sidebarService
+			.onExpand()
+			.pipe(
+				filter((event) => event.tag === tag),
+				tap(() => this.popups?.forEach((popover: NbPopoverDirective) => popover.hide())),
+				untilDestroyed(this)
+			)
+			.subscribe();
+	}
+
+	/**
+	 * Collapses the header's Quick Settings panel so it cannot stay open next to
+	 * a popover this page is about to show. Unconditional — `collapse()` is
+	 * idempotent, and guarding it on a mirrored flag is what made the flag able
+	 * to go stale in the first place.
+	 */
+	private closeQuickSettingsSidebar() {
+		this.sidebarService.collapse(QUICK_SETTINGS_SIDEBAR_TAG);
 	}
 
 	ngAfterViewInit() {
-		this.subject$
-			.pipe(
-				debounceTime(300),
-				tap(() => this.loading = true),
-				tap(() => this.cdr.detectChanges()),
-				tap(() => this.getInvoices()),
-				tap(() => this.clearItem()),
-				untilDestroyed(this)
-			)
-			.subscribe();
-		this.store.selectedOrganization$
+		this.invoices$
 			.pipe(
 				debounceTime(100),
-				filter((organization) => !!organization),
-				distinctUntilChange(),
-				tap((organization) => (this.organization = organization)),
-				tap(() => this.refreshPagination()),
-				tap(() => this.subject$.next(true)),
+				tap(() => this._clearItem()),
+				tap(() => this.getInvoices()),
 				untilDestroyed(this)
 			)
 			.subscribe();
-	}
-
-	/*
-	 * Table on changed source event
-	 */
-	onChangedSource() {
-		this.invoicesTable.source.onChangedSource
+		this.nbTab$
 			.pipe(
-				untilDestroyed(this),
-				tap(() => this.clearItem())
+				distinctUntilChange(),
+				debounceTime(100),
+				filter(() => this.dataLayoutStyle === ComponentLayoutStyleEnum.CARDS_GRID),
+				tap(() => this._refresh$.next(true)),
+				tap(() => this.invoices$.next(true)),
+				untilDestroyed(this)
+			)
+			.subscribe();
+		this.pagination$
+			.pipe(
+				debounceTime(100),
+				distinctUntilChange(),
+				tap(() => this.invoices$.next(true)),
+				untilDestroyed(this)
+			)
+			.subscribe();
+		const storeOrganization$ = this.store.selectedOrganization$;
+		const storeDateRange$ = this.dateRangePickerBuilderService.selectedDateRange$;
+		combineLatest([storeOrganization$, storeDateRange$])
+			.pipe(
+				debounceTime(300),
+				distinctUntilChange(),
+				filter(([organization, dateRange]) => !!organization && !!dateRange),
+				tap(([organization, dateRange]) => {
+					this.organization = organization as IOrganization;
+					this.selectedDateRange = dateRange as IDateRangePicker;
+				}),
+				tap(() => this._refresh$.next(true)),
+				tap(() => this.invoices$.next(true)),
+				untilDestroyed(this)
+			)
+			.subscribe();
+		this._refresh$
+			.pipe(
+				filter(() => this.dataLayoutStyle === ComponentLayoutStyleEnum.CARDS_GRID),
+				tap(() => this.refreshPagination()),
+				tap(() => (this.invoices = [])),
+				untilDestroyed(this)
 			)
 			.subscribe();
 	}
@@ -219,10 +309,12 @@ export class InvoicesComponent
 			.componentLayout$(this.viewComponentName)
 			.pipe(
 				distinctUntilChange(),
-				tap((componentLayout) => this.dataLayoutStyle = componentLayout),
-				filter((componentLayout) => componentLayout === ComponentLayoutStyleEnum.CARDS_GRID),
+				tap((componentLayout) => (this.dataLayoutStyle = componentLayout)),
+				tap(() => this.closeActionsPopover()),
 				tap(() => this.refreshPagination()),
-				tap(() => this.subject$.next(true)),
+				filter((componentLayout) => componentLayout === ComponentLayoutStyleEnum.CARDS_GRID),
+				tap(() => (this.invoices = [])),
+				tap(() => this.invoices$.next(true)),
 				untilDestroyed(this)
 			)
 			.subscribe();
@@ -241,9 +333,7 @@ export class InvoicesComponent
 				permission: PermissionsEnum.INVOICES_VIEW
 			},
 			{
-				title: this.getTranslation(
-					'INVOICES_PAGE.ACTION.CONVERT_TO_INVOICE'
-				),
+				title: this.getTranslation('INVOICES_PAGE.ACTION.CONVERT_TO_INVOICE'),
 				icon: 'swap',
 				permission: PermissionsEnum.INVOICES_EDIT
 			},
@@ -274,7 +364,7 @@ export class InvoicesComponent
 
 		const contextMenus = this.contextMenus.filter(
 			(item) => this.ngxPermissionsService.getPermission(item.permission) != null
-		)
+		);
 		if (this.isEstimate) {
 			this.settingsContextMenu = contextMenus;
 		} else {
@@ -303,23 +393,14 @@ export class InvoicesComponent
 	}
 
 	bulkAction(action: string) {
-		if (action === this.getTranslation('INVOICES_PAGE.ACTION.DUPLICATE'))
-			this.duplicated(this.selectedInvoice);
-		if (action === this.getTranslation('INVOICES_PAGE.ACTION.SEND'))
-			this.send(this.selectedInvoice);
-		if (
-			action ===
-			this.getTranslation('INVOICES_PAGE.ACTION.CONVERT_TO_INVOICE')
-		)
+		if (action === this.getTranslation('INVOICES_PAGE.ACTION.DUPLICATE')) this.duplicated(this.selectedInvoice);
+		if (action === this.getTranslation('INVOICES_PAGE.ACTION.SEND')) this.send(this.selectedInvoice);
+		if (action === this.getTranslation('INVOICES_PAGE.ACTION.CONVERT_TO_INVOICE'))
 			this.convert(this.selectedInvoice);
-		if (action === this.getTranslation('INVOICES_PAGE.ACTION.EMAIL'))
-			this.email(this.selectedInvoice);
-		if (action === this.getTranslation('INVOICES_PAGE.ACTION.DELETE'))
-			this.delete(this.selectedInvoice);
-		if (action === this.getTranslation('INVOICES_PAGE.ACTION.PAYMENTS'))
-			this.payments();
-		if (action === this.getTranslation('INVOICES_PAGE.ACTION.NOTE'))
-			this.addInternalNote();
+		if (action === this.getTranslation('INVOICES_PAGE.ACTION.EMAIL')) this.email(this.selectedInvoice);
+		if (action === this.getTranslation('INVOICES_PAGE.ACTION.DELETE')) this.delete(this.selectedInvoice);
+		if (action === this.getTranslation('INVOICES_PAGE.ACTION.PAYMENTS')) this.payments();
+		if (action === this.getTranslation('INVOICES_PAGE.ACTION.NOTE')) this.addInternalNote();
 	}
 
 	add() {
@@ -341,9 +422,9 @@ export class InvoicesComponent
 
 		const { id } = this.selectedInvoice;
 		if (this.isEstimate) {
-			this.router.navigate([ `/pages/accounting/invoices/estimates/edit`, id ]);
+			this.router.navigate([`/pages/accounting/invoices/estimates/edit`, id]);
 		} else {
-			this.router.navigate([ `/pages/accounting/invoices/edit`, id ]);
+			this.router.navigate([`/pages/accounting/invoices/edit`, id]);
 		}
 	}
 
@@ -358,18 +439,24 @@ export class InvoicesComponent
 		const { tenantId } = this.store.user;
 		const { id: organizationId } = this.organization;
 
+		const status: any = this.selectedInvoice.status;
+		const tax: any = this.selectedInvoice.tax;
+		const tax2: any = this.selectedInvoice.tax2;
+		const discountValue: any = this.selectedInvoice.discountValue;
+
 		const invoiceNumber = await this.invoicesService.getHighestInvoiceNumber(tenantId);
 		const createdInvoice = await this.invoicesService.add({
 			invoiceNumber: +invoiceNumber['max'] + 1,
 			invoiceDate: this.selectedInvoice.invoiceDate,
 			dueDate: this.selectedInvoice.dueDate,
 			currency: this.selectedInvoice.currency,
-			discountValue: this.selectedInvoice.discountValue,
+			discountValue: discountValue ? discountValue.originalValue : 0,
 			discountType: this.selectedInvoice.discountType,
-			tax: this.selectedInvoice.tax,
-			tax2: this.selectedInvoice.tax2,
+			tax: tax ? tax.originalValue : 0,
+			tax2: tax2 ? tax2.originalValue : 0,
 			taxType: this.selectedInvoice.taxType,
 			tax2Type: this.selectedInvoice.tax2Type,
+			taxCalculationType: this.selectedInvoice.taxCalculationType,
 			terms: this.selectedInvoice.terms,
 			paid: this.selectedInvoice.paid,
 			totalValue: this.selectedInvoice.totalValue,
@@ -382,7 +469,7 @@ export class InvoicesComponent
 			invoiceType: this.selectedInvoice.invoiceType,
 			tags: this.selectedInvoice.tags,
 			isEstimate: this.isEstimate,
-			status: this.selectedInvoice.status
+			status: status ? status.originalValue : InvoiceStatusTypesEnum.DRAFT
 		});
 
 		const invoiceItems: IInvoiceItemCreateInput[] = [];
@@ -416,14 +503,11 @@ export class InvoicesComponent
 
 			invoiceItems.push(itemToAdd);
 		}
-		await this.invoiceItemService.createBulk(
-			createdInvoice.id,
-			invoiceItems
-		);
+		await this.invoiceItemService.createBulk(createdInvoice.id, invoiceItems);
 
-		const action = this.isEstimate ? 
-						this.getTranslation('INVOICES_PAGE.INVOICES_DUPLICATE_ESTIMATE') : 
-						this.getTranslation('INVOICES_PAGE.INVOICES_DUPLICATE_INVOICE');
+		const action = this.isEstimate
+			? this.getTranslation('INVOICES_PAGE.INVOICES_DUPLICATE_ESTIMATE')
+			: this.getTranslation('INVOICES_PAGE.INVOICES_DUPLICATE_INVOICE');
 
 		await this.createInvoiceHistory(action);
 
@@ -433,7 +517,7 @@ export class InvoicesComponent
 			this.router.navigate([`/pages/accounting/invoices/estimates/edit`, id]);
 		} else {
 			this.toastrService.success('INVOICES_PAGE.INVOICES_DUPLICATE_INVOICE');
-			this.router.navigate([ `/pages/accounting/invoices/edit`, id ]);
+			this.router.navigate([`/pages/accounting/invoices/edit`, id]);
 		}
 	}
 
@@ -467,9 +551,9 @@ export class InvoicesComponent
 						isEstimate: this.isEstimate
 					}
 				})
-				.onClose
-				.pipe(
-					tap(() => this.subject$.next(true)),
+				.onClose.pipe(
+					tap(() => this._refresh$.next(true)),
+					tap(() => this.invoices$.next(true)),
 					untilDestroyed(this)
 				)
 				.subscribe();
@@ -487,7 +571,7 @@ export class InvoicesComponent
 		}
 		const { id: invoiceId } = this.selectedInvoice;
 
-		await this.invoicesService.update(invoiceId, {
+		await this.invoicesService.updateAction(invoiceId, {
 			isEstimate: false,
 			status: InvoiceStatusTypesEnum.DRAFT
 		});
@@ -496,7 +580,8 @@ export class InvoicesComponent
 		await this.createInvoiceHistory(action);
 
 		this.toastrService.success('INVOICES_PAGE.ESTIMATES.ESTIMATE_CONVERT');
-		this.subject$.next(true);
+		this._refresh$.next(true);
+		this.invoices$.next(true);
 	}
 
 	async delete(selectedItem?: IInvoice) {
@@ -506,9 +591,7 @@ export class InvoicesComponent
 				data: selectedItem
 			});
 		}
-		const result = await firstValueFrom(this.dialogService
-			.open(DeleteConfirmationComponent)
-			.onClose);
+		const result = await firstValueFrom(this.dialogService.open(DeleteConfirmationComponent).onClose);
 
 		if (result) {
 			const { id } = this.selectedInvoice;
@@ -519,16 +602,17 @@ export class InvoicesComponent
 			} else {
 				this.toastrService.success('INVOICES_PAGE.INVOICES_DELETE_INVOICE');
 			}
-			this.subject$.next(true);
+			this._refresh$.next(true);
+			this.invoices$.next(true);
 		}
 	}
 
 	view() {
 		const { id } = this.selectedInvoice;
 		if (this.isEstimate) {
-			this.router.navigate([ `/pages/accounting/invoices/estimates/view`, id ]);
+			this.router.navigate([`/pages/accounting/invoices/estimates/view`, id]);
 		} else {
-			this.router.navigate([ `/pages/accounting/invoices/view`, id ]);
+			this.router.navigate([`/pages/accounting/invoices/view`, id]);
 		}
 	}
 
@@ -546,9 +630,9 @@ export class InvoicesComponent
 					isEstimate: this.isEstimate
 				}
 			})
-			.onClose
-			.pipe(
-				tap(() => this.subject$.next(true)),
+			.onClose.pipe(
+				tap(() => this._refresh$.next(true)),
+				tap(() => this.invoices$.next(true)),
 				untilDestroyed(this)
 			)
 			.subscribe();
@@ -556,7 +640,7 @@ export class InvoicesComponent
 
 	payments() {
 		const { id } = this.selectedInvoice;
-		this.router.navigate([ `/pages/accounting/invoices/payments`, id ]);
+		this.router.navigate([`/pages/accounting/invoices/payments`, id]);
 	}
 
 	addInternalNote() {
@@ -566,9 +650,9 @@ export class InvoicesComponent
 					invoice: this.selectedInvoice
 				}
 			})
-			.onClose
-			.pipe(
-				tap(() => this.subject$.next(true)),
+			.onClose.pipe(
+				tap(() => this._refresh$.next(true)),
+				tap(() => this.invoices$.next(true)),
 				untilDestroyed(this)
 			)
 			.subscribe();
@@ -583,28 +667,45 @@ export class InvoicesComponent
 		}
 
 		let fileName: string;
-		const { invoiceNumber, invoiceDate, dueDate, status, totalValue, tax, tax2, discountValue, toContact, isEstimate } = this.selectedInvoice;
+		const {
+			invoiceNumber,
+			invoiceDate,
+			dueDate,
+			status,
+			totalValue,
+			tax,
+			tax2,
+			discountValue,
+			toContact,
+			isEstimate
+		} = this.selectedInvoice;
 		if (isEstimate) {
 			fileName = `${this.getTranslation('INVOICES_PAGE.ESTIMATE')}-${invoiceNumber}`;
 		} else {
 			fileName = `${this.getTranslation('INVOICES_PAGE.INVOICE')}-${invoiceNumber}`;
 		}
 
-		const data = [{
-			invoiceNumber,
-			invoiceDate,
-			dueDate,
-			status: `${this.getTranslation(`INVOICES_PAGE.STATUSES.${status}`)}`,
-			totalValue,
-			tax,
-			tax2,
-			discountValue,
-			contact: toContact.name
-		}];
+		const data = [
+			{
+				invoiceNumber,
+				invoiceDate,
+				dueDate,
+				status: `${this.getTranslation(`INVOICES_PAGE.STATUSES.${status}`)}`,
+				totalValue,
+				tax,
+				tax2,
+				discountValue,
+				contact: toContact.name
+			}
+		];
 
 		const headers = [
-			isEstimate ? this.getTranslation('INVOICES_PAGE.ESTIMATE_NUMBER') : this.getTranslation('INVOICES_PAGE.INVOICE_NUMBER'), 
-			isEstimate ? this.getTranslation('INVOICES_PAGE.ESTIMATE_DATE') : this.getTranslation('INVOICES_PAGE.INVOICE_DATE'),
+			isEstimate
+				? this.getTranslation('INVOICES_PAGE.ESTIMATE_NUMBER')
+				: this.getTranslation('INVOICES_PAGE.INVOICE_NUMBER'),
+			isEstimate
+				? this.getTranslation('INVOICES_PAGE.ESTIMATE_DATE')
+				: this.getTranslation('INVOICES_PAGE.INVOICE_DATE'),
 			this.getTranslation('INVOICES_PAGE.DUE_DATE'),
 			this.getTranslation('INVOICES_PAGE.STATUS'),
 			this.getTranslation('INVOICES_PAGE.TOTAL_VALUE'),
@@ -612,17 +713,24 @@ export class InvoicesComponent
 			this.getTranslation('INVOICES_PAGE.TAX_2'),
 			this.getTranslation('INVOICES_PAGE.INVOICES_SELECT_DISCOUNT_VALUE'),
 			this.getTranslation('INVOICES_PAGE.CONTACT')
-		].join(',');
+		];
 
 		generateCsv(data, headers, fileName);
 	}
 
 	/*
-	* Register Smart Table Source Config 
-	*/
+	 * Register Smart Table Source Config
+	 */
 	setSmartTableSource() {
+		if (!this.organization) {
+			return;
+		}
+		this.loading = true;
+
 		const { tenantId } = this.store.user;
 		const { id: organizationId } = this.organization;
+		const { startDate, endDate } = getAdjustDateRangeFutureAllowed(this.selectedDateRange);
+
 		this.smartTableSource = new ServerDataSource(this.httpClient, {
 			endPoint: `${API_PREFIX}/invoices/pagination`,
 			relations: [
@@ -642,30 +750,41 @@ export class InvoicesComponent
 				'historyRecords.user'
 			],
 			join: {
-				alias: "invoice",
+				alias: 'invoice',
 				leftJoin: {
 					toContact: 'invoice.toContact',
 					tags: 'invoice.tags'
 				},
-				...(this.filters.join) ? this.filters.join : {}
+				...(this.filters.join ? this.filters.join : {})
 			},
 			where: {
 				organizationId,
 				tenantId,
-				isEstimate: (this.isEstimate === true) ? 1 : 0,
-				isArchived: (this.includeArchived === true) ? 1 : 0,
-				...this.filters.where
+				isEstimate: this.isEstimate,
+				isArchived: this.includeArchived,
+				invoiceDate: {
+					startDate: toUTC(startDate).format('YYYY-MM-DD HH:mm:ss'),
+					endDate: toUTC(endDate).format('YYYY-MM-DD HH:mm:ss')
+				},
+				...(this.filters.where ? this.filters.where : {})
 			},
 			resultMap: (invoice: IInvoice) => {
 				return Object.assign({}, invoice, {
-					organizationContactName: (invoice.toContact) ? invoice.toContact.name : null,
+					organizationContactName: invoice.toContact ? invoice.toContact.name : null,
 					status: this.statusMapper(invoice.status),
-					tax: (DiscountTaxTypeEnum.PERCENT === invoice.taxType) ? `${invoice.tax}%` : `${invoice.tax}`,
-					tax2: (DiscountTaxTypeEnum.PERCENT === invoice.tax2Type) ? `${invoice.tax2}%` : `${invoice.tax2}`,
-					discountValue: (DiscountTaxTypeEnum.PERCENT === invoice.discountType) ? `${invoice.discountValue}%` : `${invoice.discountValue}`,
+					tax: this.taxMapper(invoice.taxType, invoice.tax),
+					tax2: this.taxMapper(invoice.tax2Type, invoice.tax2),
+					discountValue: this.taxMapper(invoice.discountType, invoice.discountValue)
 				});
 			},
 			finalize: () => {
+				if (this.dataLayoutStyle === ComponentLayoutStyleEnum.CARDS_GRID) {
+					this.invoices.push(...this.smartTableSource.getData());
+				}
+				this.setPagination({
+					...this.getPagination(),
+					totalItems: this.smartTableSource.count()
+				});
 				this.loading = false;
 			}
 		});
@@ -675,19 +794,14 @@ export class InvoicesComponent
 		if (!this.organization) {
 			return;
 		}
-
 		try {
 			this.setSmartTableSource();
+
+			const { activePage, itemsPerPage } = this.getPagination();
+			this.smartTableSource.setPaging(activePage, itemsPerPage, false);
 			if (this.dataLayoutStyle === ComponentLayoutStyleEnum.CARDS_GRID) {
-
-				// Initiate GRID view pagination
-				const { activePage, itemsPerPage } = this.pagination;
-				this.smartTableSource.setPaging(activePage, itemsPerPage, false);
-
+				// Initiate GRID or TABLE view pagination
 				await this.smartTableSource.getElements();
-				this.invoices = this.smartTableSource.getData();
-
-				this.pagination['totalItems'] =  this.smartTableSource.count();
 			}
 		} catch (error) {
 			this.toastrService.danger(
@@ -699,16 +813,91 @@ export class InvoicesComponent
 		}
 	}
 
-	async addComment(historyFormDirective) {
-		const { comment } = this.historyForm.value;
-		const { id: invoiceId } = this.selectedInvoice;
+	/**
+	 * The user the History tab composes comments as. Read through a getter rather
+	 * than a field so the avatar follows a mid-session user switch, and so the
+	 * template does not have to reach into the private `store`.
+	 */
+	get currentUser(): IUser {
+		return this.store.user;
+	}
 
+	/**
+	 * Whether a comment author's name should be a link to their profile.
+	 *
+	 * `/pages/users/edit/:id` is guarded by `ORG_USERS_EDIT`, and its guard
+	 * redirects to the dashboard rather than refusing — so without this check a
+	 * viewer who lacks the permission would click a name and silently land on a
+	 * different page. They get plain text instead.
+	 */
+	get canOpenUserProfile(): boolean {
+		return this.ngxPermissionsService.getPermission(PermissionsEnum.ORG_USERS_EDIT) != null;
+	}
+
+	/**
+	 * Initials fallback for a comment author with no `imageUrl`. The shared
+	 * `ngx-avatar` renders nothing at all when its `src` is empty, which left a
+	 * hole where the avatar should be for every user who never uploaded a photo —
+	 * the common case on a fresh workspace.
+	 *
+	 * @param name - the author's display name
+	 * @returns up to two upper-cased initials, or `?` when there is no name
+	 */
+	authorInitials(name: string): string {
+		const initials = (name || '')
+			.trim()
+			.split(/\s+/)
+			.filter(Boolean)
+			.slice(0, 2)
+			.map((part: string) => part.charAt(0))
+			.join('');
+		return initials ? initials.toUpperCase() : '?';
+	}
+
+	/**
+	 * Relative age of a comment ("3 hours ago"), the way every comment thread
+	 * dates its entries. The exact timestamp stays available on the tooltip, so
+	 * nothing is lost by not printing it inline.
+	 *
+	 * `createdAt` arrives here as the `Date.toString()` slice built in
+	 * `selectInvoice`, not as an ISO string, so it goes through `new Date` first
+	 * rather than moment's (deprecated) free-form string parser.
+	 *
+	 * A record with no usable date renders nothing rather than moment's literal
+	 * "Invalid date": the line is a subtitle beside the author's name, and a blank
+	 * one reads as "no timestamp" while that string reads as a broken comment. The
+	 * tooltip beside it is already empty in the same case.
+	 *
+	 * @param createdAt - the history record's creation date
+	 * @returns a humanized, locale-aware distance from now, or an empty string
+	 */
+	commentTimeAgo(createdAt: string | Date): string {
+		const parsed = new Date(createdAt);
+		return isNaN(parsed.getTime()) ? '' : moment(parsed).fromNow();
+	}
+
+	/**
+	 * Clears the comment composer without submitting it.
+	 *
+	 * @param historyFormDirective - the composer's `ngForm`, reset alongside the
+	 * form group so the controls drop their touched/dirty state too
+	 */
+	resetComment(historyFormDirective): void {
+		historyFormDirective.resetForm();
+		this.historyForm.reset();
+	}
+
+	async addComment(historyFormDirective) {
+		if (this.historyForm.invalid) {
+			return;
+		}
+		const { comment, title } = this.historyForm.value;
+		const { id: invoiceId } = this.selectedInvoice;
 		if (comment) {
 			const action = comment;
-			await this.createInvoiceHistory(action);
+			await this.createInvoiceHistory(action, title);
 
-			historyFormDirective.resetForm();
-    		this.historyForm.reset();
+			this.resetComment(historyFormDirective);
 
 			const invoice = await this.invoicesService.getById(invoiceId, [
 				'invoiceItems',
@@ -727,7 +916,7 @@ export class InvoicesComponent
 				'historyRecords.user'
 			]);
 
-			if(this.dataLayoutStyle === ComponentLayoutStyleEnum.TABLE) {
+			if (this.dataLayoutStyle === ComponentLayoutStyleEnum.TABLE) {
 				this.invoicesTable.grid.getRows().map((row) => {
 					if (row['data']['id'] === invoice.id) {
 						row['data'] = invoice;
@@ -753,7 +942,7 @@ export class InvoicesComponent
 		}
 	}
 
-	async generatePublicLink(selectedItem) {
+	async generatePublicLink(selectedItem: IInvoice) {
 		if (selectedItem) {
 			this.selectInvoice({
 				isSelected: true,
@@ -768,19 +957,20 @@ export class InvoicesComponent
 	}
 
 	async archive() {
-		await this.invoicesService.update(this.selectedInvoice.id, {
+		await this.invoicesService.updateAction(this.selectedInvoice.id, {
 			isArchived: true
 		});
-		this.subject$.next(true);
+		this._refresh$.next(true);
+		this.invoices$.next(true);
 	}
 
 	async selectInvoice({ isSelected, data }) {
 		this.disableButton = !isSelected;
 		this.selectedInvoice = isSelected ? data : null;
-		
-		if(isSelected){
+
+		if (isSelected) {
 			this.canBeSend = data.toContact ? isSelected : !isSelected;
-		}else{
+		} else {
 			this.canBeSend = isSelected;
 		}
 
@@ -792,6 +982,7 @@ export class InvoicesComponent
 					id: h.id,
 					createdAt: new Date(h.createdAt).toString().slice(0, 24),
 					action: h.action,
+					title: h.title ?? '',
 					user: h.user
 				};
 				histories.push(history);
@@ -800,43 +991,52 @@ export class InvoicesComponent
 				return +new Date(b.createdAt) - +new Date(a.createdAt);
 			});
 			this.histories = histories;
+		} else {
+			// Deselecting used to leave the previous invoice's comments standing in
+			// the History tab. The thread is now guarded on `selectedInvoice`, but
+			// dropping the records keeps the count badge honest either way.
+			this.histories = [];
 		}
 	}
 
 	private statusMapper = (value: string) => {
 		let badgeClass;
 		if (value) {
-			badgeClass = [
-				'sent',
-				'viewed',
-				'accepted',
-				'active',
-				'fully paid'
-			].includes(value.toLowerCase())
+			badgeClass = ['sent', 'viewed', 'accepted', 'active', 'fully paid'].includes(value.toLowerCase())
 				? 'success'
-				: ['void', 'draft', 'partially paid'].includes(
-					value.toLowerCase()
-				)
-					? 'warning'
-					: 'danger';
+				: ['void', 'draft', 'partially paid'].includes(value.toLowerCase())
+				? 'warning'
+				: 'danger';
 		}
 		return {
+			originalValue: value,
 			text: this.getTranslation(`INVOICES_PAGE.STATUSES.${value.toUpperCase()}`),
 			class: badgeClass
 		};
-	}
+	};
+
+	private taxMapper = (taxType: DiscountTaxTypeEnum, tax: number) => {
+		return {
+			originalValue: tax,
+			value: DiscountTaxTypeEnum.PERCENT === taxType ? `${tax}%` : `${tax}`
+		};
+	};
 
 	private _loadSmartTableSettings() {
+		const pagination: IPaginationBase = this.getPagination();
 		this.settingsSmartTable = {
 			pager: {
-				display: true,
-				perPage: this.perPage ? this.perPage : 10
+				display: false,
+				perPage: pagination ? pagination.itemsPerPage : 10
 			},
 			hideSubHeader: true,
-			actions: false,
 			mode: 'external',
+			selectedRowIndex: -1,
+			actions: false,
 			editable: true,
-			noDataMessage: this.getTranslation('SM_TABLE.NO_DATA'),
+			noDataMessage: this.getTranslation(
+				this.isEstimate ? 'SM_TABLE.NO_DATA.ESTIMATE' : 'SM_TABLE.NO_DATA.INVOICE'
+			),
 			columns: {
 				invoiceNumber: {
 					title: this.isEstimate
@@ -844,12 +1044,15 @@ export class InvoicesComponent
 						: this.getTranslation('INVOICES_PAGE.INVOICE_NUMBER'),
 					type: 'custom',
 					sortDirection: 'asc',
-					width: '10%',
-					renderComponent: NotesWithTagsComponent
+					width: '17%',
+					renderComponent: NotesWithTagsComponent,
+					componentInitFunction: (instance: NotesWithTagsComponent, cell: Cell) => {
+						instance.rowData = cell.getRow().getData();
+						instance.value = cell.getRawValue();
+					}
 				}
 			}
 		};
-
 		if (
 			this.columns.includes(InvoiceColumnsEnum.INVOICE_DATE) ||
 			this.columns.includes(EstimateColumnsEnum.ESTIMATE_DATE)
@@ -860,8 +1063,12 @@ export class InvoicesComponent
 					: this.getTranslation('INVOICES_PAGE.INVOICE_DATE'),
 				type: 'custom',
 				width: '10%',
-				filter: false,
-				renderComponent: DateViewComponent
+				isFilterable: false,
+				renderComponent: DateViewComponent,
+				componentInitFunction: (instance: DateViewComponent, cell: Cell) => {
+					instance.rowData = cell.getRow().getData();
+					instance.value = cell.getValue();
+				}
 			};
 		}
 		if (this.columns.includes(InvoiceColumnsEnum.DUE_DATE)) {
@@ -869,26 +1076,25 @@ export class InvoicesComponent
 				title: this.getTranslation('INVOICES_PAGE.DUE_DATE'),
 				type: 'custom',
 				width: '10%',
-				filter: false,
-				renderComponent: DateViewComponent
-			};
-		}
-		if (this.columns.includes(InvoiceColumnsEnum.STATUS)) {
-			this.settingsSmartTable['columns']['status'] = {
-				title: this.getTranslation('INVOICES_PAGE.STATUS'),
-				type: 'custom',
-				width: '5%',
-				renderComponent: StatusBadgeComponent,
-				filter: false
+				isFilterable: false,
+				renderComponent: DateViewComponent,
+				componentInitFunction: (instance: DateViewComponent, cell: Cell) => {
+					instance.rowData = cell.getRow().getData();
+					instance.value = cell.getValue();
+				}
 			};
 		}
 		if (this.columns.includes(InvoiceColumnsEnum.TOTAL_VALUE)) {
 			this.settingsSmartTable['columns']['totalValue'] = {
 				title: this.getTranslation('INVOICES_PAGE.TOTAL_VALUE'),
 				type: 'custom',
-				renderComponent: InvoiceEstimateTotalValueComponent,
-				filter: false,
-				width: '10%'
+				width: '10%',
+				isFilterable: false,
+				renderComponent: InvoiceTotalValueComponent,
+				componentInitFunction: (instance: InvoiceTotalValueComponent, cell: Cell) => {
+					instance.rowData = cell.getRow().getData();
+					instance.value = cell.getValue();
+				}
 			};
 		}
 		if (this.columns.includes(InvoiceColumnsEnum.TAX)) {
@@ -896,25 +1102,32 @@ export class InvoicesComponent
 				title: this.getTranslation('INVOICES_PAGE.TAX'),
 				type: 'text',
 				width: '5%',
-				filter: false
+				isFilterable: false,
+				valuePrepareFunction: (row: { value?: any }) => {
+					return row?.value ?? '';
+				}
 			};
 		}
 		if (this.columns.includes(InvoiceColumnsEnum.TAX_2)) {
 			this.settingsSmartTable['columns']['tax2'] = {
 				title: this.getTranslation('INVOICES_PAGE.TAX_2'),
 				type: 'text',
-				width: '5%',
-				filter: false
+				width: '6%',
+				isFilterable: false,
+				valuePrepareFunction: (row: { value?: any }) => {
+					return row?.value ?? '';
+				}
 			};
 		}
 		if (this.columns.includes(InvoiceColumnsEnum.DISCOUNT)) {
 			this.settingsSmartTable['columns']['discountValue'] = {
-				title: this.getTranslation(
-					'INVOICES_PAGE.INVOICES_SELECT_DISCOUNT_VALUE'
-				),
+				title: this.getTranslation('INVOICES_PAGE.INVOICES_SELECT_DISCOUNT'),
 				type: 'text',
 				width: '5%',
-				filter: false
+				isFilterable: false,
+				valuePrepareFunction: (row: { value?: any }) => {
+					return row?.value ?? '';
+				}
 			};
 		}
 		if (this.columns.includes(InvoiceColumnsEnum.CONTACT)) {
@@ -922,9 +1135,13 @@ export class InvoicesComponent
 				title: this.getTranslation('INVOICES_PAGE.CONTACT'),
 				type: 'custom',
 				width: '12%',
-				filter: false,
-				sort: false,
+				isFilterable: false,
+				isSortable: false,
 				renderComponent: ContactLinksComponent,
+				componentInitFunction: (instance: ContactLinksComponent, cell: Cell) => {
+					instance.rowData = cell.getRow().getData();
+					instance.value = cell.getRawValue();
+				}
 			};
 		}
 		if (!this.isEstimate) {
@@ -932,37 +1149,54 @@ export class InvoicesComponent
 				this.settingsSmartTable['columns']['paid'] = {
 					title: this.getTranslation('INVOICES_PAGE.PAID_STATUS'),
 					type: 'custom',
-					width: '20%',
+					width: '12%',
+					isFilterable: false,
 					renderComponent: InvoicePaidComponent,
-					filter: false
+					componentInitFunction: (instance: InvoicePaidComponent, cell: Cell) => {
+						instance.rowData = cell.getRow().getData();
+					}
 				};
 			}
+		}
+		if (this.columns.includes(InvoiceColumnsEnum.STATUS)) {
+			this.settingsSmartTable['columns']['status'] = {
+				title: this.getTranslation('INVOICES_PAGE.STATUS'),
+				type: 'custom',
+				width: '5%',
+				isFilterable: false,
+				renderComponent: StatusBadgeComponent,
+				componentInitFunction: (instance: StatusBadgeComponent, cell: Cell) => {
+					instance.value = cell.getRawValue();
+				}
+			};
 		}
 	}
 
 	showPerPage() {
-		if (
-			this.perPage &&
-			Number.isInteger(this.perPage) &&
-			this.perPage > 0
-		) {			
-			const { page } = this.smartTableSource.getPaging();
-			this.pagination = Object.assign({}, this.pagination, { 
-				activePage: page,
+		if (this.perPage && Number.isInteger(this.perPage) && this.perPage > 0) {
+			this.setPagination({
+				...this.getPagination(),
 				itemsPerPage: this.perPage
 			});
-			
-			if (this.dataLayoutStyle === ComponentLayoutStyleEnum.CARDS_GRID) {
-				this.subject$.next(true);
-			} else {
-				this.smartTableSource.setPaging(page, this.perPage, false);
-				this._loadSmartTableSettings();
-			}			
 		}
 	}
 
+	/**
+	 * The API matches the invoice / due date filters with `Between(startDate, endDate)` and falls back to
+	 * the current month when it receives a plain date, so send the whole selected day as a UTC range.
+	 *
+	 * @param date The day picked in the search form
+	 */
+	private _toDayRange(date: Date | string): { startDate: string; endDate: string } {
+		const day = moment(date);
+		return {
+			startDate: toUTC(day.clone().startOf('day')).format('YYYY-MM-DD HH:mm:ss'),
+			endDate: toUTC(day.clone().endOf('day')).format('YYYY-MM-DD HH:mm:ss')
+		};
+	}
+
 	search() {
-		const { 
+		const {
 			dueDate,
 			invoiceNumber,
 			invoiceDate,
@@ -970,17 +1204,17 @@ export class InvoicesComponent
 			currency,
 			status,
 			organizationContact,
-			tags = [] 
+			tags = []
 		} = this.searchForm.value;
 
 		if (invoiceNumber) {
 			this.setFilter({ field: 'invoiceNumber', search: invoiceNumber }, false);
 		}
 		if (invoiceDate) {
-			this.setFilter({ field: 'invoiceDate', search: moment(invoiceDate).format('YYYY-MM-DD') }, false);
+			this.setFilter({ field: 'invoiceDate', search: this._toDayRange(invoiceDate) }, false);
 		}
 		if (dueDate) {
-			this.setFilter({ field: 'dueDate', search: moment(dueDate).format('YYYY-MM-DD') }, false);
+			this.setFilter({ field: 'dueDate', search: this._toDayRange(dueDate) }, false);
 		}
 		if (totalValue) {
 			this.setFilter({ field: 'totalValue', search: totalValue }, false);
@@ -1003,19 +1237,22 @@ export class InvoicesComponent
 		}
 		if (isNotEmpty(this.filters)) {
 			this.refreshPagination();
-			this.subject$.next(true);		
+			this._refresh$.next(true);
+			this.invoices$.next(true);
 		}
 	}
 
 	toggleIncludeArchived(event) {
 		this.includeArchived = event;
-		this.subject$.next(true);
+		this._refresh$.next(true);
+		this.invoices$.next(true);
 	}
 
 	reset() {
 		this.searchForm.reset();
 		this._filters = {};
-		this.subject$.next(true);
+		this._refresh$.next(true);
+		this.invoices$.next(true);
 	}
 
 	selectedTagsEvent(currentTagSelection: ITag[]) {
@@ -1025,10 +1262,11 @@ export class InvoicesComponent
 	}
 
 	async selectStatus($event) {
-		await this.invoicesService.update(this.selectedInvoice.id, {
+		await this.invoicesService.updateAction(this.selectedInvoice.id, {
 			status: $event
 		});
-		this.subject$.next(true);
+		this._refresh$.next(true);
+		this.invoices$.next(true);
 	}
 
 	selectColumn($event: string[]) {
@@ -1037,26 +1275,36 @@ export class InvoicesComponent
 	}
 
 	toggleActionsPopover() {
-		this.popups.first.toggle();
-		this.popups.last.hide();
-	}
-
-	toggleTableSettingsPopover() {
+		this.closeQuickSettingsSidebar();
 		this.popups.last.toggle();
+		// Same guard as toggleTableSettingsPopover: when the page renders a single
+		// NbPopoverDirective, `first` and `last` are the SAME instance, so hiding
+		// `first` unconditionally would undo the toggle above and the actions
+		// popover would never open.
 		if (this.popups.length > 1) {
 			this.popups.first.hide();
 		}
 	}
 
-	closeActionsPopover() {
-		const actionsPopup = this.popups.first;
-		const settingsPopup = this.popups.last;
-		if(settingsPopup.isShown){
-			settingsPopup.hide();
+	toggleTableSettingsPopover() {
+		this.closeQuickSettingsSidebar();
+		this.popups.first.toggle();
+		if (this.popups.length > 1) {
+			this.popups.last.hide();
 		}
-		
-		if (actionsPopup.isShown) {
-			actionsPopup.hide();
+	}
+
+	closeActionsPopover() {
+		if (this.popups) {
+			const actionsPopup = this.popups.first;
+			const settingsPopup = this.popups.last;
+			if (settingsPopup.isShown) {
+				settingsPopup.hide();
+			}
+
+			if (actionsPopup.isShown) {
+				actionsPopup.hide();
+			}
 		}
 	}
 
@@ -1069,26 +1317,16 @@ export class InvoicesComponent
 			.subscribe();
 	}
 
- 	onChangeTab(event) {
+	onChangeTab(tab: NbTabComponent) {
+		this.nbTab$.next(tab.tabId);
 		this.closeActionsPopover();
 	}
 
-	clearItem() {
+	private _clearItem() {
 		this.selectInvoice({
 			isSelected: false,
 			data: null
 		});
-		this.deselectAll();
-	}
-
-	/*
-	 * Deselect all table rows
-	 */
-	deselectAll() {
-		if (this.invoicesTable && this.invoicesTable.grid) {
-			this.invoicesTable.grid.dataSet['willSelect'] = 'false';
-			this.invoicesTable.grid.dataSet.deselectAll();
-		}
 	}
 
 	getColumns(): string[] {
@@ -1099,15 +1337,16 @@ export class InvoicesComponent
 	}
 
 	/*
-	* Create Invoice History Event 
-	*/
-	async createInvoiceHistory(action: string) {
+	 * Create Invoice History Event
+	 */
+	async createInvoiceHistory(action: string, title?: string) {
 		const { tenantId, id: userId } = this.store.user;
 		const { id: organizationId } = this.organization;
 		const { id: invoiceId } = this.selectedInvoice;
 
 		await this.invoiceEstimateHistoryService.add({
 			action,
+			title: title ?? null,
 			invoice: this.selectedInvoice,
 			invoiceId,
 			user: this.store.user,
@@ -1121,7 +1360,76 @@ export class InvoicesComponent
 	/*
 	 * On Changed Currency Event Emitter
 	 */
-	currencyChanged($event: ICurrency) { }
+	currencyChanged($event: ICurrency) {}
 
-	ngOnDestroy() { }
+	/**
+	 * On change number of item per page option
+	 * @param $event is a number
+	 */
+	onUpdateOption($event: number) {
+		this.perPage = $event;
+		this.setPagination({
+			...this.getPagination(),
+			itemsPerPage: this.perPage
+		});
+	}
+
+	/**
+	 * Closes the actions menu once one of its enabled buttons — an action or the
+	 * header's close button — is clicked. Clicks on the header text or the gaps
+	 * between items leave it open. A disabled button fires no click, so the event
+	 * target is then the menu itself and nothing closes.
+	 *
+	 * Hides rather than toggles, so it can never reopen a menu that is already
+	 * shut.
+	 *
+	 * @param event - The click that bubbled up to the menu container.
+	 */
+	onActionsMenuClick(event: MouseEvent) {
+		const target = event.target as HTMLElement | null;
+		if (target?.closest('button:not([disabled])')) {
+			this.moreActionsPopover?.hide();
+		}
+	}
+
+	/**
+	 * Closes the actions menu on a click anywhere outside it. Clicks on the ⋮
+	 * trigger are left to its own toggle — closing here as well would shut the
+	 * menu and the toggle would reopen it, or the reverse on the opening click.
+	 *
+	 * @param event - Any click on the document.
+	 */
+	@HostListener('document:click', ['$event'])
+	onDocumentClick(event: MouseEvent) {
+		if (!this.moreActionsPopover?.isShown) {
+			return;
+		}
+		const target = event.target as HTMLElement | null;
+		if (target?.closest('.popover-container-action, .more-actions')) {
+			return;
+		}
+		this.moreActionsPopover.hide();
+	}
+
+	/**
+	 * Closes the settings popover on a click anywhere outside it. Clicks on the ⚙
+	 * trigger are left to its own toggle, and clicks in the "Show columns"
+	 * option list are treated as inside: Nebular renders that list in its own
+	 * overlay, outside the popover.
+	 *
+	 * @param event - Any click on the document.
+	 */
+	@HostListener('document:click', ['$event'])
+	closeSettingsOnOutsideClick(event: MouseEvent) {
+		if (!this.settingsPopover?.isShown) {
+			return;
+		}
+		const target = event.target as HTMLElement | null;
+		if (target?.closest('.popover-container, .settings-trigger, nb-option-list')) {
+			return;
+		}
+		this.settingsPopover.hide();
+	}
+
+	ngOnDestroy() {}
 }

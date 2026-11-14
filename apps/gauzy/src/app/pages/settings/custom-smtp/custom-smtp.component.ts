@@ -1,50 +1,55 @@
-import { Component, OnInit } from '@angular/core';
+import { Component, OnInit, ChangeDetectionStrategy } from '@angular/core';
+import { NbRouteTab } from '@nebular/theme';
 import { UntilDestroy, untilDestroyed } from '@ngneat/until-destroy';
 import { TranslateService } from '@ngx-translate/core';
-import { TranslationBaseComponent } from '../../../@shared/language-base/translation-base.component';
+import { tap } from 'rxjs/operators';
+import { TranslationBaseComponent } from '@gauzy/ui-core/i18n';
 
 @UntilDestroy({ checkProperties: true })
 @Component({
-	selector: 'ga-tenant-custom-smtp',
-	templateUrl: './custom-smtp.component.html',
-	styleUrls: ['./custom-smtp.component.css']
+    selector: 'ga-custom-smtp',
+    templateUrl: './custom-smtp.component.html',
+    styleUrls: ['./custom-smtp.component.scss'],
+    changeDetection: ChangeDetectionStrategy.Eager,
+    standalone: false
 })
-export class CustomSmtpComponent
-	extends TranslationBaseComponent
-	implements OnInit {
-	tabs: any[];
+export class CustomSmtpComponent extends TranslationBaseComponent implements OnInit {
+	tabs: NbRouteTab[] = [];
 
 	constructor(public readonly translateService: TranslateService) {
 		super(translateService);
 	}
 
 	ngOnInit(): void {
-		this.loadTabs();
+		this._loadTabs();
 		this._applyTranslationOnTabs();
 	}
 
-	loadTabs() {
+	private _loadTabs() {
 		this.tabs = [
 			{
 				title: this.getTranslation('MENU.TENANT'),
-				route: this.getRoute('tenant')
+				route: this._getRoute('tenant'),
+				queryParamsHandling: 'merge'
 			},
 			{
 				title: this.getTranslation('MENU.ORGANIZATION'),
-				route: this.getRoute('organization')
+				route: this._getRoute('organization'),
+				queryParamsHandling: 'merge'
 			}
 		];
 	}
 
-	getRoute(tab: string): string {
+	private _getRoute(tab: string): string {
 		return `/pages/settings/custom-smtp/${tab}`;
 	}
 
 	private _applyTranslationOnTabs() {
 		this.translateService.onLangChange
-			.pipe(untilDestroyed(this))
-			.subscribe(() => {
-				this.loadTabs();
-			});
+			.pipe(
+				tap(() => this._loadTabs()),
+				untilDestroyed(this)
+			)
+			.subscribe();
 	}
 }

@@ -1,3 +1,4 @@
-export * from './upwork-job.service';
-export * from './upwork-offers.service';
-export * from './upwork-report.service';
+/**
+ * Public API Surface of @gauzy/plugin-integration-upwork
+ */
+export * from './lib/integration-upwork.plugin';

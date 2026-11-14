@@ -1,34 +1,33 @@
-import { EmployeeMultiSelectModule } from './../../../@shared/employee/employee-multi-select/employee-multi-select.module';
-import { FormsModule, ReactiveFormsModule } from '@angular/forms';
 import { NgModule } from '@angular/core';
-import { ThemeModule } from '../../../@theme/theme.module';
+import { CommonModule } from '@angular/common';
+import { FormsModule, ReactiveFormsModule } from '@angular/forms';
 import {
+	NbButtonModule,
 	NbCardModule,
 	NbIconModule,
-	NbButtonModule,
-	NbSelectModule,
 	NbInputModule,
+	NbSelectModule,
 	NbToggleModule
 } from '@nebular/theme';
+import { HelpCenterArticleService } from '@gauzy/ui-core/core';
+import { TranslatePipe } from '@ngx-translate/core';
+import { EmployeeMultiSelectModule, RichTextEditorModule } from '@gauzy/ui-core/shared';
 import { AddArticleComponent } from './add-article.component';
-import { CKEditorModule } from 'ng2-ckeditor';
-import { HelpCenterArticleService } from '../../../@core/services/help-center-article.service';
-import { TranslateModule } from '../../../@shared/translate/translate.module';
 
 @NgModule({
 	imports: [
-		CKEditorModule,
-		ThemeModule,
+		CommonModule,
+		FormsModule,
+		ReactiveFormsModule,
+		NbButtonModule,
 		NbCardModule,
 		NbIconModule,
 		NbInputModule,
-		NbButtonModule,
 		NbSelectModule,
 		NbToggleModule,
-		FormsModule,
-		ReactiveFormsModule,
-		EmployeeMultiSelectModule,
-		TranslateModule
+		RichTextEditorModule,
+		TranslatePipe,
+		EmployeeMultiSelectModule
 	],
 	providers: [HelpCenterArticleService],
 	declarations: [AddArticleComponent],

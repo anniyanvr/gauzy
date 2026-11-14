@@ -1,17 +1,11 @@
 import { NgModule } from '@angular/core';
-import { ThemeModule } from '../../../@theme/theme.module';
-import { NbCardModule, NbIconModule, NbButtonModule } from '@nebular/theme';
+import { CommonModule } from '@angular/common';
+import { NbButtonModule, NbCardModule, NbIconModule } from '@nebular/theme';
+import { TranslatePipe } from '@ngx-translate/core';
 import { DeleteArticleComponent } from './delete-article.component';
-import { TranslateModule } from '../../../@shared/translate/translate.module';
 
 @NgModule({
-	imports: [
-		ThemeModule,
-		NbCardModule,
-		NbIconModule,
-		NbButtonModule,
-		TranslateModule
-	],
+	imports: [CommonModule, NbButtonModule, NbCardModule, NbIconModule, TranslatePipe],
 	declarations: [DeleteArticleComponent],
 	exports: [DeleteArticleComponent]
 })

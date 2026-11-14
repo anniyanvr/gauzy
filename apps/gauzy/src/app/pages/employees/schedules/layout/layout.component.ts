@@ -1,14 +1,14 @@
-import { Component, OnInit } from '@angular/core';
+import { Component, OnInit, ChangeDetectionStrategy } from '@angular/core';
 import { TranslateService } from '@ngx-translate/core';
-import { TranslationBaseComponent } from 'apps/gauzy/src/app/@shared/language-base/translation-base.component';
+import { TranslationBaseComponent } from '@gauzy/ui-core/i18n';
 
 @Component({
-	templateUrl: './layout.component.html',
-	styleUrls: ['./layout.component.scss']
+    templateUrl: './layout.component.html',
+    styleUrls: ['./layout.component.scss'],
+    changeDetection: ChangeDetectionStrategy.Eager,
+    standalone: false
 })
-export class LayoutComponent
-	extends TranslationBaseComponent
-	implements OnInit {
+export class LayoutComponent extends TranslationBaseComponent implements OnInit {
 	tabs = [
 		{
 			title: this.getTranslation('SCHEDULE.RECURRING_AVAILABILITY'),

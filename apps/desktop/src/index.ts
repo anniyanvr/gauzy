@@ -5,100 +5,131 @@ import log from 'electron-log';
 console.log = log.log;
 Object.assign(console, log.functions);
 
-import { app, dialog, BrowserWindow, ipcMain, shell, Menu } from 'electron';
+import * as remoteMain from '@electron/remote/main';
+import { setupTitlebar } from 'custom-electron-titlebar/main';
+import { BrowserWindow, Menu, MenuItemConstructorOptions, app, dialog, ipcMain, nativeTheme, shell } from 'electron';
+import Store from 'electron-store';
+import * as path from 'node:path';
+
 import { environment } from './environments/environment';
 
-// setup logger to catch all unhandled errors and submit as bug reports to our repo
-log.catchErrors({
-	showDialog: false,
-	onError(error, versions, submitIssue) {
-		dialog
-			.showMessageBox({
-				title: 'An error occurred',
-				message: error.message,
-				detail: error.stack,
-				type: 'error',
-				buttons: ['Ignore', 'Report', 'Exit']
-			})
-			.then((result) => {
-				if (result.response === 1) {
-					submitIssue('https://github.com/ever-co/ever-gauzy-desktop/issues/new', {
-						title: `Automatic error report for Desktop App ${versions.app}`,
-						body:
-							'Error:\n```' +
-							error.stack +
-							'\n```\n' +
-							`OS: ${versions.os}`
-					});
-					return;
-				}
-
-				if (result.response === 2) {
-					app.quit();
-				}
-			});
-	}
-});
-
-import * as path from 'path';
-
 require('module').globalPaths.push(path.join(__dirname, 'node_modules'));
-require('sqlite3');
+console.log('Desktop Node Modules Path', path.join(__dirname, 'node_modules'));
 
-app.setName('gauzy-desktop');
+Object.assign(process.env, environment);
 
-console.log('Node Modules Path', path.join(__dirname, 'node_modules'));
+app.setName(process.env.NAME);
 
-const Store = require('electron-store');
-import * as remoteMain from '@electron/remote/main';
 remoteMain.initialize();
 
 import {
+	AppError,
+	AppMenu,
+	AppWindowManager,
+	DesktopServer,
+	DesktopThemeListener,
+	DesktopUpdater,
+	DialogErrorHandler,
+	DESKTOP_LOOPBACK_HOST,
+	desktopSecretsToEnv,
+	desktopSeedCredentialsToEnv,
+	DesktopSignInNotices,
+	applyDesktopStatsEnv,
+	ensureDesktopSecrets,
+	ErrorEventManager,
+	ErrorReport,
+	ErrorReportRepository,
+	InstallPluginHandler,
+	LocalStore,
+	ProtocolRouter,
+	ProviderFactory,
+	redactSecretsForLog,
+	TranslateLoader,
+	TranslateService,
+	TrayIconFactory,
+	UIError,
 	ipcMainHandler,
 	ipcTimer,
-	TrayIcon,
-	LocalStore,
-	DataModel,
-	AppMenu
-} from '@gauzy/desktop-libs';
+	removeMainListener,
+	removeTimerListener,
+	setupAkitaStorageHandler,
+	handleDesktopStartup,
+    DesktopOfflineModeHandler
+} from '@gauzy/desktop-lib';
 import {
+	AlwaysOn,
+	ScreenCaptureNotification,
+	SplashScreen,
 	createGauzyWindow,
-	gauzyPage,
-	createSetupWindow,
-	createTimeTrackerWindow,
 	createSettingsWindow,
-	createUpdaterWindow,
-	createImageViewerWindow
+	createTimeTrackerWindow,
+	installNavigationGuard,
+	setLaunchPathAndLoad
 } from '@gauzy/desktop-window';
-import { fork } from 'child_process';
-import { autoUpdater} from 'electron-updater';
-import { CancellationToken } from "builder-util-runtime";
-import { initSentry } from './sentry';
 
-initSentry();
+import { DesktopSetupConfig } from '@gauzy/contracts';
+import * as Sentry from '@sentry/electron/main';
+import { fork } from 'child_process';
+import { autoUpdater } from 'electron-updater';
+import { initSentry } from './sentry';
+import { ElectronStoreOf, IConfig } from '@gauzy/desktop-core';
+
+/**
+ * Describes the configuration for building the Gauzy API base URL.
+ */
+export interface ApiConfig {
+	/**
+	 * A custom server URL, if provided (e.g. 'https://mydomain.com/api').
+	 */
+	serverUrl?: string;
+
+	/**
+	 * The protocol to use (e.g. 'http', 'https').
+	 * Defaults to 'http' if not provided.
+	 */
+	protocol?: string;
+
+	/**
+	 * The hostname or IP address.
+	 * Defaults to '127.0.0.1' if not provided.
+	 */
+	host?: string;
+
+	/**
+	 * The port number for the local environment.
+	 * Defaults to environment.API_DEFAULT_PORT if not provided.
+	 */
+	port?: number;
+}
 
 // the folder where all app data will be stored (e.g. sqlite DB, settings, cache, etc)
 // C:\Users\USERNAME\AppData\Roaming\gauzy-desktop
 process.env.GAUZY_USER_PATH = app.getPath('userData');
 log.info(`GAUZY_USER_PATH: ${process.env.GAUZY_USER_PATH}`);
 
+process.env.GAUZY_SEED_PATH = path.join(__dirname, 'api', 'assets', 'seed');
+log.info(`GAUZY_SEED_PATH: ${process.env.GAUZY_SEED_PATH}`);
+
 const sqlite3filename = `${process.env.GAUZY_USER_PATH}/gauzy.sqlite3`;
 log.info(`Sqlite DB path: ${sqlite3filename}`);
 
-const knex = require('knex')({
-	client: 'sqlite3',
-	connection: {
-		filename: sqlite3filename
-	},
-	useNullAsDefault: true
-});
+// The environment the app was started with, before the integrated server's settings are written into
+// it: a seed password set there is the operator's, and the generated one never replaces it.
+const launchEnv: Record<string, string | undefined> = { ...process.env };
+
+try {
+	initSentry();
+} catch (error) {
+	log.error(error);
+}
+
+const provider = ProviderFactory.instance;
+const knex = provider.connection;
 
 const exeName = path.basename(process.execPath);
 
-const dataModel = new DataModel();
-dataModel.createNewTable(knex);
-
-const store = new Store();
+// Typed with its inherited API (see IElectronStoreApi in @gauzy/desktop-core).
+const store = new Store() as ElectronStoreOf;
 
 let serve: boolean;
 const args = process.argv.slice(1);
@@ -107,102 +138,255 @@ serve = args.some((val) => val === '--serve');
 let gauzyWindow: BrowserWindow = null;
 let setupWindow: BrowserWindow = null;
 let timeTrackerWindow: BrowserWindow = null;
-let NotificationWindow: BrowserWindow = null;
+let notificationWindow: ScreenCaptureNotification = null;
 let settingsWindow: BrowserWindow = null;
 let updaterWindow: BrowserWindow = null;
 let imageView: BrowserWindow = null;
+let splashScreen: SplashScreen = null;
+let alwaysOn: AlwaysOn = null;
+let appWindowManager: AppWindowManager = null;
+setupTitlebar();
 
-console.log(
-	'App UI Render Path:',
-	path.join(__dirname, './index.html')
-);
+console.log('App UI Render Path:', path.join(__dirname, './index.html'));
 
 const pathWindow = {
 	gauzyWindow: path.join(__dirname, './index.html'),
 	timeTrackerUi: path.join(__dirname, './ui/index.html'),
-	screenshotWindow: path.join(__dirname, './ui/index.html')
+	screenshotWindow: path.join(__dirname, './ui/index.html'),
+	preloadPath: path.join(__dirname, 'preload/preload.js')
 };
+
+const updater = new DesktopUpdater({
+	repository: process.env.REPO_NAME,
+	owner: process.env.REPO_OWNER,
+	typeRelease: 'releases'
+});
+
+function initAppWindowManager() {
+	appWindowManager = AppWindowManager.getInstance();
+	appWindowManager.preloadPath = pathWindow.preloadPath;
+}
+
+const report = new ErrorReport(new ErrorReportRepository(process.env.REPO_OWNER, process.env.REPO_NAME));
+
+const eventErrorManager = ErrorEventManager.instance;
+
+// API only, and on the loopback address only: the integrated server is for this computer. Remote timers
+// connect to Gauzy Server, which can listen on the network.
+const server = new DesktopServer(true);
+const controller = new AbortController();
+const { signal } = controller;
 
 let tray = null;
 let isAlreadyRun = false;
-let willQuit = false;
 let onWaitingServer = false;
-let alreadyQuit = false;
-let serverGauzy = null;
 let serverDesktop = null;
-let dialogErr = false;
-let cancellationToken = null;
 
-try {
-	cancellationToken = new CancellationToken();
-} catch (error) {}
+/* Load translations */
+TranslateLoader.load(path.join(__dirname, 'ui', 'assets', 'i18n'));
 
-function startServer(value, restart = false) {
+/* Setting the app user model id for the app. */
+if (process.platform === 'win32') {
+	app.setAppUserModelId(process.env.APP_ID);
+}
+
+LocalStore.setFilePath({
+	iconPath: path.join(__dirname, 'assets', 'icons', 'menu', 'icon.png')
+});
+
+// Register custom protocol for deep linking
+const appProtocol = process.env.PROTOCOL || 'gauzy-desktop';
+if (process.defaultApp) {
+	if (process.argv.length >= 2) {
+		app.setAsDefaultProtocolClient(appProtocol, process.execPath, [path.resolve(process.argv[1])]);
+	}
+} else {
+	app.setAsDefaultProtocolClient(appProtocol);
+}
+
+// Deep-link protocol router — registered with all supported action handlers.
+const protocolRouter = ProtocolRouter.getInstance();
+
+// Set unlimited listeners
+ipcMain.setMaxListeners(0);
+
+/* Remove handler if exist */
+ipcMain.removeHandler('PREFERRED_LANGUAGE');
+
+ipcMain.handle('PREFERRED_THEME', () => {
+	const setting = LocalStore.getStore('appSetting');
+	return !setting ? (nativeTheme.shouldUseDarkColors ? 'dark' : 'light') : setting.theme;
+});
+
+// setup logger to catch all unhandled errors and submit as bug reports to our repo
+log.catchErrors({
+	showDialog: false,
+	onError({ error, versions, createIssue: submitIssue }) {
+		// Set user information, as well as tags and further extras
+		const scope = new Sentry.Scope();
+		scope.setExtra('Version', versions.app);
+		scope.setTag('OS', versions.os);
+		// Capture exceptions, messages
+		Sentry.captureMessage(error.message);
+		Sentry.captureException(new Error(error.stack), scope);
+		const dialog = new DialogErrorHandler(error.message);
+		dialog.options.detail = error.stack;
+		dialog.show().then((result) => {
+			if (result.response === 1) {
+				submitIssue(`https://github.com/${process.env.REPO_OWNER}/${process.env.REPO_NAME}/issues/new`, {
+					title: `Automatic error report for Desktop App ${versions.app}`,
+					body: 'Error:\n```' + error.stack + '\n```\n' + `OS: ${versions.os}`
+				});
+				return;
+			}
+
+			if (result.response === 2) {
+				app.quit();
+			}
+		});
+	}
+});
+
+process.on('uncaughtException', (error) => {
+	throw new AppError('MAINUNEXCEPTION', error.message);
+});
+
+eventErrorManager.onSendReport(async (message: string) => {
+	console.log('Send report event', message);
+	if (!gauzyWindow) return;
+	gauzyWindow.focus();
+	const dialog = new DialogErrorHandler(message, gauzyWindow);
+	dialog.options.buttons.shift();
+	const button = await dialog.show();
+	switch (button.response) {
+		case 0:
+			report.description = message;
+			await report.submit();
+			app.exit(0);
+			break;
+		default:
+			app.exit(0);
+			break;
+	}
+});
+
+eventErrorManager.onShowError(async (message: string) => {
+	console.log('Show error event', message);
+	if (!gauzyWindow) return;
+	gauzyWindow.focus();
+	const dialog = new DialogErrorHandler(message, gauzyWindow);
+	dialog.options.buttons.splice(1, 1);
+	const button = await dialog.show();
+	switch (button.response) {
+		case 1:
+			app.exit(0);
+			break;
+		default:
+			// 👀
+			break;
+	}
+});
+
+// Instance detection
+const gotTheLock = app.requestSingleInstanceLock();
+
+if (!gotTheLock) {
+	console.log('Another instance is already running, quitting...');
+	app.quit();
+} else {
+	app.on('second-instance', (event, commandLine) => {
+		console.log('Another instance is already running...');
+
+		// Handle deep link from second instance
+		const url = commandLine.find((arg) => arg.startsWith(`${appProtocol}://`));
+		if (url) {
+			console.log('Deep link received from second instance:', url);
+			protocolRouter.route(url);
+		}
+
+		// if someone tried to run a second instance, we should focus our window and show warning message.
+		if (gauzyWindow) {
+			if (gauzyWindow.isMinimized()) gauzyWindow.restore();
+			gauzyWindow.focus();
+			if (!url) {
+				dialog.showMessageBoxSync(gauzyWindow, {
+					type: 'warning',
+					title: process.env.DESCRIPTION,
+					message: 'You already have a running instance'
+				});
+			}
+		}
+	});
+
+	// Handle deep links on macOS
+	app.on('open-url', (event, url) => {
+		event.preventDefault();
+		console.log('Deep link received (macOS):', url);
+		protocolRouter.route(url);
+	});
+}
+
+// Configure the protocol router with all supported deep-link action handlers.
+protocolRouter.register(new InstallPluginHandler(pathWindow.timeTrackerUi));
+
+function setGlobalVariable(setupConfig: {
+	host?: string;
+	port?: string;
+	protocol?: string;
+	isLocalServer?: boolean;
+	serverUrl?: string;
+}) {
+	global.variableGlobal = {
+		API_BASE_URL: getApiBaseUrl({
+			host: setupConfig.host,
+			port: setupConfig.port ? Number(setupConfig.port) : environment.API_DEFAULT_PORT,
+			protocol: setupConfig.protocol,
+			serverUrl: setupConfig.serverUrl
+		}),
+		IS_INTEGRATED_DESKTOP: setupConfig.isLocalServer
+	};
+}
+
+async function startServer(setupConfig: DesktopSetupConfig, restart = false) {
+	console.log('Starting the Server...', redactSecretsForLog(setupConfig));
+
+	setGlobalVariable(setupConfig);
+
 	process.env.IS_ELECTRON = 'true';
-	if (value.db === 'sqlite') {
+	if (process.resourcesPath) {
+		process.env.ELECTRON_RESOURCES_PATH = process.resourcesPath;
+	}
+
+	if (setupConfig.db === 'sqlite') {
 		process.env.DB_PATH = sqlite3filename;
 		process.env.DB_TYPE = 'sqlite';
+	} else if (setupConfig.db === 'better-sqlite' || setupConfig.db === 'better-sqlite3') {
+		process.env.DB_PATH = sqlite3filename;
+		process.env.DB_TYPE = 'better-sqlite3';
 	} else {
 		process.env.DB_TYPE = 'postgres';
-		process.env.DB_HOST = value.dbHost;
-		process.env.DB_PORT = value.dbPort;
-		process.env.DB_NAME = value.dbName;
-		process.env.DB_USER = value.dbUsername;
-		process.env.DB_PASS = value.dbPassword;
+		process.env.DB_HOST = setupConfig['postgres']?.dbHost;
+		process.env.DB_PORT = setupConfig['postgres']?.dbPort;
+		process.env.DB_NAME = setupConfig['postgres']?.dbName;
+		process.env.DB_USER = setupConfig['postgres']?.dbUsername;
+		process.env.DB_PASS = setupConfig['postgres']?.dbPassword;
 	}
-	if (value.isLocalServer) {
-		process.env.API_PORT = value.port || environment.API_DEFAULT_PORT;
-		process.env.API_HOST = '0.0.0.0';
-		process.env.API_BASE_URL = `http://localhost:${
-			value.port || environment.API_DEFAULT_PORT
-		}`;
-		setEnvAdditional();
-		// require(path.join(__dirname, 'api/main.js'));
-		serverGauzy = fork(path.join(__dirname, './api/main.js'), {
-			silent: true
-		});
-		serverGauzy.stdout.on('data', (data) => {
-			const msgData = data.toString();
-			console.log('log -- ', msgData);
-			setupWindow.webContents.send('setup-progress', {
-				msg: msgData
-			});
-			if (!value.isSetup && !value.serverConfigConnected) {
-				if (msgData.indexOf('Listening at http') > -1) {
-					setupWindow.hide();
-					// isAlreadyRun = true;
-					gauzyWindow = createGauzyWindow(
-						gauzyWindow,
-						serve,
-						{ ...environment, gauzyWindow: value.gauzyWindow },
-						pathWindow.gauzyWindow
-					);
-					gauzyWindow.show();
-				}
-			}
-			if (
-				msgData.indexOf('Unable to connect to the database') > -1 &&
-				!dialogErr
-			) {
-				const msg = 'Unable to connect to the database';
-				dialogMessage(msg);
-			}
-		});
 
-		serverGauzy.stderr.on('data', (data) => {
-			const msgData = data.toString();
-			console.log('log error--', msgData);
-		});
+	if (setupConfig.isLocalServer) {
+		// Per-install random signing/session secrets for the integrated API, generated on first start
+		// and replacing a stored published default on upgrade. Stored with the config below so restarts
+		// keep the same keys (GHSA-39j7-x845-4w3c).
+		setupConfig = { ...setupConfig, secret: ensureDesktopSecrets(setupConfig.secret).secret };
 	}
 
 	try {
 		const config: any = {
-			...value,
+			...setupConfig,
 			isSetup: true
 		};
 		const aw = {
-			host: value.awHost,
-			isAw: value.aw
+			host: setupConfig.awHost,
+			isAw: setupConfig.aw
 		};
 		store.set({
 			configs: config,
@@ -214,106 +398,234 @@ function startServer(value, restart = false) {
 				organizationContactId: null
 			}
 		});
-	} catch (error) {}
-
-	/* create main window */
-	if (value.serverConfigConnected || !value.isLocalServer) {
-		setupWindow.hide();
-		gauzyWindow = createGauzyWindow(
-			gauzyWindow,
-			serve,
-			{ ...environment, gauzyWindow: value.gauzyWindow },
-			pathWindow.gauzyWindow
-		);
-		gauzyWindow.show();
+	} catch (error) {
+		throw new AppError('MAINSTRSERVER', error);
 	}
-	const auth = store.get('auth');
 
-	if (!tray) {
-		tray = new TrayIcon(
-			setupWindow,
-			knex,
-			timeTrackerWindow,
-			auth,
-			settingsWindow,
-			{ ...environment },
-			pathWindow,
-			path.join(
-				__dirname,
-				'assets',
-				'icons',
-				'icon_16x16.png'
-			)
+	if (setupConfig.isLocalServer) {
+		console.log(`Starting local server on port ${setupConfig.port || environment.API_DEFAULT_PORT}`);
+		process.env.API_PORT = setupConfig.port ? String(setupConfig.port) : String(environment.API_DEFAULT_PORT);
+		process.env.API_HOST = DESKTOP_LOOPBACK_HOST;
+		process.env.API_BASE_URL = `http://127.0.0.1:${setupConfig.port || environment.API_DEFAULT_PORT}`;
+
+		// All four are already provisioned above, so this returns them unchanged.
+		Object.assign(process.env, desktopSecretsToEnv(ensureDesktopSecrets(setupConfig.secret).secret));
+
+		// This install's random passwords for the accounts the API creates when it seeds an empty
+		// database, instead of the published `admin` / `12345678` (GHSA-4r2r-mv32-3468). Shown once,
+		// after the seed, by DesktopSignInNotices.
+		Object.assign(
+			process.env,
+			desktopSeedCredentialsToEnv(DesktopSignInNotices.provisionSeedCredentials(), launchEnv)
 		);
+
+		console.log('Setting additional environment variables...', process.env.API_PORT);
+		console.log('Setting additional environment variables...', process.env.API_HOST);
+		console.log('Setting additional environment variables...', process.env.API_BASE_URL);
+
+		setEnvAdditional();
+
+		// The integrated server reports its anonymous usage statistics as a desktop installation of
+		// this release (after the additional settings, so they cannot change it), and the statistics
+		// switch typed in the settings is normalised.
+		applyDesktopStatsEnv(process.env, LocalStore.getAdditionalConfig(), app.getVersion());
+
+		try {
+			console.log('Starting local server...', path.join(__dirname, 'api/main.js'));
+			await server.start(
+				{ api: path.join(__dirname, 'api/main.js') },
+				process.env,
+				appWindowManager.setupWindow ?? timeTrackerWindow,
+				signal
+			);
+		} catch (error) {
+			console.error('ERROR: Occurred while server start:' + error);
+			throw new AppError('MAINWININIT', error);
+		}
 	}
 
 	/* ping server before launch the ui */
 	ipcMain.on('app_is_init', () => {
-		if (!isAlreadyRun && value && !restart) {
+		if (!isAlreadyRun && setupConfig && !restart) {
 			onWaitingServer = true;
-			setupWindow.webContents.send('server_ping', {
-				host: getApiBaseUrl(value)
+			timeTrackerWindow?.webContents?.send?.('server_ping', {
+				host: getApiBaseUrl({
+					host: setupConfig.host,
+					port: setupConfig.port ? Number(setupConfig.port) : environment.API_DEFAULT_PORT,
+					protocol: setupConfig.protocol,
+					serverUrl: setupConfig.serverUrl
+				})
 			});
+		} else {
+			timeTrackerWindow.webContents.send('ready_to_show_renderer');
 		}
+	});
+
+	/* create main window */
+	try {
+		/* create window */
+		await setLaunchPathAndLoad(timeTrackerWindow, pathWindow.timeTrackerUi, '/time-tracker');
+		if (setupConfig.gauzyWindow) {
+			timeTrackerWindow.hide();
+		} else {
+			timeTrackerWindow.show();
+		}
+		if (setupConfig.gauzyWindow) {
+			gauzyWindow = await createGauzyWindow(
+				gauzyWindow,
+				serve,
+				{ ...environment, gauzyWindow: setupConfig.gauzyWindow },
+				pathWindow.gauzyWindow,
+				pathWindow.preloadPath
+			);
+		} else {
+			gauzyWindow = timeTrackerWindow;
+		}
+	} catch (error) {
+		throw new AppError('MAINWININIT', error);
+	}
+
+	createTrayMenu();
+
+	notificationWindow = new ScreenCaptureNotification(pathWindow.screenshotWindow);
+	await notificationWindow.loadURL();
+
+	appWindowManager.setupWindow?.close?.();
+
+	if (gauzyWindow) {
+		gauzyWindow.setVisibleOnAllWorkspaces(false);
+		gauzyWindow.show();
+	}
+
+	splashScreen?.close();
+
+	TranslateService.onLanguageChange(() => {
+		new AppMenu(timeTrackerWindow, settingsWindow, updaterWindow, knex, pathWindow, null, true);
 	});
 
 	return true;
 }
 
+function createTrayMenu() {
+	try {
+		if (tray) {
+			tray.destroy();
+		}
+		// Create the tray icon and menu
+		tray = TrayIconFactory.create(
+			environment,
+			pathWindow,
+			path.join(__dirname, 'assets', 'icons', 'tray', 'icon.png')
+		);
+	} catch (error) {
+		console.error('ERROR: Occurred while create tray menu:' + error);
+	}
+}
+
 function setEnvAdditional() {
 	const additionalConfig = LocalStore.getAdditionalConfig();
+	const config = LocalStore.getStore('configs');
 	Object.keys(additionalConfig).forEach((key) => {
 		if (additionalConfig[key]) {
 			process.env[key] = additionalConfig[key];
 		}
 	});
+	setGlobalVariable(config);
 }
 
-const dialogMessage = (msg) => {
-	dialogErr = true;
-	const options = {
-		type: 'question',
-		buttons: ['Open Setting', 'Exit'],
-		defaultId: 2,
-		title: 'Warning',
-		message: msg
-	};
+/**
+ * Retrieves the base URL for the Gauzy API based on a configuration object.
+ *
+ * If `configs.serverUrl` is defined, this function returns that URL directly.
+ * Otherwise, it constructs a local address using `configs.host`, `configs.protocol`,
+ * and `configs.port` or falls back to sensible defaults.
+ *
+ * @param {ApiConfig} configs - The configuration object.
+ * @returns {string} - The resulting base URL for the API.
+ */
+export const getApiBaseUrl = (configs: ApiConfig): string => {
+	console.log('get configs', configs);
 
-	dialog.showMessageBox(null, options).then((response) => {
-		if (response.response === 1) app.quit();
-		else {
-			if (settingsWindow) settingsWindow.show();
-			else {
-				const appSetting = LocalStore.getStore('appSetting');
-				const config = LocalStore.getStore('configs');
-				const addSetting = LocalStore.getStore('additionalSetting');
-				if (!settingsWindow) {
-					settingsWindow = createSettingsWindow(
-						settingsWindow,
-						pathWindow.timeTrackerUi
-					);
-				}
-				settingsWindow.show();
-				setTimeout(() => {
-					settingsWindow.webContents.send('app_setting', {
-						setting: appSetting,
-						config: config,
-						additionalSetting: addSetting
-					});
-				}, 500);
-			}
-		}
-	});
+	// If a full server URL is provided, return it directly
+	if (configs.serverUrl) {
+		console.log('get configs.serverUrl', configs.serverUrl);
+		return configs.serverUrl;
+	}
+
+	// Otherwise, build the URL dynamically using the host, protocol, and port
+	const protocol = configs.protocol ?? 'http'; // default protocol
+	const host = '127.0.0.1'; // default host
+	const port = configs.port ?? environment.API_DEFAULT_PORT; // default port
+
+	console.log('get configs.protocol', configs.protocol);
+	console.log('get configs.host', configs.host);
+	console.log('get configs.port', configs.port);
+
+	console.log('Building API URL...', `${protocol}://${host}:${port}`);
+	return `${protocol}://${host}:${port}`;
 };
 
-const getApiBaseUrl = (configs) => {
-	if (configs.serverUrl) return configs.serverUrl;
-	else {
-		return configs.port
-			? `http://localhost:${configs.port}`
-			: `http://localhost:${environment.API_DEFAULT_PORT}`;
+/**
+ * Closes the splash screen.
+ */
+const closeSplashScreen = () => {
+	if (splashScreen) {
+		splashScreen.close();
+		splashScreen = null;
 	}
 };
+
+async function launchSplashScreen() {
+	try {
+		splashScreen = new SplashScreen(pathWindow.timeTrackerUi);
+		await splashScreen.loadURL();
+
+		splashScreen.show();
+	} catch (error) {
+		throw new AppError('MAINWININIT', error);
+	}
+}
+
+async function initialDatabase() {
+	if (['sqlite', 'better-sqlite', 'better-sqlite3'].includes(provider.dialect)) {
+		try {
+			const res = await knex.raw(`pragma journal_mode = WAL;`);
+			console.log(res);
+		} catch (error) {
+			console.log('ERROR', error);
+		}
+	}
+
+	try {
+		await provider.createDatabase();
+		await provider.migrate();
+	} catch (error) {
+		console.error('ERROR: Occurred while database migration:' + error);
+		throw new AppError('MAINDB', error);
+	}
+}
+
+function initialApplicationMenu() {
+	const menu: MenuItemConstructorOptions[] = [
+		{
+			label: app.getName(),
+			submenu: [
+				{ role: 'about', label: TranslateService.instant('MENU.ABOUT') },
+				{ type: 'separator' },
+				{ type: 'separator' },
+				{ role: 'quit', label: TranslateService.instant('BUTTONS.EXIT') }
+			]
+		}
+	];
+
+	Menu.setApplicationMenu(Menu.buildFromTemplate(menu));
+}
+
+function setAppVersion() {
+	LocalStore.updateConfigSetting({
+		version: app.getVersion()
+	});
+}
 
 // This method will be called when Electron has finished
 // initialization and is ready to create browser windows.
@@ -322,115 +634,145 @@ const getApiBaseUrl = (configs) => {
 // More details at https://github.com/electron/electron/issues/15947
 
 app.on('ready', async () => {
-	// require(path.join(__dirname, 'desktop-api/main.js'));
-	/* set menu */
+	console.log('App is ready');
+	// Setup Akita storage handler for IPC communication
+	setupAkitaStorageHandler();
+
+	initAppWindowManager();
+
 	const configs: any = store.get('configs');
-	if (configs && typeof configs.autoLaunch === 'undefined') {
+	const settings: any = store.get('appSetting');
+
+	if (!settings) {
 		launchAtStartup(true, false);
+		LocalStore.setAllDefaultConfig();
 	}
-	Menu.setApplicationMenu(
-		Menu.buildFromTemplate([
-			{
-				label: app.getName(),
-				submenu: [
-					{ role: 'about', label: 'About' },
-					{ type: 'separator' },
-					{ type: 'separator' },
-					{ role: 'quit', label: 'Exit' }
-				]
-			}
-		])
-	);
 
-	/* create window */
-	timeTrackerWindow = createTimeTrackerWindow(
-		timeTrackerWindow,
-		pathWindow.timeTrackerUi
-	);
-	settingsWindow = createSettingsWindow(
-		settingsWindow,
-		pathWindow.timeTrackerUi
-	);
-	updaterWindow = createUpdaterWindow(
-		updaterWindow,
-		pathWindow.timeTrackerUi
-	);
-	imageView = createImageViewerWindow(imageView, pathWindow.timeTrackerUi);
+	// default global
+	if (configs) {
+		setGlobalVariable(configs);
+	}
 
-	/* Set Menu */
-	new AppMenu(
-		timeTrackerWindow,
-		settingsWindow,
-		updaterWindow,
-		knex,
-		pathWindow
-	);
-
-	if (configs && configs.isSetup) {
-		if (!configs.serverConfigConnected) {
-			setupWindow = createSetupWindow(
-				setupWindow,
-				false,
-				pathWindow.timeTrackerUi
-			);
-			setupWindow.show();
-			setTimeout(() => {
-				setupWindow.webContents.send('setup-data', {
-					...configs
-				});
-			}, 1000);
-		} else {
-			global.variableGlobal = {
-				API_BASE_URL: getApiBaseUrl(configs),
-				IS_INTEGRATED_DESKTOP: configs.isLocalServer
-			};
-			setupWindow = createSetupWindow(
-				setupWindow,
-				true,
-				pathWindow.timeTrackerUi
-			);
-			startServer(configs);
-		}
-	} else {
-		setupWindow = createSetupWindow(
-			setupWindow,
-			false,
-			pathWindow.timeTrackerUi
+	await launchSplashScreen();
+	// buttonResponse:
+	// 0: User clicked "Remove Database"
+	// 1: User clicked "Keep It"
+	// undefined: No popup was shown (e.g. fresh install or no version change)
+	const buttonResponse = await handleDesktopStartup();
+	setAppVersion();
+	if (buttonResponse === 0) {
+		// The user chose to remove the local database.
+		// Relaunch the app so it boots into a clean state after the DB
+		// has been wiped — do not proceed with the normal startup sequence.
+		app.relaunch({ args: process.argv.slice(1).concat(['--relaunch']) });
+		app.exit(0);
+		return;
+	}
+	await initialDatabase();
+	initialApplicationMenu();
+	try {
+		timeTrackerWindow = await createTimeTrackerWindow(
+			timeTrackerWindow,
+			pathWindow.timeTrackerUi,
+			pathWindow.preloadPath,
+			false
 		);
-		setupWindow.show();
+		/* Set Menu */
+		new AppMenu(timeTrackerWindow, settingsWindow, updaterWindow, knex, pathWindow, null, true);
+
+		if (configs && configs.isSetup) {
+			setGlobalVariable(configs);
+			await startServer(configs);
+			if (configs.isLocalServer) {
+				// The generated passwords, if the integrated server seeded a new database (the setup
+				// screen relaunches the app right after the first start, so they appear here), or a
+				// warning if its accounts still use a published password.
+				void DesktopSignInNotices.show(gauzyWindow ?? timeTrackerWindow);
+			}
+		} else {
+			await appWindowManager.initSetupWindow(pathWindow.timeTrackerUi);
+			appWindowManager.setupWindow?.show?.();
+			closeSplashScreen();
+		}
+	} catch (error) {
+		console.error('ERROR: Occurred while create window:' + error);
+		throw new AppError('MAINWININIT', error);
 	}
 
-	ipcMainHandler(store, startServer, knex, { ...environment });
+	updater.settingWindow = settingsWindow;
+	updater.gauzyWindow = gauzyWindow;
+	appWindowManager.updater = updater;
+	try {
+		await updater.checkUpdate();
+	} catch (error) {
+		console.error('ERROR: Occurred while check update:' + error);
+		throw new UIError('400', error, 'MAINWININIT');
+	}
+
+	removeMainListener();
+
+	ipcMainHandler(store, startServer, knex, { ...environment }, timeTrackerWindow);
+
+	if (gauzyWindow) {
+		try {
+			gauzyWindow.webContents.setZoomFactor(1.0);
+			await gauzyWindow.webContents.setVisualZoomLevelLimits(1, 5);
+			console.log('Zoom levels have been set between 100% and 500%');
+		} catch (error) {
+			console.error('ERROR: Occurred while set zoom level:' + error);
+			throw new UIError('400', error, 'MAINWININIT');
+		}
+	}
+
+	new DesktopThemeListener();
 });
 
-app.on('window-all-closed', quit);
+app.on('window-all-closed', () => {
+	console.log('All windows are closed');
+	if (process.platform !== 'darwin') {
+		app.quit();
+	}
+});
 
-ipcMain.on('server_is_ready', () => {
-	LocalStore.setDefaultApplicationSetting();
+app.commandLine.appendSwitch('disable-http2');
+
+ipcMain.on('server_is_ready', async () => {
+	console.log('Server is ready event received');
+
+	LocalStore.setAllDefaultConfig();
+
 	const appConfig = LocalStore.getStore('configs');
+
 	appConfig.serverConfigConnected = true;
+
 	store.set({
 		configs: appConfig
 	});
+
 	onWaitingServer = false;
+
 	if (!isAlreadyRun) {
-		serverDesktop = fork(
-			path.join(__dirname, './desktop-api/main.js')
-		);
-		gauzyWindow.loadURL(gauzyPage(pathWindow.gauzyWindow));
+		console.log('Server is ready, starting the Desktop API...');
+
+		serverDesktop = fork(path.join(__dirname, './desktop-api/main.js'));
+
+		removeTimerListener();
+
 		ipcTimer(
 			store,
 			knex,
 			setupWindow,
 			timeTrackerWindow,
-			NotificationWindow,
+			notificationWindow,
 			settingsWindow,
 			imageView,
 			{ ...environment },
 			createSettingsWindow,
 			pathWindow,
-			path.join(__dirname, '..', 'data', 'sound', 'snapshot-sound.wav')
+			path.join(__dirname, '..', 'data', 'sound', 'snapshot-sound.wav'),
+			alwaysOn
 		);
+
 		isAlreadyRun = true;
 	}
 });
@@ -438,218 +780,175 @@ ipcMain.on('server_is_ready', () => {
 ipcMain.on('quit', quit);
 
 ipcMain.on('minimize', () => {
+	console.log('Minimize event received');
 	gauzyWindow.minimize();
 });
 
 ipcMain.on('maximize', () => {
+	console.log('Maximize event received');
 	gauzyWindow.maximize();
 });
 
 ipcMain.on('restore', () => {
+	console.log('Restore event received');
 	gauzyWindow.restore();
 });
 
-ipcMain.on('restart_app', (event, arg) => {
-	dialogErr = false;
-	LocalStore.updateConfigSetting(arg);
-	if (serverGauzy) serverGauzy.kill();
-	if (gauzyWindow) gauzyWindow.destroy();
-	gauzyWindow = null;
-	isAlreadyRun = false;
-	setTimeout(() => {
-		if (!gauzyWindow) {
-			const configs = LocalStore.getStore('configs');
-			global.variableGlobal = {
-				API_BASE_URL: getApiBaseUrl(configs),
-				IS_INTEGRATED_DESKTOP: configs.isLocalServer
-			};
-			startServer(configs, tray ? true : false);
-			setupWindow.webContents.send('server_ping_restart', {
-				host: getApiBaseUrl(configs)
-			});
-		}
-	}, 100);
+ipcMain.on('restart_app', async (event, arg) => {
+	console.log('Restart app event received');
+	try {
+		LocalStore.updateConfigSetting(arg);
+		isAlreadyRun = false;
+		const configs = LocalStore.getStore('configs');
+		setGlobalVariable(configs);
+		await server.stop();
+		closeAllWindows();
+	} catch (error) {
+		console.error('ERROR: Occurred while server restart:' + error);
+	}
+
+	try {
+		app.relaunch({ args: process.argv.slice(1).concat(['--relaunch']) });
+	} catch (error) {
+		console.error('ERROR: Occurred while relaunch:' + error);
+	}
+
+	app.exit(0);
 });
 
 ipcMain.on('save_additional_setting', (event, arg) => {
+	console.log('Save additional setting event received');
 	LocalStore.updateAdditionalSetting(arg);
-})
+});
 
-ipcMain.on('server_already_start', () => {
+ipcMain.on('server_already_start', async () => {
+	console.log('Server already start event received');
 	if (!gauzyWindow && !isAlreadyRun) {
-		const configs: any = store.get('configs');
-		gauzyWindow = createGauzyWindow(
-			gauzyWindow,
-			serve,
-			{ ...environment, gauzyWindow: configs.gauzyWindow },
-			pathWindow.gauzyWindow
-		);
-		isAlreadyRun = true;
+		try {
+			const configs: any = store.get('configs');
+			gauzyWindow = await createGauzyWindow(
+				gauzyWindow,
+				serve,
+				{ ...environment, gauzyWindow: configs.gauzyWindow },
+				pathWindow.gauzyWindow
+			);
+			isAlreadyRun = true;
+		} catch (error) {
+			console.error('ERROR: Occurred while server already start:' + error);
+			throw new AppError('MAINWININIT', error);
+		}
 	}
 });
 
-ipcMain.on('open_browser', (event, arg) => {
-	shell.openExternal(arg.url);
-});
-
-ipcMain.on('check_for_update', async (event, arg) => {
-	const updaterConfig = {
-		repo: 'ever-gauzy-desktop',
-		owner: 'ever-co',
-		typeRelease: 'releases'
-	};
-	let latestReleaseTag = null;
+ipcMain.on('open_browser', async (event, arg) => {
+	console.log('Open browser event received');
 	try {
-		latestReleaseTag = await fetch(
-			`https://github.com/${updaterConfig.owner}/${updaterConfig.repo}/${updaterConfig.typeRelease}/latest`,
-			{
-				method: 'GET',
-				headers: {
-					Accept: 'application/json'
-				}
-			}
-		).then((res) => res.json());
-	} catch (error) {}
-
-	if (latestReleaseTag) {
-		autoUpdater.setFeedURL({
-			channel: 'latest',
-			provider: 'generic',
-			url: `https://github.com/${updaterConfig.owner}/${updaterConfig.repo}/${updaterConfig.typeRelease}/download/${latestReleaseTag.tag_name}`
-		});
-		autoUpdater.checkForUpdatesAndNotify().then((downloadPromise) => {
-			if (cancellationToken)
-				cancellationToken = downloadPromise.cancellationToken;
-		});
-	} else {
-		settingsWindow.webContents.send('error_update');
+		await shell.openExternal(arg.url);
+	} catch (error) {
+		console.error('ERROR: Occurred while open browser:' + error);
+		throw new AppError('MAINOPENEXT', error);
 	}
-});
-
-autoUpdater.on('update-available', () => {
-	settingsWindow.webContents.send('update_available');
-});
-
-autoUpdater.on('update-downloaded', () => {
-	settingsWindow.webContents.send('update_downloaded');
-});
-
-autoUpdater.on('update-not-available', () => {
-	settingsWindow.webContents.send('update_not_available');
-});
-
-autoUpdater.on('download-progress', (event) => {
-	if (settingsWindow) {
-		settingsWindow.webContents.send('download_on_progress', event);
-	}
-});
-
-autoUpdater.on('error', (e) => {
-	settingsWindow.webContents.send('error_update', e);
 });
 
 ipcMain.on('restart_and_update', () => {
-	setImmediate(() => {
-		app.removeAllListeners('window-all-closed');
-		autoUpdater.quitAndInstall(false);
-		if (serverDesktop) serverDesktop.kill();
-		if (serverGauzy) serverGauzy.kill();
+	console.log('Restart and update event received');
+	setImmediate(async () => {
+		try {
+			app.removeAllListeners('window-all-closed');
+			autoUpdater.quitAndInstall(false);
+			if (serverDesktop) serverDesktop.kill();
+			await server.stop();
+			closeAllWindows();
+		} catch (error) {
+			console.error('ERROR: Occurred while server restart and update:' + error);
+		}
 		app.exit(0);
 	});
 });
 
 ipcMain.on('check_database_connection', async (event, arg) => {
-	let databaseOptions = {};
-	if (arg.db == 'postgres') {
-		databaseOptions = {
-			client: 'pg',
-			connection: {
-				host: arg.dbHost,
-				user: arg.dbUsername,
-				password: arg.dbPassword,
-				database: arg.dbName,
-				port: arg.dbPort
-			}
-		};
-	} else {
-		databaseOptions = {
-			client: 'sqlite',
-			connection: {
-				filename: sqlite3filename
-			}
-		};
-	}
-	const dbConn = require('knex')(databaseOptions);
+	console.log('Check database connection event received');
 	try {
-		await dbConn.raw('select 1+1 as result');
-		event.sender.send('database_status', {
-			status: true,
-			message:
-				arg.db === 'postgres'
-					? 'Connection to PostgreSQL DB Succeeds'
-					: 'Connection to SQLITE DB Succeeds'
+		const driver = await provider.check(arg);
+		event.sender.send('setting_page_ipc', {
+			type: 'database_status',
+			data: {
+				status: true,
+				message: TranslateService.instant('TIMER_TRACKER.DIALOG.CONNECTION_DRIVER', { driver })
+			}
 		});
 	} catch (error) {
-		event.sender.send('database_status', {
-			status: false,
-			message: error.message
+		console.error('ERROR: Occurred while check database connection:' + error);
+		event.sender.send('setting_page_ipc', {
+			type: 'database_status',
+			data: {
+				status: false,
+				message: error.message
+			}
 		});
 	}
 });
 
-autoUpdater.on('error', () => {
-	console.log('error');
-});
+app.on('activate', async () => {
+	console.log('App is activated');
 
-app.on('activate', () => {
 	if (gauzyWindow) {
 		if (LocalStore.getStore('configs').gauzyWindow) {
 			gauzyWindow.show();
 		}
-	} else if (
-		!onWaitingServer &&
-		LocalStore.getStore('configs') &&
-		LocalStore.getStore('configs').isSetup
-	) {
+	} else if (!onWaitingServer && LocalStore.getStore('configs') && LocalStore.getStore('configs').isSetup) {
 		// On macOS it's common to re-create a window in the app when the
 		// dock icon is clicked and there are no other windows open.
-		createGauzyWindow(
+		await createGauzyWindow(
 			gauzyWindow,
 			serve,
 			{ ...environment },
-			pathWindow.timeTrackerUi
+			pathWindow.timeTrackerUi,
+			pathWindow.preloadPath
 		);
 	} else {
-		if (setupWindow) {
-			setupWindow.show();
+		if (appWindowManager.setupWindow) {
+			appWindowManager.setupWindow?.show?.();
+			closeSplashScreen();
 		}
 	}
 });
 
-app.on('before-quit', (e) => {
+app.on('before-quit', async (e) => {
+	console.log('App is quitting');
 	e.preventDefault();
+
 	const appSetting = LocalStore.getStore('appSetting');
+
 	if (appSetting && appSetting.timerStarted) {
-		e.preventDefault();
-		setTimeout(() => {
-			willQuit = true;
-			timeTrackerWindow.webContents.send('stop_from_tray', {
-				quitApp: true
-			});
-		}, 1000);
+		timeTrackerWindow.webContents.send('stop_from_tray', {
+			quitApp: true
+		});
 	} else {
-		if (cancellationToken) {
-			cancellationToken.cancel();
+		// soft download cancellation
+		try {
+			updater.cancel();
+		} catch (e) {
+			console.error('ERROR: Occurred while cancel update:' + e);
+			throw new UIError('500', 'MAINUPDTABORT', e);
 		}
+
+		try {
+			if (serverDesktop) serverDesktop.kill();
+			await server.stop();
+			closeAllWindows();
+		} catch (error) {
+			console.error('ERROR: Occurred while server stop:' + error);
+		}
+
 		app.exit(0);
-		if (serverDesktop) serverDesktop.kill();
-		if (serverGauzy) serverGauzy.kill();
 	}
 });
 
 // On OS X it is common for applications and their menu bar
 // to stay active until the user quits explicitly with Cmd + Q
 function quit() {
+	console.log('Quit called');
 	if (process.platform !== 'darwin') {
 		app.quit();
 	}
@@ -659,32 +958,106 @@ function launchAtStartup(autoLaunch, hidden) {
 	switch (process.platform) {
 		case 'darwin':
 			app.setLoginItemSettings({
-				openAtLogin: autoLaunch,
-				openAsHidden: hidden
+				openAtLogin: autoLaunch
 			});
 			break;
 		case 'win32':
 			app.setLoginItemSettings({
 				openAtLogin: autoLaunch,
-				openAsHidden: hidden,
 				path: app.getPath('exe'),
 				args: hidden
-					? [
-							'--processStart',
-							`"${exeName}"`,
-							'--process-start-args',
-							`"--hidden"`
-					  ]
+					? ['--processStart', `"${exeName}"`, '--process-start-args', `"--hidden"`]
 					: ['--processStart', `"${exeName}"`, '--process-start-args']
 			});
 			break;
 		case 'linux':
 			app.setLoginItemSettings({
-				openAtLogin: autoLaunch,
-				openAsHidden: hidden
+				openAtLogin: autoLaunch
 			});
 			break;
 		default:
 			break;
 	}
+}
+
+ipcMain.handle('PREFERRED_LANGUAGE', (event, arg) => {
+	const setting = store.get('appSetting');
+	if (arg) {
+		if (!setting) LocalStore.setDefaultApplicationSetting();
+		TranslateService.preferredLanguage = arg;
+		appWindowManager?.settingWindow?.webContents?.send?.('preferred_language_change', arg);
+	}
+	return TranslateService.preferredLanguage;
+});
+
+// A window with Node or a preload follows no link out of its own pages (a task description's link loaded the
+// linked page with Node); the configured API stays reachable, where the social sign-in links start.
+installNavigationGuard({
+	trustedUrls: () => {
+		// What getApiBaseUrl answers, without its logging of the whole configs on every navigation
+		const configs: Partial<IConfig> = LocalStore.getStore('configs') || {};
+		const port = configs.port ?? environment.API_DEFAULT_PORT;
+		return [configs.serverUrl, `http://127.0.0.1:${port}`, `http://localhost:${port}`];
+	}
+});
+
+app.on('browser-window-created', (_, window) => {
+	require('@electron/remote/main').enable(window.webContents);
+});
+
+ipcMain.on('launch_on_startup', (event, arg) => {
+	launchAtStartup(arg.autoLaunch, arg.hidden);
+});
+
+ipcMain.on('minimize_on_startup', (event, arg) => {
+	launchAtStartup(arg.autoLaunch, arg.hidden);
+});
+
+ipcMain.handle('get-app-path', () => app.getAppPath());
+ipcMain.handle('app_setting', () => LocalStore.getApplicationConfig());
+ipcMain.on('get-arch', (event) => {
+	event.sender.send('get-arch', process.arch);
+});
+
+ipcMain.handle('IS_OFFLINE', async () => {
+	const configs: IConfig = LocalStore.getStore('configs');
+	if (configs?.serverConfigConnected) {
+		const offlineMode = DesktopOfflineModeHandler.instance;
+		return offlineMode.enabled;
+	}
+	return false;
+});
+
+/**
+ * Closes all application windows.
+ *
+ * The function handles two types of windows:
+ * 1. A set of general windows (`notificationWindow`, `splashScreen`, `alwaysOn`), which are closed using the `.close()` method.
+ * 2. Browser windows (e.g., `gauzyWindow`, `timeTrackerWindow`, `settingsWindow`, etc.), which are first checked if they are not destroyed using `.isDestroyed()`
+ *    before being destroyed using the `.destroy()` method.
+ *
+ * Note: This function assumes that the relevant windows are globally defined variables of their respective types.
+ *
+ * @void
+ */
+function closeAllWindows(): void {
+	const windows = [notificationWindow, splashScreen, alwaysOn];
+	const browserWindows: BrowserWindow[] = [
+		gauzyWindow,
+		timeTrackerWindow,
+		settingsWindow,
+		updaterWindow,
+		imageView,
+		setupWindow
+	];
+
+	// Close general windows
+	windows.forEach((window) => {
+		if (window) window.close();
+	});
+
+	// Destroy browser windows
+	browserWindows.forEach((window) => {
+		if (!window?.isDestroyed()) window?.destroy?.();
+	});
 }

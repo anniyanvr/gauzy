@@ -1,6 +1,6 @@
-import { AfterViewInit, Component, OnDestroy, OnInit, TemplateRef, ViewChild } from '@angular/core';
+import { AfterViewInit, Component, OnDestroy, OnInit, TemplateRef, ViewChild, ChangeDetectionStrategy } from '@angular/core';
 import { HttpClient } from '@angular/common/http';
-import { Ng2SmartTableComponent } from 'ng2-smart-table';
+import { Cell } from 'angular2-smart-table';
 import { TranslateService } from '@ngx-translate/core';
 import { NbDialogService } from '@nebular/theme';
 import { combineLatest } from 'rxjs';
@@ -8,37 +8,43 @@ import { debounceTime, filter, tap } from 'rxjs/operators';
 import { Subject, firstValueFrom } from 'rxjs';
 import { Router } from '@angular/router';
 import { UntilDestroy, untilDestroyed } from '@ngneat/until-destroy';
-import { distinctUntilChange } from '@gauzy/common-angular';
 import {
 	IProduct,
 	ComponentLayoutStyleEnum,
 	IOrganization,
 	IProductTranslated,
-	PermissionsEnum
+	PermissionsEnum,
+	IProductCategoryTranslated,
+	IProductTypeTranslated
 } from '@gauzy/contracts';
-import { PaginationFilterBaseComponent } from './../../../../@shared/pagination/pagination-filter-base.component';
-import { DeleteConfirmationComponent } from '../../../../@shared/user/forms';
-import { API_PREFIX, ComponentEnum } from '../../../../@core/constants';
-import { ProductService, Store, ToastrService } from '../../../../@core/services';
-import { ServerDataSource } from './../../../../@core/utils/smart-table/server.data-source';
-import { ItemImgTagsComponent } from '../table-components';
+import {
+	DeleteConfirmationComponent,
+	InputFilterComponent,
+	IPaginationBase,
+	PaginationFilterBaseComponent,
+	ProductCategoryFilterComponent,
+	ProductTypeFilterComponent,
+	TagsOnlyComponent
+} from '@gauzy/ui-core/shared';
+import { API_PREFIX, ComponentEnum, distinctUntilChange } from '@gauzy/ui-core/common';
+import { ProductService, ServerDataSource, Store, ToastrService } from '@gauzy/ui-core/core';
+import { ImageRowComponent, NameWithDescriptionComponent } from '../inventory-table-components';
 
 @UntilDestroy({ checkProperties: true })
 @Component({
-	selector: 'ngx-table-inventory',
-	templateUrl: './table-inventory.component.html',
-	styleUrls: ['./table-inventory.component.scss']
+    selector: 'ngx-table-inventory',
+    templateUrl: './table-inventory.component.html',
+    styleUrls: ['./table-inventory.component.scss'],
+    changeDetection: ChangeDetectionStrategy.Eager,
+    standalone: false
 })
-export class TableInventoryComponent
-	extends PaginationFilterBaseComponent
-	implements AfterViewInit, OnInit, OnDestroy {
-
+export class TableInventoryComponent extends PaginationFilterBaseComponent implements AfterViewInit, OnInit, OnDestroy {
 	settingsSmartTable: object;
-	loading: boolean;
+	loading: boolean = false;
+	disableButton: boolean = true;
 	selectedProduct: IProduct;
 	smartTableSource: ServerDataSource;
 	products: IProductTranslated[] = [];
-	disableButton: boolean = true;
 	viewComponentName: ComponentEnum;
 	dataLayoutStyle = ComponentLayoutStyleEnum.TABLE;
 	componentLayoutStyleEnum = ComponentLayoutStyleEnum;
@@ -46,19 +52,13 @@ export class TableInventoryComponent
 
 	public organization: IOrganization;
 	products$: Subject<any> = this.subject$;
-
-	inventoryTable: Ng2SmartTableComponent;
-	@ViewChild('inventoryTable') set content(content: Ng2SmartTableComponent) {
-		if (content) {
-			this.inventoryTable = content;
-			this.onChangedSource();
-		}
-	}
+	private _refresh$: Subject<any> = new Subject();
 
 	/*
-	* Actions Buttons directive 
-	*/
-	@ViewChild('actionButtons', { static: true }) actionButtons: TemplateRef<any>;
+	 * Actions Buttons directive
+	 */
+	@ViewChild('actionButtons', { static: true })
+	actionButtons: TemplateRef<any>;
 
 	constructor(
 		private readonly http: HttpClient,
@@ -73,7 +73,7 @@ export class TableInventoryComponent
 		this.setView();
 	}
 
-	async ngOnInit() {
+	ngOnInit() {
 		this._applyTranslationOnSmartTable();
 		this._loadSmartTableSettings();
 	}
@@ -82,23 +82,38 @@ export class TableInventoryComponent
 		this.products$
 			.pipe(
 				debounceTime(300),
-				tap(() => this.loading = true),
-				tap(() => this.getTranslatedProducts()),
 				tap(() => this.clearItem()),
+				tap(() => this.getTranslatedProducts()),
+				untilDestroyed(this)
+			)
+			.subscribe();
+		this.pagination$
+			.pipe(
+				debounceTime(100),
+				distinctUntilChange(),
+				tap(() => this.products$.next(true)),
 				untilDestroyed(this)
 			)
 			.subscribe();
 
 		const storeOrganization$ = this.store.selectedOrganization$;
-		const preferredLanguage$ = this.store.preferredLanguage$
-
+		const preferredLanguage$ = this.store.preferredLanguage$;
 		combineLatest([storeOrganization$, preferredLanguage$])
 			.pipe(
 				debounceTime(300),
-				filter(([organization, language]) => !!organization && !!language),
-				tap(([organization]) => this.organization = organization),
 				distinctUntilChange(),
+				filter(([organization, language]) => !!organization && !!language),
+				tap(([organization]) => (this.organization = organization)),
+				tap(() => this._refresh$.next(true)),
 				tap(() => this.products$.next(true)),
+				untilDestroyed(this)
+			)
+			.subscribe();
+		this._refresh$
+			.pipe(
+				filter(() => this.dataLayoutStyle === ComponentLayoutStyleEnum.CARDS_GRID),
+				tap(() => this.refreshPagination()),
+				tap(() => (this.products = [])),
 				untilDestroyed(this)
 			)
 			.subscribe();
@@ -110,70 +125,95 @@ export class TableInventoryComponent
 			.componentLayout$(this.viewComponentName)
 			.pipe(
 				distinctUntilChange(),
-				tap((componentLayout) => this.dataLayoutStyle = componentLayout),
-				filter((componentLayout) => componentLayout === ComponentLayoutStyleEnum.CARDS_GRID),
+				tap((componentLayout) => (this.dataLayoutStyle = componentLayout)),
 				tap(() => this.refreshPagination()),
+				filter((componentLayout) => componentLayout === ComponentLayoutStyleEnum.CARDS_GRID),
+				tap(() => (this.products = [])),
 				tap(() => this.products$.next(true)),
 				untilDestroyed(this)
 			)
 			.subscribe();
 	}
 
-	/*
-	 * Table on changed source event
-	 */
-	onChangedSource() {
-		this.inventoryTable.source.onChangedSource
-			.pipe(
-				untilDestroyed(this),
-				tap(() => this.clearItem())
-			)
-			.subscribe();
-	}
-
 	private _loadSmartTableSettings() {
+		const pagination: IPaginationBase = this.getPagination();
 		this.settingsSmartTable = {
 			actions: false,
+			editable: true,
+			selectedRowIndex: -1,
 			pager: {
-				perPage: this.pagination.itemsPerPage
+				display: false,
+				perPage: pagination ? pagination.itemsPerPage : this.minItemPerPage
 			},
+			noDataMessage: this.getTranslation('SM_TABLE.NO_DATA.INVENTORY'),
 			columns: {
+				image: {
+					title: this.getTranslation('INVENTORY_PAGE.IMAGE'),
+					width: '79px',
+					isFilterable: false,
+					type: 'custom',
+					renderComponent: ImageRowComponent,
+					componentInitFunction: (instance: ImageRowComponent, cell: Cell) => {
+						instance.rowData = cell.getRow().getData();
+						instance.value = cell.getValue();
+					}
+				},
 				name: {
 					title: this.getTranslation('INVENTORY_PAGE.NAME'),
 					type: 'custom',
-					renderComponent: ItemImgTagsComponent,
-					valuePrepareFunction: (name: string) => {
-						return name || '-';
-					}
+					renderComponent: NameWithDescriptionComponent,
+					componentInitFunction: (instance: NameWithDescriptionComponent, cell: Cell) => {
+						instance.rowData = cell.getRow().getData();
+					},
+					isFilterable: false,
+					isSortable: false
 				},
 				code: {
 					title: this.getTranslation('INVENTORY_PAGE.CODE'),
-					type: 'string'
+					type: 'string',
+					filter: {
+						type: 'custom',
+						component: InputFilterComponent
+					},
+					filterFunction: (value: string) => {
+						this.setFilter({ field: 'code', search: value || null });
+					},
+					isSortable: false
 				},
 				productType: {
 					title: this.getTranslation('INVENTORY_PAGE.PRODUCT_TYPE'),
 					type: 'string',
-					valuePrepareFunction: (type: string) => {
-						return type ? type : '-';
-					}
+					valuePrepareFunction: (value: string) => value || '-',
+					filter: {
+						type: 'custom',
+						component: ProductTypeFilterComponent
+					},
+					filterFunction: (value: IProductTypeTranslated) => {
+						this.setFilter({ field: 'productTypeId', search: value?.id || null });
+					},
+					isSortable: false
 				},
 				productCategory: {
-					title: this.getTranslation(
-						'INVENTORY_PAGE.PRODUCT_CATEGORY'
-					),
+					title: this.getTranslation('INVENTORY_PAGE.PRODUCT_CATEGORY'),
 					type: 'string',
-					valuePrepareFunction: (category: string) => {
-						return category ? category : '-';
-					}
+					valuePrepareFunction: (value: string) => value || '-',
+					filter: {
+						type: 'custom',
+						component: ProductCategoryFilterComponent
+					},
+					filterFunction: (value: IProductCategoryTranslated) => {
+						this.setFilter({ field: 'productCategoryId', search: value?.id || null });
+					},
+					isSortable: false
 				},
 				description: {
-					title: this.getTranslation('INVENTORY_PAGE.DESCRIPTION'),
-					type: 'string',
-					filter: false,
-					valuePrepareFunction: (description: string) => {
-						return description
-							? description.slice(0, 15) + '...'
-							: '';
+					title: this.getTranslation('INVENTORY_PAGE.TAGS'),
+					type: 'custom',
+					isFilterable: false,
+					renderComponent: TagsOnlyComponent,
+					componentInitFunction: (instance: TagsOnlyComponent, cell: Cell) => {
+						instance.rowData = cell.getRow().getData();
+						instance.value = cell.getValue();
 					}
 				}
 			}
@@ -181,135 +221,187 @@ export class TableInventoryComponent
 	}
 
 	manageProductTypes() {
-		this.router.navigate([
-			'/pages/organization/inventory/product-types'
-		]);
+		this.router.navigate(['/pages/organization/inventory/product-types']);
 	}
 
 	manageProductCategories() {
-		this.router.navigate([
-			'/pages/organization/inventory/product-categories'
-		]);
+		this.router.navigate(['/pages/organization/inventory/product-categories']);
 	}
 
 	manageWarehouses() {
-		this.router.navigate([
-			'/pages/organization/inventory/warehouses'
-		]);
+		this.router.navigate(['/pages/organization/inventory/warehouses']);
 	}
 
 	manageStores() {
-		this.router.navigate([
-			'/pages/organization/inventory/merchants'
-		]);
+		this.router.navigate(['/pages/organization/inventory/merchants']);
 	}
 
 	onAddInventoryItem() {
-		this.router.navigate([
-			`/pages/organization/inventory/create`
-		]);
+		this.router.navigate([`/pages/organization/inventory/create`]);
 	}
 
-	onEditInventoryItem(selectedItem?: IProduct) {
+	/**
+	 * Navigate to the edit page of a selected inventory item.
+	 *
+	 * @param {IProduct} selectedItem - The selected inventory item to edit.
+	 */
+	onEditInventoryItem(selectedItem?: IProduct): void {
+		// If a selected item is provided, update the selected product
 		if (selectedItem) {
 			this.selectProduct({
 				isSelected: true,
 				data: selectedItem
 			});
 		}
-		this.router.navigate([
-			`/pages/organization/inventory/edit`, this.selectedProduct.id
-		]);
+
+		// Navigate to the edit page with the selected product's ID
+		this.router.navigate([`/pages/organization/inventory/edit`, this.selectedProduct.id]);
 	}
 
-	onViewInventoryItem(selectedItem?: IProduct) {
+	/**
+	 * Navigate to the detailed view of a selected inventory item.
+	 *
+	 * @param {IProduct} selectedItem - The selected inventory item to view.
+	 */
+	onViewInventoryItem(selectedItem?: IProduct): void {
+		// If a selected item is provided, update the selected product
 		if (selectedItem) {
 			this.selectProduct({
 				isSelected: true,
 				data: selectedItem
 			});
 		}
-		this.router.navigate([
-			`/pages/organization/inventory/view`, this.selectedProduct.id
-		]);
+
+		// Navigate to the detailed view page with the selected product's ID
+		this.router.navigate([`/pages/organization/inventory/view`, this.selectedProduct.id]);
 	}
 
-	async delete(selectedItem?: IProduct) {
+	/**
+	 * Asynchronously deletes a product.
+	 *
+	 * @param {IProduct} selectedItem - The selected product to be deleted.
+	 */
+	async delete(selectedItem?: IProduct): Promise<void> {
+		// If a selected product is provided, update the selected product
 		if (selectedItem) {
 			this.selectProduct({
 				isSelected: true,
 				data: selectedItem
 			});
 		}
-		const result = await firstValueFrom(
-			this.dialogService
-				.open(DeleteConfirmationComponent)
-				.onClose
-		);
 
+		// Open a confirmation dialog and wait for the result
+		const result = await firstValueFrom(this.dialogService.open(DeleteConfirmationComponent).onClose);
+
+		// If the user cancels the deletion, return early
 		if (!result) return;
 
 		try {
-			const res = await this.productService.delete(
-				this.selectedProduct.id
-			);
+			// Attempt to delete the selected product using the ProductService
+			const res = await this.productService.delete(this.selectedProduct.id);
+
+			// Check if the deletion was successful based on the response
 			if (res.affected > 0) {
+				// Display a success toast notification
 				this.toastrService.success('INVENTORY_PAGE.INVENTORY_ITEM_DELETED', {
 					name: this.selectedProduct.name
 				});
 			}
 		} catch {
+			// Handle errors by displaying a danger toast notification
 			this.toastrService.danger('TOASTR.MESSAGE.SOMETHING_BAD_HAPPENED');
 		} finally {
+			// Trigger a refresh and notify subscribers
+			this._refresh$.next(true);
 			this.products$.next(true);
 		}
 	}
 
-	/*
-	* Register Smart Table Source Config 
-	*/
-	setSmartTableSource() {
-		const { tenantId } = this.store.user;
-		const { id: organizationId } = this.organization;
+	/**
+	 * Registers and configures the Smart Table source for displaying product data.
+	 * If the organization context is unavailable, the function returns early.
+	 * The function sets up a server data source for pagination, relations, and filters.
+	 * It maps the result for each product and finalizes the setup by updating pagination and handling loading states.
+	 *
+	 * @throws {Error} If an error occurs during the setup, a danger toast notification is displayed.
+	 */
+	setSmartTableSource(): void {
+		// Check if the organization context is available
+		if (!this.organization) {
+			return;
+		}
 
-		this.smartTableSource = new ServerDataSource(this.http, {
-			endPoint: `${API_PREFIX}/products/pagination`,
-			relations: [
-				'productType',
-				'productCategory',
-				'tags',
-				'featuredImage'
-			],
-			where: {
-				...{ organizationId, tenantId }
-			},
-			resultMap: (product: IProductTranslated) => {
-				return Object.assign({}, product);
-			},
-			finalize: () => {
-				this.loading = false;
-			}
-		});
+		try {
+			// Set loading state to true while fetching data
+			this.loading = true;
+
+			// Destructure properties for clarity
+			const { tenantId } = this.store.user;
+			const { id: organizationId } = this.organization;
+
+			// Create a new ServerDataSource for Smart Table
+			this.smartTableSource = new ServerDataSource(this.http, {
+				endPoint: `${API_PREFIX}/products/pagination`,
+				relations: ['productType', 'productCategory', 'tags', 'featuredImage'],
+				// Define query parameters for the API request
+				where: {
+					organizationId,
+					tenantId,
+					...this.filters.where
+				},
+				// Define how to map the result for each product
+				resultMap: (product: IProductTranslated) => {
+					return Object.assign({}, product);
+				},
+				// Finalize callback to handle post-processing
+				finalize: () => {
+					// Update products based on the data layout style
+					if (this.dataLayoutStyle === ComponentLayoutStyleEnum.CARDS_GRID) {
+						this.products.push(...this.smartTableSource.getData());
+					}
+
+					// Update pagination based on the count of items in the source
+					this.setPagination({
+						...this.getPagination(),
+						totalItems: this.smartTableSource.count()
+					});
+					// Set loading state to false once data fetching is complete
+					this.loading = false;
+				}
+			});
+		} catch (error) {
+			// Handle errors by displaying a danger toast notification
+			this.toastrService.danger(error);
+		}
 	}
 
 	/**
-	 * GET product inventory smart table source
+	 * Asynchronously sets up and retrieves translated product inventory data for a smart table.
+	 * If the organization context is unavailable, the function returns early.
+	 * The function sets up a smart table source, configures pagination, and fetches elements based on the data layout style.
+	 *
+	 * @throws {Error} If an error occurs during the setup or data retrieval, a danger toast notification is displayed.
 	 */
-	private async getTranslatedProducts() {
+	private async getTranslatedProducts(): Promise<void> {
+		// Check if the organization context is available
+		if (!this.organization) {
+			return;
+		}
+
 		try {
+			// Set up the smart table source
 			this.setSmartTableSource();
+
+			// Configure pagination based on the active page and items per page
+			const { activePage, itemsPerPage } = this.getPagination();
+			this.smartTableSource.setPaging(activePage, itemsPerPage, false);
+
+			// Fetch elements for the smart table based on the data layout style
 			if (this.dataLayoutStyle === ComponentLayoutStyleEnum.CARDS_GRID) {
-
-				// Initiate GRID view pagination
-				const { activePage, itemsPerPage } = this.pagination;
-				this.smartTableSource.setPaging(activePage, itemsPerPage, false);
-
 				await this.smartTableSource.getElements();
-				this.products = this.smartTableSource.getData();
-
-				this.pagination['totalItems'] = this.smartTableSource.count();
 			}
 		} catch (error) {
+			// Handle errors by displaying a danger toast notification
 			this.toastrService.danger(error);
 		}
 	}
@@ -336,18 +428,7 @@ export class TableInventoryComponent
 			isSelected: false,
 			data: null
 		});
-		this.deselectAll();
 	}
 
-	/*
-	 * Deselect all table rows
-	 */
-	deselectAll() {
-		if (this.inventoryTable && this.inventoryTable.grid) {
-			this.inventoryTable.grid.dataSet['willSelect'] = 'false';
-			this.inventoryTable.grid.dataSet.deselectAll();
-		}
-	}
-
-	ngOnDestroy() { }
+	ngOnDestroy() {}
 }

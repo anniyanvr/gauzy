@@ -1,334 +1,607 @@
 // tslint:disable: nx-enforce-module-boundaries
-import { Component, OnInit, OnDestroy, AfterViewInit } from '@angular/core';
-import { ActivatedRoute } from '@angular/router';
-import { distinctUntilChange, toUTC } from '@gauzy/common-angular';
-import {
-	NbDialogService,
-	NbMenuItem,
-	NbMenuService
-} from '@nebular/theme';
-import { combineLatest } from 'rxjs';
+import { Component, OnInit, OnDestroy, AfterViewInit, ViewChild, inject, ChangeDetectionStrategy } from '@angular/core';
+import { ActivatedRoute, ParamMap } from '@angular/router';
+import { NbDialogService, NbMenuItem, NbMenuService } from '@nebular/theme';
+import { BehaviorSubject, Observable, catchError, finalize, firstValueFrom, from, merge, of, switchMap } from 'rxjs';
 import { filter, map, debounceTime, tap } from 'rxjs/operators';
-import { Subject } from 'rxjs';
 import { UntilDestroy, untilDestroyed } from '@ngneat/until-destroy';
 import { TranslateService } from '@ngx-translate/core';
-import * as _ from 'underscore';
+import { pick } from 'underscore';
+import * as moment from 'moment';
+import { IGetTimeLogInput, ITimeLog, PermissionsEnum, ITimeLogFilters, TimeLogSourceEnum } from '@gauzy/contracts';
+import { distinctUntilChange, isEmpty } from '@gauzy/ui-core/common';
 import {
-	IGetTimeLogInput,
-	ITimeLog,
-	IOrganization,
-	PermissionsEnum,
-	ITimeLogFilters,
-	OrganizationPermissionsEnum
-} from '@gauzy/contracts';
-import { Store } from './../../../../../@core/services';
-import { TimesheetService, TimesheetFilterService } from './../../../../../@shared/timesheet';
-import { EditTimeLogModalComponent, ViewTimeLogModalComponent } from './../../../../../@shared/timesheet';
-import { ConfirmComponent } from './../../../../../@shared/dialogs';
-import { TimeTrackerService } from './../../../../../@shared/time-tracker/time-tracker.service';
-import { TranslationBaseComponent } from './../../../../../@shared/language-base';
+	DateRangePickerBuilderService,
+	ErrorHandlingService,
+	Store,
+	TimeTrackerService,
+	TimesheetFilterService,
+	TimesheetService,
+	ToastrService
+} from '@gauzy/ui-core/core';
+import {
+	BaseSelectorFilterComponent,
+	ConfirmComponent,
+	EditTimeLogModalComponent,
+	GauzyFiltersComponent,
+	TimeZoneService,
+	ViewTimeLogModalComponent
+} from '@gauzy/ui-core/shared';
 
 @UntilDestroy({ checkProperties: true })
 @Component({
-	selector: 'ngx-daily',
+	selector: 'ngx-daily-timesheet',
 	templateUrl: './daily.component.html',
-	styleUrls: ['./daily.component.scss']
+	styleUrls: ['./daily.component.scss'],
+	changeDetection: ChangeDetectionStrategy.Eager,
+	standalone: false
 })
-export class DailyComponent 
-	extends TranslationBaseComponent 
-	implements AfterViewInit, OnInit, OnDestroy {
-	
-	OrganizationPermissionsEnum = OrganizationPermissionsEnum;
-	PermissionsEnum = PermissionsEnum;
+export class DailyComponent extends BaseSelectorFilterComponent implements AfterViewInit, OnInit, OnDestroy {
+	private readonly _timesheetService = inject(TimesheetService);
+	private readonly _timeTrackerService = inject(TimeTrackerService);
+	private readonly _dialogService = inject(NbDialogService);
+	private readonly _nbMenuService = inject(NbMenuService);
+	private readonly _timesheetFilterService = inject(TimesheetFilterService);
+	private readonly _route = inject(ActivatedRoute);
+	private readonly _toastrService = inject(ToastrService);
+	private readonly _errorHandlingService = inject(ErrorHandlingService);
 
-	loading: boolean;
-	showBulkAction: boolean;
-	
-	logRequest: ITimeLogFilters;
-	timeLogs: ITimeLog[] = [];
+	public PermissionsEnum = PermissionsEnum; // Enum for permissions.
+	public logs$: Observable<ITimeLog[]>; // Observable for an array of Time Logs.
+	public logs: ITimeLog[] = []; // Array of organization time logs.
+	public loading = false; // Flag to indicate if data loading is in progress.
+	public disableButton = true; // Flag to indicate if button is disabled.
+	public allChecked = false; // All checked flag.
+	public filters: ITimeLogFilters = this.request; // Time log filters. Assuming request is defined somewhere.
+	public contextMenus: NbMenuItem[] = []; // C
 
-	logs$: Subject<any> = new Subject();
-	public organization: IOrganization;
-	selectedEmployeeId: string | null = null;
-	projectId: string | null = null;
+	//Reference to the GauzyFiltersComponent using @ViewChild.
+	@ViewChild(GauzyFiltersComponent) private gauzyFiltersComponent: GauzyFiltersComponent;
 
-	allChecked: boolean;
-	contextMenus: NbMenuItem[];
+	// Observable containing the date picker configuration.
+	public datePickerConfig$: Observable<any> = this.dateRangePickerBuilderService.datePickerConfig$;
+
+	// BehaviorSubject holding the time log filters as payloads.
+	private payloads$: BehaviorSubject<ITimeLogFilters> = new BehaviorSubject(null);
+
+	// Declare a subject to trigger refresh
+	private refreshTrigger$: BehaviorSubject<boolean> = new BehaviorSubject<boolean>(false);
+
+	// Represents the selected log along with its selection status.
+	public selectedLog: {
+		data: ITimeLog;
+		isSelected: boolean;
+	};
 
 	constructor(
-		private readonly timesheetService: TimesheetService,
-		private readonly timeTrackerService: TimeTrackerService,
-		private readonly dialogService: NbDialogService,
-		private readonly store: Store,
-		private readonly nbMenuService: NbMenuService,
-		private readonly timesheetFilterService: TimesheetFilterService,
-		public readonly translateService: TranslateService,
-		private readonly route: ActivatedRoute
+		translateService: TranslateService,
+		store: Store,
+		dateRangePickerBuilderService: DateRangePickerBuilderService,
+		timeZoneService: TimeZoneService
 	) {
-		super(translateService);
+		super(store, translateService, dateRangePickerBuilderService, timeZoneService);
 	}
 
 	ngOnInit() {
-		this._applyTranslationOnChange();
-		this.logs$
-			.pipe(
-				debounceTime(500),
-				tap(() => this.loading = true),
-				tap(() => this.getLogs()),
-				tap(() => this.allChecked = false),
-				untilDestroyed(this)
-			)
-			.subscribe();
-		this.timesheetService.updateLog$
-			.pipe(
-				filter((val) => val === true),
-				tap(() => this.getLogs()),
-				untilDestroyed(this)
-			)
-			.subscribe();
-		this.nbMenuService
-			.onItemClick()
-			.pipe(
-				untilDestroyed(this),
-				filter(({ tag }) => tag === 'time-logs-bulk-action'),
-				map(({ item: { data } }) => data.action),
-				filter((action) => action === 'DELETE'),
-				tap(() => this._bulkDeleteAction())
-			)
-			.subscribe();
-		this.route.queryParamMap
-			.pipe(
-				debounceTime(1000),
-				filter((params) => !!params),
-				filter((params) => params.get('openAddDialog') === 'true'),
-				tap(() => this.openAdd()),
-				untilDestroyed(this)
-			)
-			.subscribe();
+		this._handleSubjectOperationsSubscriber();
+		this._handleUpdateLogSubscriber();
+		this._getDailyTimesheetLogs();
 	}
 
 	ngAfterViewInit() {
 		this._createContextMenus();
+		this._applyTranslationOnContextMenu();
+		this._handleItemClickSubscriber();
+		this._handleQueryParamMapSubscriber();
+	}
 
-		const storeOrganization$ = this.store.selectedOrganization$;
-		const storeEmployee$ = this.store.selectedEmployee$;
-		const storeProject$ = this.store.selectedProject$;
-		combineLatest([storeOrganization$, storeEmployee$, storeProject$])
+	// Subscribe to the subject and perform operations.
+	private _handleSubjectOperationsSubscriber(): void {
+		this.subject$
 			.pipe(
-				debounceTime(200),
-				distinctUntilChange(),
-				filter(([organization]) => !!organization),
-				tap(([organization, employee, project]) => {
-					this.organization = organization;
-					this.selectedEmployeeId = employee ? employee.id : null;
-					this.projectId = project ? project.id : null;
-				}),
-				tap(() => this.logs$.next(true)),
+				// Filter to ensure there is a valid organization
+				filter(() => !!this.organization),
+				// Tap to prepare the request
+				tap(() => this.prepareRequest()),
+				// Tap to set allChecked to false
+				tap(() => (this.allChecked = false)),
+				// Ensure lifecycle management to avoid memory leaks
 				untilDestroyed(this)
 			)
 			.subscribe();
 	}
 
-	async filtersChange($event: ITimeLogFilters) {
-		this.logRequest = $event;
-		this.timesheetFilterService.filter = $event;
-		this.logs$.next(true);
+	// Subscribe to the updateLog$ observable and perform operations.
+	private _handleUpdateLogSubscriber(): void {
+		this._timesheetService.updateLog$
+			.pipe(
+				// Filter to ensure the value is true
+				filter((val) => val === true),
+				// Tap to trigger the subject$
+				tap(() => this.subject$.next(true)),
+				// Ensure lifecycle management to avoid memory leaks
+				untilDestroyed(this)
+			)
+			.subscribe();
 	}
 
-	async getLogs() {
-		if (!this.organization || !this.logRequest) {
+	// Subscribe to the onItemClick event and perform operations.
+	private _handleItemClickSubscriber(): void {
+		this._nbMenuService
+			.onItemClick()
+			.pipe(
+				// Filter to ensure the correct tag and action
+				filter(({ tag, item }) => tag === 'time-logs-bulk-action' && item?.data.action === 'DELETE'),
+				// Map to extract the action from the menu item
+				map(({ item }) => item.data.action),
+				// Tap to execute the bulk delete action
+				tap(() => this._bulkDeleteAction()),
+				// Ensure lifecycle management to avoid memory leaks
+				untilDestroyed(this)
+			)
+			.subscribe();
+	}
+
+	// Subscribe to the queryParamMap changes and perform operations.
+	private _handleQueryParamMapSubscriber(): void {
+		this._route.queryParamMap
+			.pipe(
+				// Debounce time to wait for a pause in events
+				debounceTime(500),
+				// Filter to ensure there are parameters
+				filter((params: ParamMap) => !!params),
+				// Filter to ensure 'openAddDialog' is 'true'
+				filter((params: ParamMap) => params.get('openAddDialog') === 'true'),
+				// Tap to open the add dialog
+				tap(() => this.openAdd()),
+				// Ensure lifecycle management to avoid memory leaks
+				untilDestroyed(this)
+			)
+			.subscribe();
+	}
+
+	/**
+	 * Builds the single stream that both renders the grid and populates `this.logs`.
+	 *
+	 * A payload change and a refresh trigger are merged into ONE pipeline on purpose. They used to be
+	 * two independent subscriptions to the cold `_getDailyLogs()`, and because its `tap` writes
+	 * `this.logs`, a refresh (fired after add/edit/delete via `refreshTrigger$`) replaced `this.logs`
+	 * with a brand-new array of brand-new objects while the template's `logs$ | async` did NOT
+	 * re-emit — `payloads$` had not changed. The grid therefore kept rendering the PREVIOUS objects.
+	 *
+	 * That split is what made the action toolbar die after editing a time log: the rendered row still
+	 * carried `isSelected` (so it stayed highlighted and `selectedLog` stayed set), but
+	 * `isRowSelected()` searches `this.logs` — the new array, where nothing is selected — so
+	 * `[isDisable]` stayed true and View/Edit/Delete were never enabled. Selection state and rendered
+	 * rows must come from the same array, so there is now exactly one subscription.
+	 */
+	private _getDailyTimesheetLogs() {
+		this.logs$ = merge(
+			this.payloads$.pipe(
+				// Ensure payload changes are distinct
+				distinctUntilChange(),
+				// Filter to ensure a valid organization and payloads
+				filter((payloads: ITimeLogFilters) => !!this.organization && !!payloads)
+			),
+			// The BehaviorSubject's seed value is `false`, which this filter drops, so a refresh only
+			// re-fetches when something explicitly asks for one.
+			this.refreshTrigger$.pipe(filter((value) => !!this.organization && !!value))
+		).pipe(
+			// SwitchMap to fetch time logs using provided payloads
+			switchMap(() => this._getDailyLogs()),
+			// Ensure lifecycle management to avoid memory leaks
+			untilDestroyed(this)
+		);
+	}
+
+	/**
+	 * Retrieves daily time logs based on payloads and handles observables.
+	 */
+	private _getDailyLogs(): Observable<ITimeLog[]> {
+		// Extract organizationId from the organization object
+		const organizationId = this.organization?.id;
+
+		// Check for a valid organization; return empty array if not valid
+		if (!organizationId) {
+			return of([]); // No valid organization, return empty array
+		}
+
+		// Set loading to true
+		this.loading = true;
+
+		// Get the current payloads value
+		const payloads = this.payloads$.getValue();
+
+		// Convert the promise-based API call to an observable
+		return from(
+			this._timesheetService.getTimeLogs(payloads, ['project', 'task', 'organizationContact', 'employee.user'])
+		).pipe(
+			// Handle API call errors and log them
+			catchError((error) => {
+				console.error('Error while retrieving daily time logs entries', error);
+				this._errorHandlingService.handleError(error);
+				return of([]); // Return an empty observable to continue stream
+			}),
+			// Update component state with fetched issues
+			tap((logs: ITimeLog[]) => {
+				this.logs = logs;
+				// A re-query replaces every log OBJECT, so a selection captured from the previous array
+				// describes a row that no longer exists. Drop it with its data: otherwise `selectedLog.data`
+				// keeps `@if (selectedItem)` true, and a later checkbox tick — which opens the strip via
+				// `isCheckboxSelected()` — would surface View/Edit/Delete wired to a time log that is not
+				// on screen. Row highlight and toolbar state now clear together.
+				this.selectTimeLog({ isSelected: false, data: null });
+			}),
+			// Finalize to set loading to false
+			finalize(() => {
+				this.loading = false;
+			}),
+			// Ensure lifecycle management to avoid memory leaks
+			untilDestroyed(this)
+		);
+	}
+
+	/**
+	 * Handles changes to time log filters.
+	 *
+	 * @param filters - The time log filters to apply.
+	 */
+	filtersChange(filters: ITimeLogFilters): void {
+		if (this.gauzyFiltersComponent.saveFilters) {
+			// Save filters if the condition is met
+			this._timesheetFilterService.filter = filters;
+		}
+		// Update the component's filters
+		this.filters = { ...filters };
+		// Trigger the subject to notify subscribers
+		this.subject$.next(true);
+	}
+
+	/**
+	 * Prepares a unique request based on filters and request data.
+	 *
+	 * @returns {void}
+	 */
+	prepareRequest(): void {
+		// Check if either request or filters is empty
+		if (isEmpty(this.request) || isEmpty(this.filters)) {
 			return;
 		}
 
-		const { id: organizationId } = this.organization;
-		const { tenantId } = this.store.user;
-		const { startDate, endDate } = this.logRequest;
+		// Pick specific properties from filters
+		const appliedFilter = pick(this.filters, 'source', 'activityLevel', 'logType');
 
-		const appliedFilter = _.pick(
-			this.logRequest,
-			'source',
-			'activityLevel',
-			'logType'
-		);
-
-		const employeeIds: string[] = [];
-		if (this.selectedEmployeeId) {
-			employeeIds.push(this.selectedEmployeeId);
-		}
-
-		const projectIds: string[] = [];
-		if (this.projectId) {
-			projectIds.push(this.projectId);
-		}
-
+		// Create a request object by combining appliedFilter and processed request
 		const request: IGetTimeLogInput = {
-			organizationId,
-			tenantId,
 			...appliedFilter,
-			startDate: toUTC(startDate).format('YYYY-MM-DD HH:mm:ss'),
-			endDate: toUTC(endDate).format('YYYY-MM-DD HH:mm:ss'),
-			...(employeeIds.length > 0 ? { employeeIds } : {}),
-			...(projectIds.length > 0 ? { projectIds } : {})
+			...this.getFilterRequest(this.request)
 		};
 
-		this.timeLogs = await this.timesheetService
-			.getTimeLogs(request)
-			.then((logs: ITimeLog[]) => {
-				return logs;
-			})
-			.finally(() => (this.loading = false));
+		// Update the payloads$ BehaviorSubject with the new request
+		this.payloads$.next(request);
 	}
 
-	openAdd() {
-		this.dialogService
-			.open(EditTimeLogModalComponent, {
-				context: {
-					timeLog: {
-						startedAt: new Date(this.logRequest.startDate),
-						employeeId: this.logRequest.employeeIds
-							? this.logRequest.employeeIds[0]
-							: null,
-						projectId: this.logRequest.projectIds
-							? this.logRequest.projectIds[0]
-							: null
-					}
-				}
-			})
-			.onClose.pipe(untilDestroyed(this))
-			.subscribe((data) => {
-				if (data) {
-					this.logs$.next(true);
-				}
-			});
-	}
-	openEdit(timeLog: ITimeLog) {
-		this.dialogService
-			.open(EditTimeLogModalComponent, { context: { timeLog } })
-			.onClose.pipe(untilDestroyed(this))
-			.subscribe((data) => {
-				if (data) {
-					this.logs$.next(true);
-				}
-			});
-	}
+	/**
+	 * Opens the Add Time Log modal and handles the result.
+	 */
+	openAdd(): void {
+		const defaultTimeLog = {
+			startedAt: moment(this.request.startDate).toDate(),
+			employeeId: this.request.employeeIds?.[0] || null,
+			projectId: this.request.projectIds?.[0] || null
+		};
 
-	openView(timeLog: ITimeLog) {
-		this.dialogService
-			.open(ViewTimeLogModalComponent, {
-				context: {
-					timeLog
-				},
-				dialogClass: 'view-log-dialog'
-			})
-			.onClose.pipe(untilDestroyed(this))
-			.subscribe((data) => {
-				if (data) {
-					this.logs$.next(true);
-				}
-			});
-	}
-
-	onDeleteConfirm(timeLog: ITimeLog) {
-		this.timesheetService.deleteLogs(timeLog.id)
-			.then(() => {
-				this.checkTimerStatus();
-			})
-			.finally(() => {
-				this.logs$.next(true);
-			});
-	}
-
-	private _bulkDeleteAction() {
-		this.dialogService
-			.open(ConfirmComponent, {
-				context: {
-					data: {
-						message: this.translateService.instant('TIMESHEET.DELETE_TIMELOG')
-					}
-				}
-			})
-			.onClose
-			.pipe(untilDestroyed(this))
-			.subscribe((type) => {
-				if (type === true) {
-					const logIds = this.timeLogs.filter(
-						(timelog: ITimeLog) => timelog['checked']
-					).map(
-						(timelog: ITimeLog) => timelog.id
+		this._dialogService
+			.open(EditTimeLogModalComponent, { context: { timeLog: defaultTimeLog } })
+			.onClose.pipe(
+				// Filter out falsy results
+				filter((timeLog: ITimeLog) => !!timeLog),
+				// Tap to refresh the date range picker
+				tap((timeLog: ITimeLog) => {
+					this.dateRangePickerBuilderService.refreshDateRangePicker(
+						moment(timeLog.startedAt),
+						this.timeZoneService.currentTimeZone
 					);
-					this.timesheetService.deleteLogs(logIds)
-						.then(() => {
-							this.checkTimerStatus();
-						})
-						.finally(() => {
-							this.logs$.next(true);
-						});
-				}
-			});
-	}
-
-	private checkTimerStatus() {
-		const { employee, tenantId } = this.store.user;
-		if (employee && employee.id) {
-			this.timeTrackerService.checkTimerStatus(tenantId);
-		}
-	}
-
-	/**
-	 * Checked/Un-Checked Checkbox
-	 * 
-	 * @param checked 
-	 */
-	 public checkedAll(checked: boolean) {
-		this.allChecked = checked;
-		this.timeLogs.forEach((timesheet: any) => timesheet.checked = checked);
-	}
-
-	/**
-	 * Is Indeterminate
-	 * 
-	 * @returns 
-	 */
-	public isIndeterminate() {
-		const c1 = (this.timeLogs.filter((t: any) => t.checked).length > 0);
-		return c1 && !this.allChecked;
-	}
-
-	/**
-	 * Checkbox Toggle For Every TimeLog
-	 * 
-	 * @param checked 
-	 * @param timesheet 
-	 */
-	public toggleCheckbox(checked: boolean, timelog: ITimeLog) {
-		timelog['checked'] = checked;
-		this.allChecked = this.timeLogs.every((t: any) => t.checked);
-	}
-
-	/**
-	 * Translate context menus
-	 */
-	private _applyTranslationOnChange() {
-		this.translateService.onLangChange
-			.pipe(
-				tap(() => this._createContextMenus()),
+				}),
+				// Tap to notify subscribers
+				tap(() => this.refreshTrigger$.next(true)),
+				// Ensure lifecycle management to avoid memory leaks
 				untilDestroyed(this)
 			)
 			.subscribe();
 	}
 
 	/**
-	 * Create bulk action context menus
+	 * Opens the Edit Time Log modal and handles the result.
+	 *
+	 * @param timeLog - The time log to edit.
 	 */
-	private _createContextMenus() {
-		this.contextMenus = [
-			{
-				title: this.getTranslation('TIMESHEET.DELETE'),
+	openEdit(timeLog: ITimeLog): void {
+		if (timeLog.isRunning) {
+			return;
+		}
+
+		this._dialogService
+			.open(EditTimeLogModalComponent, { context: { timeLog } })
+			.onClose.pipe(
+				// Filter out falsy results
+				filter((editedTimeLog: ITimeLog) => !!editedTimeLog),
+				// Tap to refresh the date range picker
+				tap((editedTimeLog: ITimeLog) => {
+					this.dateRangePickerBuilderService.refreshDateRangePicker(
+						moment(editedTimeLog.startedAt),
+						this.timeZoneService.currentTimeZone
+					);
+				}),
+				// Tap to notify subscribers
+				tap(() => this.refreshTrigger$.next(true)),
+				// Ensure lifecycle management to avoid memory leaks
+				untilDestroyed(this)
+			)
+			.subscribe();
+	}
+
+	/**
+	 * Opens the View Time Log modal and handles the result.
+	 *
+	 * @param timeLog - The time log to view.
+	 */
+	openView(timeLog: ITimeLog): void {
+		this._dialogService
+			.open(ViewTimeLogModalComponent, {
+				context: { timeLog },
+				dialogClass: 'view-log-dialog'
+			})
+			.onClose.pipe(
+				// Filter out falsy results
+				filter((data) => !!data),
+				// Ensure lifecycle management to avoid memory leaks
+				untilDestroyed(this)
+			)
+			.subscribe(() => {
+				this.refreshTrigger$.next(true);
+			});
+	}
+
+	/**
+	 * Deletes a time log after confirming it's not currently running.
+	 * @param timeLog - The time log to be deleted.
+	 */
+	async onDeleteConfirm(timeLog: ITimeLog) {
+		if (timeLog.isRunning) {
+			return;
+		}
+
+		try {
+			const employee = timeLog.employee;
+			const { id: organizationId } = this.organization;
+			const request = {
+				logIds: [timeLog.id],
+				organizationId
+			};
+			// Use await to wait for the promise to resolve
+			await this._timesheetService.deleteLogs(request);
+
+			// Move the checkTimerStatus call outside the try block for consistency
+			this.checkTimerStatus();
+
+			// Display success message
+			this._toastrService.success('TOASTR.MESSAGE.TIME_LOG_DELETED', {
+				name: employee.fullName,
+				organization: this.organization.name
+			});
+		} catch (error) {
+			console.error('Error occurred while deleting TimeLog. Error Details:', error);
+			this._toastrService.danger(error);
+		} finally {
+			this.refreshTrigger$.next(true);
+		}
+	}
+
+	/**
+	 * Opens a confirmation dialog for deleting time logs.
+	 * @returns An Observable that emits `true` when the user confirms the deletion, and completes.
+	 */
+	private _confirmDeleteDialog(): Observable<boolean> {
+		const confirmDialog$ = this._dialogService.open(ConfirmComponent, {
+			context: {
 				data: {
-					action: 'DELETE'
+					message: this.translateService.instant('TIMESHEET.DELETE_TIMELOG')
 				}
 			}
-		];
+		});
+		return confirmDialog$.onClose.pipe(filter(Boolean), untilDestroyed(this));
+	}
+
+	/**
+	 * Get the IDs of selected and non-running time logs.
+	 * @returns An array of string IDs.
+	 */
+	private getSelectedLogIds(): string[] {
+		return this.logs
+			.filter((timeLog: ITimeLog) => timeLog['checked'] && !timeLog.isRunning)
+			.map((timeLog: ITimeLog) => timeLog.id);
+	}
+
+	/**
+	 * Perform bulk deletion of selected time logs.
+	 */
+	private async _bulkDeleteAction(): Promise<void> {
+		const confirmed = await firstValueFrom(this._confirmDeleteDialog());
+		//
+		if (confirmed) {
+			try {
+				const logIds = this.getSelectedLogIds();
+				const { id: organizationId, tenantId } = this.organization;
+
+				// Use await to wait for the promise to resolve
+				await this._timesheetService.deleteLogs({ logIds, organizationId, tenantId });
+
+				// Move the checkTimerStatus call outside the try block for consistency
+				this.checkTimerStatus();
+
+				// Display success message
+				this._toastrService.success('TOASTR.MESSAGE.TIME_LOGS_DELETED', {
+					organization: this.organization.name
+				});
+			} catch (error) {
+				console.error('Error occurred while deleting multiple time logs. Error Details:', error);
+				this._toastrService.danger(error);
+			} finally {
+				this.refreshTrigger$.next(true);
+			}
+		}
+	}
+
+	/**
+	 * Checks the timer status for the current user and organization.
+	 */
+	private async checkTimerStatus(): Promise<void> {
+		if (!this.organization) {
+			return;
+		}
+
+		const { employeeId, tenantId } = this.store.user;
+		const { id: organizationId } = this.organization;
+
+		if (employeeId) {
+			try {
+				await this._timeTrackerService.checkTimerStatus({
+					organizationId,
+					tenantId,
+					source: TimeLogSourceEnum.WEB_TIMER
+				});
+			} catch (error) {
+				// Handle the error or display a message if needed
+				console.error('Error while checking timer status:', error);
+			}
+		}
+	}
+
+	/**
+	 * Updates the checked status for all non-running time logs.
+	 *
+	 * @param checked - A boolean value indicating whether to check or uncheck all time logs.
+	 */
+	public checkedAll(checked: boolean): void {
+		this.allChecked = checked;
+
+		// Update the checked status for non-running time logs
+		this.logs
+			.filter((timeLog: ITimeLog) => !timeLog.isRunning)
+			.forEach((timesheet: any) => (timesheet.checked = checked));
+	}
+
+	/**
+	 * Checks if any time log is in an indeterminate state.
+	 * @returns True if at least one time log is checked and not all time logs are checked; otherwise, false.
+	 */
+	public isIndeterminate(): boolean {
+		const hasCheckedLogs = this.logs.some((timeLog: ITimeLog) => timeLog['checked']);
+		return hasCheckedLogs && !this.allChecked;
+	}
+
+	/**
+	 * Toggles the checkbox for a specific time log.
+	 * @param checked - The new checked state.
+	 * @param timeLog - The time log to update.
+	 */
+	public toggleCheckbox(checked: boolean, timeLog: ITimeLog): void {
+		if (timeLog.isRunning) {
+			return;
+		}
+
+		timeLog['checked'] = checked;
+		this.allChecked = this.logs.every((log: ITimeLog) => log['checked']);
+	}
+
+	/**
+	 * Apply translation on context menus.
+	 */
+	private _applyTranslationOnContextMenu(): void {
+		this.translateService.onLangChange
+			.pipe(
+				// Tap to recreate context menus on language change
+				tap(() => this._createContextMenus()),
+				// Ensure lifecycle management to avoid memory leaks
+				untilDestroyed(this)
+			)
+			.subscribe();
+	}
+
+	/**
+	 * Creates context menus based on user permissions.
+	 */
+	private _createContextMenus(): void {
+		const deletePermission = this.store.hasAnyPermission(PermissionsEnum.ALLOW_DELETE_TIME);
+		this.contextMenus = deletePermission
+			? [
+					{
+						title: this.getTranslation('TIMESHEET.DELETE'),
+						data: {
+							action: 'DELETE'
+						}
+					}
+				]
+			: [];
+	}
+
+	/**
+	 * Handles the selection of a time log.
+	 * @param {boolean} isSelected - Indicates whether the time log is selected.
+	 * @param {any} data - The data associated with the time log.
+	 */
+	selectTimeLog({ isSelected, data }: { isSelected: boolean; data: any }): void {
+		this.disableButton = !isSelected;
+		this.selectedLog = {
+			isSelected,
+			data: isSelected ? data : null
+		};
+	}
+
+	/**
+	 * Handles user selection of a single row.
+	 * @param timeLog - The time log to be selected or deselected.
+	 */
+	userRowSelect(timeLog: ITimeLog): void {
+		if (timeLog['isSelected']) {
+			timeLog['isSelected'] = false;
+			this.selectTimeLog({
+				isSelected: false,
+				data: null
+			});
+		} else {
+			// find the row which was previously selected.
+			const previouslySelectedRow = this.logs.find((item: ITimeLog) => item['isSelected']);
+
+			if (previouslySelectedRow) {
+				// if row found successfully, mark that row as deselected
+				previouslySelectedRow['isSelected'] = false;
+			}
+
+			// mark new row as selected
+			timeLog['isSelected'] = true;
+			this.selectTimeLog({
+				isSelected: true,
+				data: timeLog
+			});
+		}
+	}
+
+	/**
+	 * Checks if at least one time log in the list is selected.
+	 * @returns True if a time log is selected, otherwise false.
+	 */
+	isRowSelected(): boolean {
+		return !!this.logs.find((log: ITimeLog) => log['isSelected']);
+	}
+
+	/**
+	 * Checks if at least one time log in the list has its checkbox selected.
+	 * @returns True if a time log's checkbox is selected, otherwise false.
+	 */
+	isCheckboxSelected(): boolean {
+		return !!this.logs.find((log: ITimeLog) => log['checked']);
 	}
 
 	ngOnDestroy(): void {}

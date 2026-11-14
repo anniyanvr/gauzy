@@ -1,8 +1,7 @@
 import { NgModule } from '@angular/core';
-import { FormsModule, ReactiveFormsModule } from '@angular/forms';
 import {
+	NbAccordionModule,
 	NbActionsModule,
-	NbBadgeModule,
 	NbButtonModule,
 	NbCardModule,
 	NbCheckboxModule,
@@ -13,62 +12,90 @@ import {
 	NbRouteTabsetModule,
 	NbSelectModule,
 	NbSpinnerModule,
-	NbTooltipModule
+	NbTabsetModule,
+	NbToggleModule,
+	NbTooltipModule,
+	NbPopoverModule
 } from '@nebular/theme';
 import { NgSelectModule } from '@ng-select/ng-select';
-import { Ng2SmartTableModule } from 'ng2-smart-table';
-import { EditEmployeeMembershipFormModule } from '../../@shared/employee/edit-employee-membership-form/edit-employee-membership-form.module';
-import { EmployeeEndWorkModule } from '../../@shared/employee/employee-end-work-popup/employee-end-work.module';
-import { EmployeeMutationModule } from '../../@shared/employee/employee-mutation/employee-mutation.module';
-import { RecurringExpenseDeleteConfirmationModule } from '../../@shared/expenses/recurring-expense-delete-confirmation/recurring-expense-delete-confirmation.module';
-import { RecurringExpenseMutationModule } from '../../@shared/expenses/recurring-expense-mutation/recurring-expense-mutation.module';
-import { ImageUploaderModule } from '../../@shared/image-uploader/image-uploader.module';
-import { InviteMutationModule } from '../../@shared/invite/invite-mutation/invite-mutation.module';
-import { InviteTableModule } from '../../@shared/invite/invites/invites.module';
-import { ThemeModule } from '../../@theme';
-import { InviteGuard } from './../../@core/guards';
-import { 
+import { NgxPermissionsModule } from 'ngx-permissions';
+import {
+	CandidatesService,
+	InviteGuard,
+	OrganizationEmploymentTypesService,
+	OrganizationsService,
+	SkillsService
+} from '@gauzy/ui-core/core';
+import { TranslatePipe } from '@ngx-translate/core';
+import {
+	SmartDataViewLayoutModule,
+	CardGridModule,
+	EditEmployeeMembershipFormModule,
+	EmployeeEndWorkModule,
+	EmployeeLocationModule,
+	EmployeeMutationModule,
+	EmployeeRatesModule,
+	EmployeeStartWorkModule,
+	FavoriteToggleModule,
+	ImageUploaderModule,
+	InviteMutationModule,
+	InviteTableModule,
+	LanguageSelectorModule,
+	RecurringExpenseBlockModule,
+	RecurringExpenseDeleteConfirmationModule,
+	RecurringExpenseMutationModule,
+	RecordViewModule,
+	ScreenshotsItemModule,
+	RichTextEditorModule,
+	SharedModule,
+	SkillsInputModule,
+	TableComponentsModule,
+	TagsColorInputModule,
+	TimeZoneSelectorModule,
+	DynamicTabsModule
+} from '@gauzy/ui-core/shared';
+import {
 	EditEmployeeContactComponent,
+	EditEmployeeDocumentsComponent,
 	EditEmployeeEmploymentComponent,
 	EditEmployeeHiringComponent,
 	EditEmployeeLocationComponent,
 	EditEmployeeMainComponent,
 	EditEmployeeProjectsComponent,
 	EditEmployeeRatesComponent,
-	EditEmployeeProfileComponent
+	EditEmployeeProfileComponent,
+	EditEmployeeOtherSettingsComponent
 } from './edit-employee/edit-employee-profile';
 import { EditEmployeeComponent } from './edit-employee/edit-employee.component';
 import { EmployeesRoutingModule } from './employees-routing.module';
 import { EmployeesComponent } from './employees.component';
 import { ManageEmployeeInviteComponent } from './manage-employee-invite/manage-employee-invite.component';
-import { 
+import {
 	EmployeeAverageBonusComponent,
 	EmployeeAverageExpensesComponent,
 	EmployeeAverageIncomeComponent,
 	EmployeeBonusComponent,
-	EmployeeWorkStatusComponent
+	EmployeeWorkStatusComponent,
+	EmployeeTimeTrackingStatusComponent
 } from './table-components';
-import { SharedModule } from '../../@shared/shared.module';
-import { RecurringExpenseBlockModule } from '../../@shared/expenses/recurring-expense-block/recurring-expense-block.module';
-import { TagsColorInputModule } from '../../@shared/tags/tags-color-input/tags-color-input.module';
-import { SkillsInputModule } from '../../@shared/skills/skills-input/skills-input.module';
-import { EmployeeLocationModule } from '../../@shared/employee/employee-location/employee-location.module';
-import { EmployeeRatesModule } from '../../@shared/employee/employee-rates/employee-rates.module';
-import { TableComponentsModule } from '../../@shared/table-components/table-components.module';
-import { CKEditorModule } from 'ng2-ckeditor';
 import { EditEmployeeNetworksComponent } from './edit-employee/edit-employee-profile/edit-employee-networks/edit-employee-networks.component';
-import { TranslateModule } from '../../@shared/translate/translate.module';
-import { HeaderTitleModule } from '../../@shared/components/header-title/header-title.module';
-import { LanguageSelectorModule } from '../../@shared/language/language-selector/language-selector.module';
-import { CandidatesService, OrganizationEmploymentTypesService, OrganizationsService, SkillsService } from '../../@core/services';
+import { ViewEmployeeComponent } from './view-employee/view-employee.component';
+import { EmployeeHoursChartComponent } from './view-employee/employee-hours-chart/employee-hours-chart.component';
+import { ProjectQuickLookComponent } from '../projects/components/project-quick-look/project-quick-look.component';
+import { TaskViewHeaderComponent } from '../tasks/components/task-view/task-view-header.component';
+import { BaseChartDirective } from 'ng2-charts';
+import { DocumentLinksPanelComponent } from '@gauzy/plugin-docs-ui';
+import { PageExtensionSlotComponent } from '@gauzy/plugin-ui';
 
 const COMPONENTS = [
 	EmployeesComponent,
+	ViewEmployeeComponent,
 	EmployeeBonusComponent,
 	EmployeeAverageIncomeComponent,
 	EmployeeAverageExpensesComponent,
 	EmployeeAverageBonusComponent,
 	EmployeeWorkStatusComponent,
+	EmployeeTimeTrackingStatusComponent,
 	EditEmployeeComponent,
 	EditEmployeeProfileComponent,
 	EditEmployeeMainComponent,
@@ -79,57 +106,71 @@ const COMPONENTS = [
 	EditEmployeeHiringComponent,
 	EditEmployeeLocationComponent,
 	EditEmployeeEmploymentComponent,
-	EditEmployeeNetworksComponent
+	EditEmployeeNetworksComponent,
+	EditEmployeeOtherSettingsComponent,
+	EditEmployeeDocumentsComponent
 ];
 
 @NgModule({
 	imports: [
-		TableComponentsModule,
-		SharedModule,
-		EmployeesRoutingModule,
-		ThemeModule,
-		NbCardModule,
-		FormsModule,
-		ReactiveFormsModule,
+		RichTextEditorModule,
+		NbAccordionModule,
+		NbActionsModule,
 		NbButtonModule,
-		NbInputModule,
-		NbIconModule,
-		Ng2SmartTableModule,
+		NbCardModule,
+		NbCheckboxModule,
+		NbDatepickerModule,
 		NbDialogModule.forChild(),
+		NbIconModule,
+		NbInputModule,
+		NbRouteTabsetModule,
+		NbSelectModule,
+		NbSpinnerModule,
+		NbTabsetModule,
+		NbToggleModule,
+		NbTooltipModule,
+		NbPopoverModule,
+		NgSelectModule,
+		NgxPermissionsModule.forChild(),
+		TranslatePipe,
+		EmployeesRoutingModule,
+		SharedModule,
+		RecordViewModule,
+		ScreenshotsItemModule,
+		TableComponentsModule,
 		EmployeeMutationModule,
 		EmployeeEndWorkModule,
-		NbTooltipModule,
-		NgSelectModule,
-		NbSelectModule,
 		RecurringExpenseMutationModule,
 		ImageUploaderModule,
-		NbBadgeModule,
-		NbRouteTabsetModule,
-		NbCheckboxModule,
-		TranslateModule,
-		NbSpinnerModule,
 		InviteMutationModule,
 		InviteTableModule,
 		RecurringExpenseDeleteConfirmationModule,
-		NbActionsModule,
 		EditEmployeeMembershipFormModule,
-		NbDatepickerModule,
 		RecurringExpenseBlockModule,
 		TagsColorInputModule,
 		SkillsInputModule,
 		EmployeeLocationModule,
 		EmployeeRatesModule,
-		CKEditorModule,
-		HeaderTitleModule,
+		EmployeeStartWorkModule,
+		FavoriteToggleModule,
 		LanguageSelectorModule,
+		SmartDataViewLayoutModule,
+		CardGridModule,
+		TimeZoneSelectorModule,
+		DynamicTabsModule,
+		BaseChartDirective,
+		EmployeeHoursChartComponent,
+		// The assigned-task quick look's header — the same one the task lists and the team page use.
+		TaskViewHeaderComponent,
+		// The Projects panel's quick look. Standalone, shared with other Projects panels.
+		ProjectQuickLookComponent,
+		// Record-side Documents panel (spec 00 §6.14 R-LNK-02). Standalone, so it is
+		// imported directly — the Documents hub module is never pulled in here.
+		DocumentLinksPanelComponent,
+		// The view page's actions slot: what plugins add beside Edit (the chat's "Message").
+		PageExtensionSlotComponent
 	],
 	declarations: [...COMPONENTS],
-	providers: [
-		OrganizationsService,
-		InviteGuard,
-		CandidatesService,
-		OrganizationEmploymentTypesService,
-		SkillsService
-	]
+	providers: [OrganizationsService, InviteGuard, CandidatesService, OrganizationEmploymentTypesService, SkillsService]
 })
 export class EmployeesModule {}

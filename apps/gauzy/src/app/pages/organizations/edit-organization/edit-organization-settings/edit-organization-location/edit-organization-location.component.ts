@@ -1,31 +1,31 @@
-import { Component, OnInit, OnDestroy, ViewChild } from '@angular/core';
-import { Router } from '@angular/router';
-import { FormBuilder, FormGroup, Validators } from '@angular/forms';
-import { IOrganization, CrudActionEnum } from '@gauzy/contracts';
-import { OrganizationsService } from '../../../../../@core/services/organizations.service';
-import { OrganizationEditStore } from '../../../../../@core/services/organization-edit-store.service';
-import { filter, tap } from 'rxjs/operators';
-import { TranslationBaseComponent } from '../../../../../@shared/language-base/translation-base.component';
+import { Component, OnInit, OnDestroy, ViewChild, Input, AfterViewInit, ChangeDetectionStrategy } from '@angular/core';
+import { ActivatedRoute } from '@angular/router';
+import { UntypedFormBuilder, UntypedFormGroup, Validators } from '@angular/forms';
+import { debounceTime, filter, map, tap } from 'rxjs/operators';
+import { LatLng } from 'leaflet';
 import { TranslateService } from '@ngx-translate/core';
 import { UntilDestroy, untilDestroyed } from '@ngneat/until-destroy';
-import { Store } from '../../../../../@core/services/store.service';
-import { LocationFormComponent } from '../../../../../@shared/forms/location';
-import { LeafletMapComponent } from '../../../../../@shared/forms/maps/leaflet/leaflet.component';
-import { LatLng } from 'leaflet';
-import { ToastrService } from 'apps/gauzy/src/app/@core/services/toastr.service';
+import { IOrganization, CrudActionEnum } from '@gauzy/contracts';
+import { TranslationBaseComponent } from '@gauzy/ui-core/i18n';
+import { isNotEmpty } from '@gauzy/ui-core/common';
+import { OrganizationEditStore, OrganizationsService, Store, ToastrService } from '@gauzy/ui-core/core';
+import { LeafletMapComponent, LocationFormComponent } from '@gauzy/ui-core/shared';
 
 @UntilDestroy({ checkProperties: true })
 @Component({
-	selector: 'ga-edit-org-location',
-	templateUrl: './edit-organization-location.component.html',
-	styleUrls: ['./edit-organization-location.component.scss']
+    selector: 'ga-edit-org-location',
+    templateUrl: './edit-organization-location.component.html',
+    styleUrls: ['./edit-organization-location.component.scss'],
+    changeDetection: ChangeDetectionStrategy.Eager,
+    standalone: false
 })
 export class EditOrganizationLocationComponent
 	extends TranslationBaseComponent
-	implements OnInit, OnDestroy {
-	organization: IOrganization;
-	country: string;
-	readonly form: FormGroup = LocationFormComponent.buildForm(this.fb);
+	implements AfterViewInit, OnInit, OnDestroy
+{
+	@Input() organization: IOrganization;
+
+	readonly form: UntypedFormGroup = LocationFormComponent.buildForm(this.fb);
 
 	@ViewChild('locationFormDirective')
 	locationFormDirective: LocationFormComponent;
@@ -34,124 +34,129 @@ export class EditOrganizationLocationComponent
 	leafletTemplate: LeafletMapComponent;
 
 	constructor(
-		private readonly router: Router,
-		private readonly fb: FormBuilder,
+		private readonly route: ActivatedRoute,
+		private readonly fb: UntypedFormBuilder,
 		private readonly organizationService: OrganizationsService,
 		private readonly toastrService: ToastrService,
 		private readonly organizationEditStore: OrganizationEditStore,
 		private readonly store: Store,
-		readonly translateService: TranslateService
+		public readonly translateService: TranslateService
 	) {
 		super(translateService);
 	}
 
 	ngOnInit(): void {
-		this.store.selectedOrganization$
-			.pipe(
-				filter((organization) => !!organization),
-				tap((organization) => (this.organization = organization)),
-				untilDestroyed(this)
-			)
-			.subscribe((organization) => {
-				this._loadOrganizationData(organization);
-			});
 		this.setValidator();
 	}
 
-	async updateOrganizationSettings() {
-		const { tenantId } = this.store.user;
-		const { id: organizationId } = this.organization;
-
-		const location = this.locationFormDirective.getValue();
-		const { coordinates } = location['loc'];
-		delete location['loc'];
-
-		const [latitude, longitude] = coordinates;
-		const contact = {
-			...{ organizationId, tenantId },
-			...location,
-			...{ latitude, longitude }
-		};
-		const contactData = {
-			...this.form.value,
-			contact
-		};
-
-		this.organizationService
-			.update(this.organization.id, contactData)
-			.then((organization: IOrganization) => {
-				if (organization) {
-					this.organizationEditStore.organizationAction = {
-						organization,
-						action: CrudActionEnum.UPDATED
-					};
-					this.store.selectedOrganization = organization;
-				}
-			});
-		this.toastrService.success(
-			`TOASTR.MESSAGE.ORGANIZATION_LOCATION_UPDATED`,
-			{
-				name: this.organization.name
-			}
-		);
-		this.goBack();
+	ngAfterViewInit(): void {
+		this.route.parent.data
+			.pipe(
+				debounceTime(100),
+				filter((data) => !!data && !!data.organization),
+				map(({ organization }) => organization),
+				tap((organization: IOrganization) => (this.organization = organization)),
+				tap((organization: IOrganization) => (this.organizationEditStore.selectedOrganization = organization)),
+				tap(() => this._setLocationFormValue()),
+				untilDestroyed(this)
+			)
+			.subscribe();
 	}
 
-	goBack() {
-		this.router.navigate([
-			`/pages/organizations/edit/${this.organization.id}`
-		]);
-	}
-
-	//Initialize form
-	private _initializeForm() {
-		setTimeout(() => {
-			if (!this.organization) {
-				return;
-			}
-
-			const organization: IOrganization = this.organization;
-			const { contact } = organization;
-			if (contact) {
-				this.locationFormDirective.setValue({
-					country: contact.country,
-					city: contact.city,
-					postcode: contact.postcode,
-					address: contact.address,
-					address2: contact.address2,
-					loc: {
-						type: 'Point',
-						coordinates: [contact.latitude, contact.longitude]
-					}
-				});
-				this.leafletTemplate.addMarker(
-					new LatLng(contact.latitude, contact.longitude)
-				);
-			}
-		}, 200);
-	}
-
-	private async _loadOrganizationData(organization) {
-		if (!organization) {
+	async updateOrganizationSettings(): Promise<void> {
+		if (!this.organization || this.form.invalid) {
 			return;
 		}
-		const { id } = organization;
-		const { tenantId } = this.store.user;
-		const { items } = await this.organizationService.getAll(
-			['contact', 'tags'],
-			{ id, tenantId }
-		);
-		this.organization = items[0];
-		this._initializeForm();
-		this.organizationEditStore.selectedOrganization = this.organization;
+		try {
+			const { tenantId } = this.store.user;
+			const { id: organizationId } = this.organization;
+
+			const location = this.locationFormDirective.getValue();
+			const { coordinates } = location['loc'];
+			delete location['loc'];
+
+			const [latitude, longitude] = coordinates;
+			const contact = {
+				organizationId,
+				tenantId,
+				latitude,
+				longitude,
+				...location
+			};
+			const rawValue = {
+				...this.form.getRawValue(),
+				name: this.organization.name,
+				currency: this.organization.currency,
+				defaultValueDateType: this.organization.defaultValueDateType,
+				contact
+			};
+
+			const organization = await this.organizationService.update(this.organization.id, rawValue);
+			if (organization) {
+				this.organizationEditStore.organizationAction = {
+					organization,
+					action: CrudActionEnum.UPDATED
+				};
+				this.store.selectedOrganization = organization;
+			}
+			if (this.organization) {
+				this.toastrService.success(`TOASTR.MESSAGE.ORGANIZATION_LOCATION_UPDATED`, {
+					name: this.organization.name
+				});
+			}
+		} catch (error) {
+			console.log('Error while updating organization location', error);
+			this.toastrService.danger(error);
+		}
+	}
+
+	/**
+	 * Initialized Location Form Value
+	 *
+	 * @returns
+	 */
+	private _setLocationFormValue(): void {
+		if (!this.organization) {
+			return;
+		}
+		setTimeout(() => {
+			const organization: IOrganization = this.organization;
+			const { contact } = organization;
+
+			if (isNotEmpty(contact)) {
+				if (this.locationFormDirective) {
+					this.locationFormDirective.setValue({
+						country: contact.country || null,
+						city: contact.city || null,
+						postcode: contact.postcode || null,
+						address: contact.address || null,
+						address2: contact.address2 || null,
+						loc: {
+							type: 'Point',
+							coordinates: [contact.latitude || null, contact.longitude || null]
+						}
+					});
+				}
+				if (this.leafletTemplate) {
+					this.leafletTemplate.addMarker(new LatLng(contact.latitude || null, contact.longitude || null));
+				}
+			}
+
+			// The map fills its panel now instead of standing at a fixed
+			// `calc(100vh - 30rem)`, so its box is decided by the layout around it
+			// rather than by the viewport. Leaflet caches the container size when it
+			// builds the map, on its own 200ms timer, which can land before this one
+			// — re-measure, which is what `invalidateSize` asks callers who resize its
+			// box to do. A no-op if the map has not been created yet, and that case
+			// needs nothing: it will measure the settled box when it is.
+			this.leafletTemplate?.invalidateSize();
+		}, 200);
 	}
 
 	/*
 	 * Google Place and Leaflet Map Coordinates Changed Event Emitter
 	 */
-	onCoordinatesChanges(
-		$event: google.maps.LatLng | google.maps.LatLngLiteral
-	) {
+	onCoordinatesChanges($event: google.maps.LatLng | google.maps.LatLngLiteral): void {
 		const {
 			loc: { coordinates }
 		} = this.locationFormDirective.getValue();
@@ -162,21 +167,22 @@ export class EditOrganizationLocationComponent
 	/*
 	 * Leaflet Map Click Event Emitter
 	 */
-	onMapClicked(latlng: LatLng) {
-		const { lat, lng }: LatLng = latlng;
-		const location = this.locationFormDirective.getValue();
-		this.locationFormDirective.setValue({
-			...location,
-			country: '',
-			loc: {
-				type: 'Point',
-				coordinates: [lat, lng]
-			}
-		});
-		this.locationFormDirective.onCoordinatesChanged();
+	onMapClicked(latlng: LatLng): void {
+		if (this.locationFormDirective) {
+			const { lat, lng }: LatLng = latlng;
+			this.locationFormDirective.setValue({
+				...this.locationFormDirective.getValue(),
+				country: '',
+				loc: {
+					type: 'Point',
+					coordinates: [lat, lng]
+				}
+			});
+			this.locationFormDirective.onCoordinatesChanged();
+		}
 	}
 
-	setValidator(): void {
+	private setValidator(): void {
 		if (!this.form) {
 			return;
 		}
@@ -191,7 +197,7 @@ export class EditOrganizationLocationComponent
 	/*
 	 * Google Place Geometry Changed Event Emitter
 	 */
-	onGeometrySend(geometry: any) {}
+	onGeometrySend(geometry: any): void {}
 
 	ngOnDestroy(): void {}
 }

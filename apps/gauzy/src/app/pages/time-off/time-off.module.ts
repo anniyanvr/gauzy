@@ -1,5 +1,5 @@
 import { NgModule } from '@angular/core';
-import { FormsModule, ReactiveFormsModule } from '@angular/forms';
+import { RouterModule } from '@angular/router';
 import {
 	NbBadgeModule,
 	NbButtonModule,
@@ -12,60 +12,59 @@ import {
 	NbSelectModule,
 	NbSpinnerModule,
 	NbTooltipModule,
-	NbRadioModule
+	NbRadioModule,
+	NbToggleModule
 } from '@nebular/theme';
 import { NgSelectModule } from '@ng-select/ng-select';
-import { Ng2SmartTableModule } from 'ng2-smart-table';
-import { OrganizationsService } from '../../@core/services/organizations.service';
-import { ThemeModule } from '../../@theme/theme.module';
-import { TimeOffComponent } from './time-off.component';
-import { TimeOffRoutingModule } from './time-off-routing.module';
-import { TimeOffSettingsComponent } from './time-off-settings/time-off-settings.component';
-import { TimeOffMutationModule } from '../../@shared/time-off/time-off-mutation.module';
-import { TimeOffService } from '../../@core/services/time-off.service';
-import { UserFormsModule } from '../../@shared/user/forms/user-forms.module';
-import { RequestApprovalIcon } from './table-components/request-approval-icon';
-import { PaidIcon } from './table-components/paid-icon';
-import { SharedModule } from '../../@shared/shared.module';
-import { CardGridModule } from './../../@shared/card-grid/card-grid.module';
 import { NgxPermissionsModule } from 'ngx-permissions';
-import { TranslateModule } from '../../@shared/translate/translate.module';
-import { HeaderTitleModule } from '../../@shared/components/header-title/header-title.module';
+import { TranslatePipe } from '@ngx-translate/core';
+import { OrganizationsService, TimeOffService } from '@gauzy/ui-core/core';
+import {
+	SmartDataViewLayoutModule,
+	CardGridModule,
+	SharedModule,
+	TimeOffMutationModule,
+	UserFormsModule,
+	TableComponentsModule
+} from '@gauzy/ui-core/shared';
+import { routes } from './time-off.routes';
+import { TimeOffComponent } from './time-off.component';
+import { PaidIcon, RequestApprovalIcon } from './table-components';
+import { TimeOffSettingsComponent } from './time-off-settings/time-off-settings.component';
+
+// Nebular Modules
+const NB_MODULES = [
+	NbBadgeModule,
+	NbButtonModule,
+	NbCardModule,
+	NbCheckboxModule,
+	NbDialogModule.forChild(),
+	NbIconModule,
+	NbInputModule,
+	NbRouteTabsetModule,
+	NbSelectModule,
+	NbSpinnerModule,
+	NbTooltipModule,
+	NbRadioModule,
+	NbToggleModule
+];
+
+// Third Party Modules
+const THIRD_PARTY_MODULES = [NgSelectModule, NgxPermissionsModule.forChild(), TranslatePipe];
 
 @NgModule({
 	imports: [
+		RouterModule.forChild(routes),
+		...NB_MODULES,
+		...THIRD_PARTY_MODULES,
 		SharedModule,
-		TimeOffRoutingModule,
-		ThemeModule,
 		UserFormsModule,
-		NbCardModule,
-		FormsModule,
-		ReactiveFormsModule,
-		NbButtonModule,
-		NbInputModule,
-		NbIconModule,
-		Ng2SmartTableModule,
-		NbDialogModule.forChild(),
-		NbTooltipModule,
-		NgSelectModule,
-		NbRadioModule,
-		NbSelectModule,
-		NbBadgeModule,
-		CardGridModule,
-		NbRouteTabsetModule,
-		NbCheckboxModule,
-		TranslateModule,
-		NbSpinnerModule,
 		TimeOffMutationModule,
-		NgxPermissionsModule.forChild(),
-		HeaderTitleModule
+		CardGridModule,
+		SmartDataViewLayoutModule,
+		TableComponentsModule
 	],
-	declarations: [
-		TimeOffComponent,
-		TimeOffSettingsComponent,
-		RequestApprovalIcon,
-		PaidIcon
-	],
+	declarations: [TimeOffComponent, TimeOffSettingsComponent, RequestApprovalIcon, PaidIcon],
 	providers: [OrganizationsService, TimeOffService]
 })
 export class TimeOffModule {}

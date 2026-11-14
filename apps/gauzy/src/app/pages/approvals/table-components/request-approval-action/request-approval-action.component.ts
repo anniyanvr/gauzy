@@ -1,23 +1,20 @@
-import { Component, Input, OnInit, Output, EventEmitter } from '@angular/core';
-import { ViewCell } from 'ng2-smart-table';
-import {
-	RequestApprovalStatusTypesEnum,
-	ComponentLayoutStyleEnum,
-	RolesEnum
-} from '@gauzy/contracts';
-import { Store } from 'apps/gauzy/src/app/@core/services';
+import { Component, Input, OnInit, Output, EventEmitter, ChangeDetectionStrategy } from '@angular/core';
+import { RequestApprovalStatusTypesEnum, ComponentLayoutStyleEnum, RolesEnum } from '@gauzy/contracts';
+import { Store } from '@gauzy/ui-core/core';
 
 @Component({
-	selector: 'ngx-request-approval-action',
-	templateUrl: './request-approval-action.component.html'
+    selector: 'ngx-request-approval-action',
+    templateUrl: './request-approval-action.component.html',
+    changeDetection: ChangeDetectionStrategy.Eager,
+    standalone: false
 })
-export class RequestApprovalActionComponent implements ViewCell, OnInit {
+export class RequestApprovalActionComponent implements OnInit {
 	@Input()
 	rowData: any;
 	isApproval = true;
 	isRefuse = true;
 	isSuperAdmin = false;
-	
+
 	@Output() updateResult = new EventEmitter<any>();
 
 	@Input()
@@ -26,19 +23,16 @@ export class RequestApprovalActionComponent implements ViewCell, OnInit {
 	@Input()
 	value: string | number;
 
-	constructor(
-		private store: Store,
-	) { }
+	constructor(private readonly store: Store) {}
 
 	ngOnInit(): void {
 		const { role } = this.store.user;
-		if(role && role.name === RolesEnum.SUPER_ADMIN) {
-			this.isSuperAdmin = true
+		if (role && role.name === RolesEnum.SUPER_ADMIN) {
+			this.isSuperAdmin = true;
 		}
-
 		if (this.rowData && this.rowData.status) {
-			if(this.isSuperAdmin) {
-				switch (this.rowData.status) {
+			if (this.isSuperAdmin) {
+				switch (this.rowData.status.value) {
 					case RequestApprovalStatusTypesEnum.APPROVED:
 						this.isApproval = false;
 						this.isRefuse = true;
@@ -53,7 +47,7 @@ export class RequestApprovalActionComponent implements ViewCell, OnInit {
 						break;
 				}
 			} else {
-				switch (this.rowData.status) {
+				switch (this.rowData.status.value) {
 					case RequestApprovalStatusTypesEnum.APPROVED:
 					case RequestApprovalStatusTypesEnum.REFUSED:
 						this.isApproval = false;
@@ -64,7 +58,7 @@ export class RequestApprovalActionComponent implements ViewCell, OnInit {
 						this.isRefuse = true;
 						break;
 				}
-			}			
+			}
 		}
 	}
 

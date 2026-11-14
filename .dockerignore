@@ -2,6 +2,11 @@ dist
 
 tmp
 .cache
+# Local build caches — huge (multi-GB) and never needed inside images
+.angular
+**/.angular
+.nx
+**/.nx
 .github
 .circle
 .circleci
@@ -14,6 +19,8 @@ docker-compose*.yml
 .git/
 .gitignore
 Jenkinsfile
+.env.prod
+.env.caddy
 
 node_modules
 apps/api/node_modules
@@ -21,6 +28,7 @@ apps/desktop/node_modules
 apps/desktop-timer/node_modules
 apps/gauzy/node_modules
 apps/gauzy-e2e/node_modules
+apps/mcp/node_modules
 packages/**/node_modules
 packages/plugins/**/node_modules
 

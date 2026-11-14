@@ -1,20 +1,20 @@
-import { Component } from '@angular/core';
+import { Component, ChangeDetectionStrategy } from '@angular/core';
 import { NbDialogRef } from '@nebular/theme';
 import { TranslateService } from '@ngx-translate/core';
-import { TranslationBaseComponent } from '../../../@shared/language-base/translation-base.component';
+import { TranslationBaseComponent } from '@gauzy/ui-core/i18n';
 import { IInvoice } from '@gauzy/contracts';
 import { saveAs } from 'file-saver';
-import { InvoiceEstimateHistoryService } from '../../../@core/services/invoice-estimate-history.service';
-import { Store } from '../../../@core/services/store.service';
-import { ToastrService } from '../../../@core/services/toastr.service';
-import { InvoicesService } from '../../../@core/services';
+import { InvoiceEstimateHistoryService, InvoicesService, Store, ToastrService } from '@gauzy/ui-core/core';
 import { tap } from 'rxjs/operators';
 import { UntilDestroy, untilDestroyed } from '@ngneat/until-destroy';
 
 @UntilDestroy({ checkProperties: true })
 @Component({
-	selector: 'ga-invoice-download',
-	templateUrl: './invoice-download-mutation.component.html'
+    selector: 'ga-invoice-download',
+    templateUrl: './invoice-download-mutation.component.html',
+    styleUrls: ['./invoice-download-mutation.component.scss'],
+    changeDetection: ChangeDetectionStrategy.Eager,
+    standalone: false
 })
 export class InvoiceDownloadMutationComponent extends TranslationBaseComponent {
 	invoice: IInvoice;
@@ -66,12 +66,8 @@ export class InvoiceDownloadMutationComponent extends TranslationBaseComponent {
 	async createInvoiceHistory() {
 		await this.invoiceEstimateHistoryService.add({
 			action: this.isEstimate
-				? this.getTranslation(
-						'INVOICES_PAGE.DOWNLOAD.ESTIMATE_DOWNLOAD'
-				  )
-				: this.getTranslation(
-						'INVOICES_PAGE.DOWNLOAD.INVOICE_DOWNLOAD'
-				  ),
+				? this.getTranslation('INVOICES_PAGE.DOWNLOAD.ESTIMATE_DOWNLOAD')
+				: this.getTranslation('INVOICES_PAGE.DOWNLOAD.INVOICE_DOWNLOAD'),
 			invoice: this.invoice,
 			invoiceId: this.invoice.id,
 			user: this.store.user,

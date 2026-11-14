@@ -1,9 +1,69 @@
 # Security Policy
 
-Ever Gauzy™ follows good security practices, but 100% security cannot be guaranteed in any software!  
-Ever Gauzy™ is provided AS IS without any warranty. Use at your own risk!  
-See more details in the [LICENSE](LICENSE.md).
+Thank you for helping keep Ever® Gauzy™ and its users safe. This page explains
+how to report a security vulnerability and what happens after you do.
 
-In a production setup, all client-side to server-side (backend, APIs) communications should be encrypted using HTTPS/WSS/SSL (REST APIs, GraphQL endpoint, Socket.io WebSockets, etc.).
+## Supported versions
 
-If you discover any issue regarding security, please disclose the information responsibly by sending an email to <mailto:security@ever.co> or on [![huntr](https://cdn.huntr.dev/huntr_security_badge_mono.svg)](https://huntr.dev) and not by creating a GitHub issue.
+Security fixes are made on the `develop` branch and ship with the next
+release. We support:
+
+| Version                        | Supported                        |
+| ------------------------------ | -------------------------------- |
+| The [latest release][releases] | Yes                              |
+| The `develop` branch           | Yes                              |
+| Older releases                 | No: please upgrade to the latest |
+
+This covers everything in this repository: the API, the web app, the desktop
+apps (Gauzy Desktop, Gauzy Desktop Timer, Gauzy Server), the plugins and the
+Docker images we publish from it (`ghcr.io/ever-co/gauzy-*`).
+
+## Reporting a vulnerability
+
+**Please do not report security vulnerabilities in public GitHub issues,
+discussions or pull requests.**
+
+Report them privately, in one of these two ways:
+
+1. **GitHub private vulnerability reporting (preferred):** open
+   <https://github.com/ever-co/ever-gauzy/security/advisories/new>. Only you
+   and the maintainers can see the report, and we can discuss it, prepare the
+   fix in a private fork and publish the advisory from the same place.
+2. **Email:** <mailto:security@ever.co>.
+
+Please include as much of the following as you can:
+
+- the affected component (API endpoint, web page, desktop app, plugin, Docker
+  image) and version or commit;
+- the type of issue (for example authentication bypass, missing authorization
+  or tenant isolation, injection, XSS, SSRF, secret exposure);
+- step-by-step instructions to reproduce it, with a proof of concept if you
+  have one;
+- the impact: what an attacker can do, and what access they need first;
+- any configuration the issue depends on (database type, `DEMO` mode,
+  environment variables, reverse proxy).
+
+Please test only against your own installation (for example a local
+`docker compose` stack). Do not test against <https://app.gauzy.co> or other
+people's data, and do not run denial-of-service or spam tests against our
+services.
+
+## What happens next
+
+- We aim to acknowledge your report promptly, and we keep you updated while we
+  investigate and fix it.
+- We fix confirmed issues on `develop`, release the fix, and publish a GitHub
+  Security Advisory (with a CVE when one applies) once a fixed release is
+  available.
+- We credit reporters in the advisory, unless you ask us not to.
+- Please keep the details private until the advisory is published.
+
+## Security notes for self-hosting
+
+The production checklist (secrets the API refuses to start without, seeded
+account passwords, proxy trust and rate limits) is the "Production" list
+under "Run with Docker Compose" in the [README](README.md#production). In
+production, serve REST and GraphQL over HTTPS, and WebSocket connections
+(GraphQL subscriptions included) over WSS.
+
+[releases]: https://github.com/ever-co/ever-gauzy/releases

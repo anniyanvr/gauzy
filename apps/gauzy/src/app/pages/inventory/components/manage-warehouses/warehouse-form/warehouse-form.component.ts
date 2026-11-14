@@ -1,56 +1,55 @@
-import { ITag, IWarehouse, IImageAsset, IOrganization } from '@gauzy/contracts';
-import { FormBuilder, FormGroup, Validators } from '@angular/forms';
-import { TranslateService } from '@ngx-translate/core';
+import { AfterViewInit, Component, OnDestroy, OnInit, ViewChild, ChangeDetectionStrategy } from '@angular/core';
 import { ActivatedRoute, Router } from '@angular/router';
+import { UntypedFormBuilder, UntypedFormGroup, Validators } from '@angular/forms';
+import { ITag, IWarehouse, IImageAsset, IOrganization } from '@gauzy/contracts';
+import { distinctUntilChange } from '@gauzy/ui-core/common';
+import { TranslateService } from '@ngx-translate/core';
 import { UntilDestroy, untilDestroyed } from '@ngneat/until-destroy';
 import { LatLng } from 'leaflet';
-import { Component, OnInit, ViewChild } from '@angular/core';
 import { NbDialogService, NbStepperComponent } from '@nebular/theme';
-import { Subject, firstValueFrom } from 'rxjs';
+import { Subject, firstValueFrom, debounceTime } from 'rxjs';
 import { filter, tap } from 'rxjs/operators';
-import { TranslationBaseComponent } from './../../../../../@shared/language-base';
-import { LocationFormComponent } from './../../../../../@shared/forms/location';
-import { LeafletMapComponent } from './../../../../../@shared/forms/maps';
-import { SelectAssetComponent } from './../../../../../@shared/select-asset-modal/select-asset.component';
-import { ImageAssetService, Store, ToastrService, WarehouseService } from './../../../../../@core/services';
+import { TranslationBaseComponent } from '@gauzy/ui-core/i18n';
+import { ImageAssetService, Store, ToastrService, WarehouseService } from '@gauzy/ui-core/core';
+import { FormHelpers, LocationFormComponent, LeafletMapComponent, SelectAssetComponent } from '@gauzy/ui-core/shared';
 
 @UntilDestroy({ checkProperties: true })
 @Component({
-	selector: 'ga-warehouse-form',
-	templateUrl: './warehouse-form.component.html',
-	styleUrls: ['./warehouse-form.component.scss']
+    selector: 'ga-warehouse-form',
+    templateUrl: './warehouse-form.component.html',
+    styleUrls: ['./warehouse-form.component.scss'],
+    changeDetection: ChangeDetectionStrategy.Eager,
+    standalone: false
 })
-export class WarehouseFormComponent
-	extends TranslationBaseComponent
-	implements OnInit {
-	
-	warehouseId: string;
+export class WarehouseFormComponent extends TranslationBaseComponent implements AfterViewInit, OnInit, OnDestroy {
+	FormHelpers: typeof FormHelpers = FormHelpers;
+
 	hoverState: boolean;
 	organization: IOrganization;
 	warehouse: IWarehouse;
 	logo: IImageAsset;
 	images: IImageAsset[] = [];
-	
+
 	private newImageUploadedEvent$ = new Subject<any>();
-	
-	/*
-	* Location Mutation Form 
-	*/
-	readonly locationForm: FormGroup = LocationFormComponent.buildForm(this.fb);
 
 	/*
-	* Warehouse Mutation Form 
-	*/
-	public form: FormGroup = WarehouseFormComponent.buildForm(this.fb);
-	static buildForm(fb: FormBuilder): FormGroup {
+	 * Location Mutation Form
+	 */
+	readonly locationForm: UntypedFormGroup = LocationFormComponent.buildForm(this.fb);
+
+	/*
+	 * Warehouse Mutation Form
+	 */
+	public form: UntypedFormGroup = WarehouseFormComponent.buildForm(this.fb);
+	static buildForm(fb: UntypedFormBuilder): UntypedFormGroup {
 		return fb.group({
-			name: ['', Validators.required],
+			name: [null, Validators.required],
 			tags: [],
-			code: ['', Validators.required],
-			email: ['', Validators.email],
+			code: [null, Validators.required],
+			email: [null, [Validators.required, Validators.email]],
 			active: [false],
-			logo: [''],
-			description: ['']
+			logo: [null],
+			description: [null]
 		});
 	}
 
@@ -78,7 +77,7 @@ export class WarehouseFormComponent
 		public readonly translateService: TranslateService,
 		private readonly route: ActivatedRoute,
 		private readonly router: Router,
-		private readonly fb: FormBuilder,
+		private readonly fb: UntypedFormBuilder,
 		private readonly store: Store,
 		private readonly dialogService: NbDialogService,
 		private readonly imageAssetService: ImageAssetService
@@ -87,26 +86,12 @@ export class WarehouseFormComponent
 	}
 
 	ngOnInit(): void {
-		this.route.params
-			.pipe(
-				filter((params) => !!params.id),
-				tap(({ id }) => this.warehouseId = id),
-				untilDestroyed(this)
-			)
-			.subscribe(async (params) => {
-				if (params.id) {
-					this.warehouse = await this.warehouseService.getById(
-						params.id,
-						['logo', 'contact', 'tags']
-					);
-					this._patchForm();
-					this._patchLocationForm();
-				}
-			});
 		this.store.selectedOrganization$
 			.pipe(
+				debounceTime(100),
+				distinctUntilChange(),
 				filter((organization: IOrganization) => !!organization),
-				tap((organization: IOrganization) => this.organization = organization),
+				tap((organization: IOrganization) => (this.organization = organization)),
 				tap(() => this._getAssetsImages()),
 				untilDestroyed(this)
 			)
@@ -114,8 +99,20 @@ export class WarehouseFormComponent
 		this.newImageUploadedEvent$
 			.pipe(
 				filter((image) => !!image),
-				tap((image) => {
-					console.log(image)
+				untilDestroyed(this)
+			)
+			.subscribe();
+	}
+
+	ngAfterViewInit(): void {
+		this.route.data
+			.pipe(
+				debounceTime(100),
+				filter((data) => !!data && !!data.warehouse),
+				tap(({ warehouse }) => (this.warehouse = warehouse)),
+				tap(() => {
+					this._patchForm();
+					this._patchLocationForm();
 				}),
 				untilDestroyed(this)
 			)
@@ -136,13 +133,15 @@ export class WarehouseFormComponent
 		});
 
 		let selectedImage = await firstValueFrom(dialog.onClose);
-		if(selectedImage) {
+		if (selectedImage) {
 			this.logo = selectedImage;
 		}
 	}
 
-	
 	private async _getAssetsImages() {
+		if (!this.organization) {
+			return;
+		}
 		const { id: organizationId } = this.organization;
 		const { tenantId } = this.store.user;
 		this.images = (await this.imageAssetService.getAll({ tenantId, organizationId })).items;
@@ -170,7 +169,6 @@ export class WarehouseFormComponent
 		if (!this.warehouse || !this.warehouse.contact) return;
 
 		const { contact } = this.warehouse;
-
 		this.locationFormDirective.setValue({
 			country: contact.country,
 			city: contact.city,
@@ -179,23 +177,16 @@ export class WarehouseFormComponent
 			address2: contact.address2,
 			loc: {
 				type: 'Point',
-				coordinates: [
-					contact.latitude,
-					contact.longitude
-				]
+				coordinates: [contact.latitude, contact.longitude]
 			}
 		});
 	}
 
 	handleImageUploadError(error) {
-		this.toastrService.danger(
-			'INVENTORY_PAGE.COULD_NOT_UPLOAD_IMAGE',
-			'TOASTR.TITLE.ERROR'
-		);
+		this.toastrService.danger('INVENTORY_PAGE.COULD_NOT_UPLOAD_IMAGE', 'TOASTR.TITLE.ERROR');
 	}
 
 	async onSaveRequest() {
-
 		const { tenantId } = this.store.user;
 		const { id: organizationId } = this.organization;
 
@@ -203,7 +194,7 @@ export class WarehouseFormComponent
 		const { coordinates } = locationFormValue['loc'];
 		delete locationFormValue['loc'];
 
-		const [ latitude, longitude ] = coordinates;
+		const [latitude, longitude] = coordinates;
 
 		let request = {
 			...this.form.value,
@@ -221,12 +212,12 @@ export class WarehouseFormComponent
 			await this.warehouseService
 				.create(request)
 				.then(() => {
-					this.toastrService.success('INVENTORY_PAGE.WAREHOUSE_WAS_CREATED', { 
-						name: request.name 
+					this.toastrService.success('INVENTORY_PAGE.WAREHOUSE_WAS_CREATED', {
+						name: request.name
 					});
 				})
 				.catch(() => {
-					this.toastrService.danger('INVENTORY_PAGE.COULD_NOT_CREATE_WAREHOUSE', null, { 
+					this.toastrService.danger('INVENTORY_PAGE.COULD_NOT_CREATE_WAREHOUSE', null, {
 						name: request.name
 					});
 				})
@@ -237,8 +228,8 @@ export class WarehouseFormComponent
 			await this.warehouseService
 				.update(this.warehouse.id, request)
 				.then((res) => {
-					this.toastrService.success('INVENTORY_PAGE.WAREHOUSE_WAS_UPDATED', { 
-						name: request.name 
+					this.toastrService.success('INVENTORY_PAGE.WAREHOUSE_WAS_UPDATED', {
+						name: request.name
 					});
 					this.warehouse = res;
 				})
@@ -249,9 +240,7 @@ export class WarehouseFormComponent
 	}
 
 	cancel() {
-		this.router.navigate([
-			'/pages/organization/inventory/warehouses'
-		]);
+		this.router.navigate(['/pages/organization/inventory/warehouses']);
 	}
 
 	selectedTagsEvent(currentSelection: ITag[]) {
@@ -260,7 +249,9 @@ export class WarehouseFormComponent
 	}
 
 	onCoordinatesChanges($event) {
-		const { loc: { coordinates } } = this.locationFormDirective.getValue();
+		const {
+			loc: { coordinates }
+		} = this.locationFormDirective.getValue();
 		const [lat, lng] = coordinates;
 		this.leafletTemplate.addMarker(new LatLng(lat, lng));
 	}
@@ -287,10 +278,5 @@ export class WarehouseFormComponent
 		return this.warehouse && this.warehouse.id;
 	}
 
-	isInvalidControl(control: string) {
-		if (!this.form.contains(control)) {
-			return true;
-		}
-		return this.form.get(control).touched && this.form.get(control).invalid;
-	}
+	ngOnDestroy(): void {}
 }

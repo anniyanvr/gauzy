@@ -1,30 +1,27 @@
-import { Component, OnInit, ViewChild } from '@angular/core';
+import { Component, OnInit, ViewChild, ChangeDetectionStrategy } from '@angular/core';
 import { ActivatedRoute } from '@angular/router';
 import { NbDialogService } from '@nebular/theme';
 import { UntilDestroy, untilDestroyed } from '@ngneat/until-destroy';
-import { LocalDataSource } from 'ng2-smart-table';
+import { LocalDataSource } from 'angular2-smart-table';
 import { TranslateService } from '@ngx-translate/core';
 import { combineLatest } from 'rxjs';
-import {
-	IImageAsset,
-	IProductOptionTranslatable,
-	IProductTranslatable,
-	LanguagesEnum
-} from '@gauzy/contracts';
-import { ProductService, Store, TranslatableService } from './../../../../@core/services';
-import { GalleryComponent, GalleryService } from './../../../../@shared/gallery';
-import { TranslationBaseComponent } from './../../../../@shared/language-base';
-import { EnabledStatusComponent, ImageRowComponent } from './../table-components';
+import { IImageAsset, IProductOptionTranslatable, IProductTranslatable, LanguagesEnum } from '@gauzy/contracts';
+import { getContrastColor } from '@gauzy/ui-core/common';
+import { ProductService, TranslatableService } from '@gauzy/ui-core/core';
+import { TranslationBaseComponent } from '@gauzy/ui-core/i18n';
+import { Store } from '@gauzy/ui-core/core';
+import { GalleryComponent, GalleryService } from '@gauzy/ui-core/shared';
+import { EnabledStatusComponent, ImageRowComponent } from '../inventory-table-components';
 
 @UntilDestroy()
 @Component({
-	selector: 'ngx-view-inventory-item',
-	templateUrl: './view-inventory-item.component.html',
-	styleUrls: ['./view-inventory-item.component.scss']
+    selector: 'ngx-view-inventory-item',
+    templateUrl: './view-inventory-item.component.html',
+    styleUrls: ['./view-inventory-item.component.scss'],
+    changeDetection: ChangeDetectionStrategy.Eager,
+    standalone: false
 })
-export class InventoryItemViewComponent
-	extends TranslationBaseComponent
-	implements OnInit {
+export class InventoryItemViewComponent extends TranslationBaseComponent implements OnInit {
 	inventoryItem: IProductTranslatable;
 	loading: boolean = true;
 	options: IProductOptionTranslatable[] = [];
@@ -50,18 +47,15 @@ export class InventoryItemViewComponent
 		combineLatest([this.route.params, this.store.preferredLanguage$])
 			.pipe(untilDestroyed(this))
 			.subscribe(async ([params, languageCode]) => {
-				this.inventoryItem = await this.productService.getById(
-					params.id,
-					[
-						'productCategory',
-						'productType',
-						'optionGroups',
-						'variants',
-						'tags',
-						'gallery',
-						'featuredImage'
-					]
-				);
+				this.inventoryItem = await this.productService.getById(params.id, [
+					'productCategory',
+					'productType',
+					'optionGroups',
+					'variants',
+					'tags',
+					'gallery',
+					'featuredImage'
+				]);
 				let variants = [];
 
 				if (this.inventoryItem && this.inventoryItem.variants) {
@@ -82,15 +76,12 @@ export class InventoryItemViewComponent
 				}
 
 				this.options.map((option) => {
-					let currentTranslation = option.translations.find(
-						(translation) => {
-							return (
-								translation.languageCode == languageCode ||
-								translation.languageCode ==
-									LanguagesEnum.ENGLISH
-							);
-						}
-					);
+					let currentTranslation = option.translations.find((translation) => {
+						return (
+							translation.languageCode == languageCode ||
+							translation.languageCode == LanguagesEnum.ENGLISH
+						);
+					});
 
 					if (currentTranslation) {
 						option.name = currentTranslation.name;
@@ -108,8 +99,8 @@ export class InventoryItemViewComponent
 	onGalleryItemClick(galleryItem: IImageAsset) {
 		const mappedImages = this.inventoryItem.gallery.map((image) => {
 			return {
-				thumbUrl: image.url,
-				fullUrl: image.url
+				thumbUrl: image.fullUrl,
+				fullUrl: image.fullUrl
 			};
 		});
 
@@ -118,51 +109,64 @@ export class InventoryItemViewComponent
 		this.nbDialogService.open(GalleryComponent, {
 			context: {
 				items: mappedImages,
-				item: mappedImages.find(
-					(image) => image.thumbUrl == galleryItem.url
-				)
+				item: mappedImages.find((image) => image.thumbUrl == galleryItem.fullUrl)
 			},
 			dialogClass: 'fullscreen'
 		});
 	}
 
+	/**
+	 * Readable label colour for a tag chip.
+	 *
+	 * Tag colours are user-chosen, so the chip's label cannot be a fixed white —
+	 * it disappeared on every light tag. Same helper the inventory table cells
+	 * use for the same chips.
+	 */
+	backgroundContrast(bgColor: string): string | null {
+		// `getContrastColor` indexes into the string, so a tag saved without a
+		// colour would throw. Returning null drops the style binding and the chip
+		// simply inherits, which is what it did before.
+		return bgColor ? getContrastColor(bgColor) : null;
+	}
+
 	getTranslatedProp(item: any, prop: string) {
+		if (!item) {
+			console.warn('Translatable item object is undefined');
+			return null;
+		}
 		return this.translatableService.getTranslatedProperty(item, prop);
 	}
 
 	async loadSmartTable() {
 		this.settingsSmartTable = {
 			actions: false,
+			hideSubHeader: true,
 			columns: {
 				image: {
 					title: this.getTranslation('INVENTORY_PAGE.IMAGE'),
 					type: 'custom',
 					renderComponent: ImageRowComponent,
-					filter: false
+					isFilterable: false
 				},
 				options: {
 					title: this.getTranslation('INVENTORY_PAGE.OPTIONS'),
 					type: 'string',
 					valuePrepareFunction: (_, variant) => {
 						return variant.options && variant.options.length > 0
-							? variant.options
-									.map((option) => option.name)
-									.join(', ')
-							: this.getTranslation(
-									'INVENTORY_PAGE.NO_OPTIONS_LABEL'
-							  );
+							? variant.options.map((option) => option.name).join(', ')
+							: this.getTranslation('INVENTORY_PAGE.NO_OPTIONS_LABEL');
 					},
-					filter: false
+					isFilterable: false
 				},
 				internalReference: {
 					title: this.getTranslation('INVENTORY_PAGE.CODE'),
 					type: 'string',
-					filter: false
+					isFilterable: false
 				},
 				quantity: {
 					title: this.getTranslation('INVENTORY_PAGE.QUANTITY'),
 					type: 'string',
-					filter: false
+					isFilterable: false
 				},
 				price: {
 					title: this.getTranslation('INVENTORY_PAGE.PRICE'),
@@ -170,32 +174,30 @@ export class InventoryItemViewComponent
 					valuePrepareFunction: (_, price) => {
 						return `${_.unitCostCurrency} ${_.unitCost}`;
 					},
-					filter: false
+					isFilterable: false
 				},
 				isEquipment: {
 					title: this.getTranslation('INVENTORY_PAGE.IS_EQUIPMENT'),
 					type: 'custom',
 					renderComponent: EnabledStatusComponent,
-					filter: false
+					isFilterable: false
 				},
 				canBePurchased: {
-					title: this.getTranslation(
-						'INVENTORY_PAGE.CAN_BE_PURCHASED'
-					),
+					title: this.getTranslation('INVENTORY_PAGE.CAN_BE_PURCHASED'),
 					type: 'custom',
 					renderComponent: EnabledStatusComponent,
-					filter: false
+					isFilterable: false
 				},
 				notes: {
 					title: this.getTranslation('INVENTORY_PAGE.NOTES'),
 					type: 'string',
-					filter: false
+					isFilterable: false
 				},
 				enabled: {
 					title: this.getTranslation('INVENTORY_PAGE.ENABLED'),
 					type: 'custom',
 					renderComponent: EnabledStatusComponent,
-					filter: false
+					isFilterable: false
 				}
 			}
 		};

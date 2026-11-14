@@ -1,12 +1,13 @@
-import { Component, Input } from '@angular/core';
-import { ViewCell } from 'ng2-smart-table';
+import { Component, Input, ChangeDetectionStrategy } from '@angular/core';
 import { IDeal } from '@gauzy/contracts';
 
 @Component({
-	selector: 'ga-pipeline-excerpt',
-	template: `{{ rowData?.stage.name }}`
+    selector: 'ga-pipeline-excerpt',
+    template: `{{ rowData?.stage?.name }}`,
+    changeDetection: ChangeDetectionStrategy.Eager,
+    standalone: false
 })
-export class PipelineDealExcerptComponent implements ViewCell {
+export class PipelineDealExcerptComponent {
 	@Input()
 	value: string | number;
 

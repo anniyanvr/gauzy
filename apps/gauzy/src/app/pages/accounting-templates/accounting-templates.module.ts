@@ -1,37 +1,34 @@
-import { CommonModule } from '@angular/common';
 import { NgModule } from '@angular/core';
-import { FormsModule, ReactiveFormsModule } from '@angular/forms';
 import {
 	NbLayoutModule,
 	NbCardModule,
 	NbSelectModule,
-	NbButtonModule
+	NbButtonModule,
+	NbIconModule,
+	NbDialogModule
 } from '@nebular/theme';
 import { AceEditorModule } from 'ngx-ace-editor-wrapper';
-import { HeaderTitleModule } from '../../@shared/components/header-title/header-title.module';
-import { LanguageSelectorModule } from '../../@shared/language/language-selector/language-selector.module';
-import { TranslateModule } from '../../@shared/translate/translate.module';
-import { ThemeModule } from '../../@theme/theme.module';
+import { TranslatePipe } from '@ngx-translate/core';
+import { LanguageSelectorModule, SharedModule } from '@gauzy/ui-core/shared';
 import { AccountingTemplatesRoutingModule } from './accounting-templates-routing.module';
 import { AccountingTemplatesComponent } from './accounting-templates.component';
+import { SandboxedSrcdocDirective } from './sandboxed-srcdoc.directive';
 
 @NgModule({
 	imports: [
-		NbLayoutModule,
-		CommonModule,
-		ThemeModule,
-		NbCardModule,
-		FormsModule,
-		ReactiveFormsModule,
-		NbSelectModule,
-		TranslateModule,
 		NbButtonModule,
+		NbCardModule,
+		NbLayoutModule,
+		NbSelectModule,
+		NbIconModule,
+		NbDialogModule.forChild(),
 		AceEditorModule,
-		HeaderTitleModule,
+		TranslatePipe,
+		SharedModule,
 		LanguageSelectorModule,
-		AccountingTemplatesRoutingModule,
+		AccountingTemplatesRoutingModule
 	],
-	providers: [],
-	declarations: [AccountingTemplatesComponent]
+	declarations: [AccountingTemplatesComponent, SandboxedSrcdocDirective],
+	providers: []
 })
 export class AccountingTemplatesModule {}

@@ -1,11 +1,12 @@
-import { Component, Input } from '@angular/core';
-import { ViewCell } from 'ng2-smart-table';
+import { Component, Input, ChangeDetectionStrategy } from '@angular/core';
 
 @Component({
-	templateUrl: './paid-icon.html',
-	styleUrls: ['./paid-icon.scss']
+    templateUrl: './paid-icon.html',
+    styleUrls: ['./paid-icon.scss'],
+    changeDetection: ChangeDetectionStrategy.Eager,
+    standalone: false
 })
-export class PaidIcon implements ViewCell {
+export class PaidIcon {
 	@Input()
 	rowData: any;
 

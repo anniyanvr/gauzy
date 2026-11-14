@@ -1,32 +1,38 @@
-import { RouterModule, Routes, ExtraOptions } from '@angular/router';
 import { NgModule } from '@angular/core';
-import {
-	SettingsComponent,
-	SetupComponent,
-	UpdaterComponent,
-	ServerDashboardComponent
-} from '@gauzy/desktop-ui-lib';
+import { ExtraOptions, RouterModule, Routes } from '@angular/router';
 
 const routes: Routes = [
 	{
 		path: '',
-		component: SetupComponent
+		loadComponent: () => import('@gauzy/desktop-ui-lib').then((m) => m.SetupComponent)
 	},
 	{
 		path: 'setup',
-		component: SetupComponent
+		loadComponent: () => import('@gauzy/desktop-ui-lib').then((m) => m.SetupComponent)
+	},
+	{
+		path: 'plugins',
+		loadChildren: () => import('@gauzy/desktop-ui-lib').then((m) => m.PluginRoutingModule)
 	},
 	{
 		path: 'settings',
-		component: SettingsComponent
+		loadComponent: () => import('@gauzy/desktop-ui-lib').then((m) => m.SettingsComponent)
 	},
 	{
 		path: 'updater',
-		component: UpdaterComponent
+		loadComponent: () => import('@gauzy/desktop-ui-lib').then((m) => m.UpdaterComponent)
 	},
 	{
 		path: 'server-dashboard',
-		component: ServerDashboardComponent
+		loadComponent: () => import('@gauzy/desktop-ui-lib').then((m) => m.ServerDashboardComponent)
+	},
+	{
+		path: 'about',
+		loadComponent: () => import('@gauzy/desktop-ui-lib').then((m) => m.AboutComponent)
+	},
+	{
+		path: 'splash-screen',
+		loadComponent: () => import('@gauzy/desktop-ui-lib').then((m) => m.SplashScreenComponent)
 	}
 ];
 

@@ -1,4 +1,3 @@
-import { CardGridModule } from './../../@shared/card-grid/card-grid.module';
 import { NgModule } from '@angular/core';
 import {
 	NbBadgeModule,
@@ -14,21 +13,21 @@ import {
 	NbTooltipModule,
 	NbRadioModule
 } from '@nebular/theme';
-import { Ng2SmartTableModule } from 'ng2-smart-table';
-import { ThemeModule } from '../../@theme/theme.module';
-import { SharedModule } from '../../@shared/shared.module';
-import { BackNavigationModule } from '../../@shared/back-navigation/back-navigation.module';
+import { NgxPermissionsModule } from 'ngx-permissions';
+import { TranslatePipe } from '@ngx-translate/core';
+import {
+	SmartDataViewLayoutModule,
+	CardGridModule,
+	EquipmentSharingPolicyMutationModule,
+	SharedModule,
+	TableComponentsModule
+} from '@gauzy/ui-core/shared';
 import { EquipmentSharingPolicyComponent } from './equipment-sharing-policy.component';
-import { EquipmentSharingPolicyService } from '../../@core/services/equipment-sharing-policy.service';
 import { EquipmentSharingPolicyRoutingModule } from './equipment-sharing-policy.routing.module';
-import { EquipmentSharingPolicyMutationModule } from '../../@shared/equipment-sharing-policy/equipment-sharing-policy-mutation.module';
-import { TranslateModule } from '../../@shared/translate/translate.module';
-import { HeaderTitleModule } from '../../@shared/components/header-title/header-title.module';
 
 @NgModule({
 	imports: [
 		SharedModule,
-		ThemeModule,
 		NbBadgeModule,
 		NbButtonModule,
 		NbCardModule,
@@ -39,17 +38,16 @@ import { HeaderTitleModule } from '../../@shared/components/header-title/header-
 		NbRouteTabsetModule,
 		NbSelectModule,
 		NbSpinnerModule,
-		Ng2SmartTableModule,
 		NbTooltipModule,
 		NbRadioModule,
 		CardGridModule,
 		EquipmentSharingPolicyMutationModule,
-		BackNavigationModule,
 		EquipmentSharingPolicyRoutingModule,
-		TranslateModule,
-		HeaderTitleModule
+		TranslatePipe,
+		NgxPermissionsModule.forChild(),
+		SmartDataViewLayoutModule,
+		TableComponentsModule
 	],
-	declarations: [EquipmentSharingPolicyComponent],
-	providers: [EquipmentSharingPolicyService]
+	declarations: [EquipmentSharingPolicyComponent]
 })
 export class EquipmentSharingPolicyModule {}

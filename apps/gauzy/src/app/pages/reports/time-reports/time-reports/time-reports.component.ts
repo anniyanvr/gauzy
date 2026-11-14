@@ -1,10 +1,10 @@
-import {
-	AfterViewInit,
-	ChangeDetectorRef,
-	Component,
-	OnDestroy,
-	OnInit
-} from '@angular/core';
+import { AfterViewInit, ChangeDetectorRef, Component, OnDestroy, OnInit, ViewChild, ChangeDetectionStrategy } from '@angular/core';
+import { BehaviorSubject, Observable } from 'rxjs';
+import { filter, tap } from 'rxjs/operators';
+import { UntilDestroy, untilDestroyed } from '@ngneat/until-destroy';
+import { TranslateService } from '@ngx-translate/core';
+import { pick, pluck } from 'underscore';
+import { DateRangePickerBuilderService, Store, TimesheetFilterService, TimesheetService } from '@gauzy/ui-core/core';
 import {
 	IGetTimeLogReportInput,
 	ITimeLogFilters,
@@ -12,111 +12,200 @@ import {
 	ReportGroupFilterEnum,
 	TimeLogType
 } from '@gauzy/contracts';
-import { UntilDestroy, untilDestroyed } from '@ngneat/until-destroy';
-import { debounceTime, tap } from 'rxjs/operators';
-import { TranslateService } from '@ngx-translate/core';
-import { pick, pluck } from 'underscore';
-import { Store } from './../../../../@core/services/store.service';
-import { TimesheetService } from './../../../../@shared/timesheet/timesheet.service';
-import { ReportBaseComponent } from './../../../../@shared/report/report-base/report-base.component';
-import { ChartUtil } from './../../../../@shared/report/charts/line-chart/chart-utils';
-import { IChartData } from './../../../../@shared/report/charts/line-chart/line-chart.component';
+import { distinctUntilChange, isEmpty } from '@gauzy/ui-core/common';
+import {
+	BaseSelectorFilterComponent,
+	ChartUtil,
+	DailyGridComponent,
+	GauzyFiltersComponent,
+	IChartData,
+	ReportExportFormatEnum,
+	TimeZoneService
+} from '@gauzy/ui-core/shared';
 
 @UntilDestroy({ checkProperties: true })
 @Component({
-	selector: 'ga-time-reports',
-	templateUrl: './time-reports.component.html',
-	styleUrls: ['./time-reports.component.scss']
+    selector: 'ga-time-reports',
+    templateUrl: './time-reports.component.html',
+    styleUrls: ['./time-reports.component.scss'],
+    changeDetection: ChangeDetectionStrategy.Eager,
+    standalone: false
 })
-export class TimeReportsComponent
-	extends ReportBaseComponent
-	implements OnInit, AfterViewInit, OnDestroy {
-	logRequest: ITimeLogFilters = this.request;
-	filters: ITimeLogFilters;
-	loading: boolean;
-	chartData: IChartData;
-	groupBy: ReportGroupByFilter = ReportGroupFilterEnum.date;
+export class TimeReportsComponent extends BaseSelectorFilterComponent implements OnInit, AfterViewInit, OnDestroy {
+	public filters: ITimeLogFilters;
+	public loading: boolean = false;
+	public charts: IChartData;
+	public groupBy: ReportGroupByFilter = ReportGroupFilterEnum.date;
+	public datePickerConfig$: Observable<any> = this.dateRangePickerBuilderService.datePickerConfig$;
+	public payloads$: BehaviorSubject<ITimeLogFilters> = new BehaviorSubject(null);
+
+	@ViewChild(GauzyFiltersComponent) gauzyFiltersComponent: GauzyFiltersComponent;
+	@ViewChild(DailyGridComponent) dailyGrid: DailyGridComponent;
 
 	constructor(
 		private readonly timesheetService: TimesheetService,
-		protected readonly store: Store,
+		private readonly cdr: ChangeDetectorRef,
 		public readonly translateService: TranslateService,
-		private readonly cd: ChangeDetectorRef
+		private readonly timesheetFilterService: TimesheetFilterService,
+		protected readonly store: Store,
+		protected readonly dateRangePickerBuilderService: DateRangePickerBuilderService,
+		protected readonly timeZoneService: TimeZoneService
 	) {
-		super(store, translateService);
+		super(store, translateService, dateRangePickerBuilderService, timeZoneService);
 	}
 
-	ngOnInit() {}
+	/**
+	 * Whether the report has rows to export: the grid's latest request, for the current filters and grouping, has
+	 * answered with time entries (an older request that answers late never enables it).
+	 */
+	get canExport(): boolean {
+		return !!this.dailyGrid?.canExport;
+	}
+
+	/**
+	 * Downloads the time entries the grid shows — for the current filters, in its current grouping — as a
+	 * CSV file named after the selected date range.
+	 */
+	exportToCsv(): void {
+		this.dailyGrid?.exportReport(ReportExportFormatEnum.CSV);
+	}
+
+	ngOnInit() {
+		this.cdr.detectChanges();
+	}
 
 	ngAfterViewInit() {
 		this.subject$
 			.pipe(
-				debounceTime(300),
-				tap(() => this.loading = true),
-				tap(() => this.updateChart()),
+				// Filter to ensure that the organization property is truthy
+				filter(() => !!this.organization),
+				// Perform some action when the observable emits a value
+				tap(() => this.prepareRequest()),
+				// Unsubscribe when the component is destroyed
 				untilDestroyed(this)
 			)
 			.subscribe();
-		this.cd.detectChanges();
+		this.payloads$
+			.pipe(
+				// Ensure distinct emissions to avoid redundant updates
+				distinctUntilChange(),
+				// Filter out falsy values for payloads
+				filter((payloads: ITimeLogFilters) => !!payloads),
+				// Execute the updateChart method when the observable emits a value
+				tap(() => this.updateChart()),
+				// Unsubscribe when the component is destroyed
+				untilDestroyed(this)
+			)
+			.subscribe();
 	}
 
-	filtersChange($event) {
-		this.logRequest = $event;
-		this.filters = Object.assign({}, this.logRequest);
+	/**
+	 * Gauzy timesheet default filters
+	 *
+	 * @param filters
+	 */
+	filtersChange(filters: ITimeLogFilters) {
+		if (this.gauzyFiltersComponent.saveFilters) {
+			this.timesheetFilterService.filter = filters;
+		}
+		this.filters = Object.assign({}, filters);
 		this.subject$.next(true);
 	}
 
-	updateChart() {
-		const appliedFilter = pick(
-			this.logRequest,
-			'source',
-			'activityLevel',
-			'logType'
-		);
+	/**
+	 * Get header selectors request
+	 * Get gauzy timesheet filters request
+	 *
+	 * @returns
+	 */
+	prepareRequest() {
+		// Check if request or filters are not provided, return early if true
+		if (isEmpty(this.request) || isEmpty(this.filters)) {
+			return;
+		}
+		// Pick specific properties ('source', 'activityLevel', 'logType') from this.filters
+		const appliedFilter = pick(this.filters, 'source', 'activityLevel', 'logType');
+
+		// Create a request object of type IGetTimeLogReportInput
 		const request: IGetTimeLogReportInput = {
 			...appliedFilter,
-			...this.getFilterRequest(this.logRequest),
+			...this.getFilterRequest(this.request),
+			// Set the 'groupBy' property from the current instance's 'groupBy' property
 			groupBy: this.groupBy
 		};
-		this.timesheetService
-			.getDailyReportChart(request)
-			.then((logs: any[]) => {
-				const datasets = [
-					{
-						label: TimeLogType.MANUAL,
-						data: logs.map((log) => log.value[TimeLogType.MANUAL]),
-						borderColor: ChartUtil.CHART_COLORS.red,
-						backgroundColor: ChartUtil.transparentize(ChartUtil.CHART_COLORS.red, 0.5),
-						borderWidth: 1
-					},
-					{
-						label: TimeLogType.TRACKED,
-						data: logs.map((log) => log.value[TimeLogType.TRACKED]),
-						borderColor: ChartUtil.CHART_COLORS.blue,
-						backgroundColor: ChartUtil.transparentize(ChartUtil.CHART_COLORS.blue, 0.5),
-						borderWidth: 1
-					},
-					{
-						label: TimeLogType.IDEAL,
-						data: logs.map((log) => log.value[TimeLogType.IDEAL]),
-						borderColor: ChartUtil.CHART_COLORS.yellow,
-						backgroundColor: ChartUtil.transparentize(ChartUtil.CHART_COLORS.yellow, 0.5),
-						borderWidth: 1
-					},
-					{
-						label: TimeLogType.RESUMED,
-						data: logs.map((log) => log.value[TimeLogType.RESUMED]),
-						borderColor: ChartUtil.CHART_COLORS.green,
-						backgroundColor: ChartUtil.transparentize(ChartUtil.CHART_COLORS.green, 0.5),
-						borderWidth: 1
-					}
-				];
-				this.chartData = {
-					labels: pluck(logs, 'date'),
-					datasets
-				};
-			})
-			.finally(() => (this.loading = false));
+
+		// Emit the request object to the observable
+		this.payloads$.next(request);
+	}
+
+	async updateChart() {
+		// Check if organization or request is not available
+		if (!this.organization || isEmpty(this.request)) {
+			return;
+		}
+
+		// Set loading state to true
+		this.loading = true;
+
+		try {
+			// Fetch time and activity data
+			const payloads = this.payloads$.getValue();
+			const logs: any = await this.timesheetService.getDailyReportChart(payloads);
+
+			// Common options for chart datasets
+			const commonOptions = {
+				borderWidth: 2, // Width of the dataset border
+				pointRadius: 2, // Radius of the data points
+				pointHoverRadius: 4, // Radius of the data points on hover
+				pointHoverBorderWidth: 4, // Width of the border of data points on hover
+				tension: 0.4, // Tension of the spline curve connecting data points
+				fill: false // Whether to fill the area under the line or not
+			};
+
+			// Prepare datasets for different time log types
+			const datasets = [
+				{
+					label: TimeLogType.MANUAL,
+					data: logs.map((log: any) => log.value[TimeLogType.MANUAL]),
+					borderColor: ChartUtil.CHART_COLORS.red,
+					backgroundColor: ChartUtil.transparentize(ChartUtil.CHART_COLORS.red, 1),
+					...commonOptions
+				},
+				{
+					label: TimeLogType.TRACKED,
+					data: logs.map((log: any) => log.value[TimeLogType.TRACKED]),
+					borderColor: ChartUtil.CHART_COLORS.blue,
+					backgroundColor: ChartUtil.transparentize(ChartUtil.CHART_COLORS.blue, 1),
+					...commonOptions
+				},
+				{
+					label: TimeLogType.IDLE,
+					data: logs.map((log: any) => log.value[TimeLogType.IDLE]),
+					borderColor: ChartUtil.CHART_COLORS.yellow,
+					backgroundColor: ChartUtil.transparentize(ChartUtil.CHART_COLORS.yellow, 1),
+					...commonOptions
+				},
+				{
+					label: TimeLogType.RESUMED,
+					data: logs.map((log: any) => log.value[TimeLogType.RESUMED]),
+					borderColor: ChartUtil.CHART_COLORS.green,
+					backgroundColor: ChartUtil.transparentize(ChartUtil.CHART_COLORS.green, 1),
+					...commonOptions
+				}
+			];
+
+			// Update chart data
+			this.charts = {
+				labels: pluck(logs, 'date'),
+				datasets
+			};
+		} catch (error) {
+			// Handle errors
+			console.log('Error while retrieving time & activity charts data', error);
+		} finally {
+			// Update chart data
+			this.loading = false;
+		}
 	}
 
 	ngOnDestroy(): void {}

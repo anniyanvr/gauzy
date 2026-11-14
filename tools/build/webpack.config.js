@@ -43,8 +43,41 @@ module.exports = (config) => {
 		fsevents: 'fsevents',
 		bcrypt: 'bcrypt',
 		sqlite3: 'commonjs sqlite3',
-		sharp: 'commonjs sharp'
+		ioredis: 'ioredis',
+		debug: 'debug',
+		'@as-integrations/fastify': '@as-integrations/fastify',
+		'@apollo/gateway': '@apollo/gateway',
+		'class-transformer/storage': 'class-transformer/storage',
+		'@fastify/static': '@fastify/static',
+		'@nestjs/mongoose': '@nestjs/mongoose',
+		'@nestjs/sequelize': '@nestjs/sequelize',
+		'@nestjs/terminus': '@nestjs/terminus',
+		tedious: 'tedious',
+		oracledb: 'oracledb',
+		hbs: 'hbs',
+		'react-native-sqlite-storage': 'react-native-sqlite-storage',
+		bufferutil: 'bufferutil',
+		'utf-8-validate': 'utf-8-validate',
+		'@mongodb-js/zstd': '@mongodb-js/zstd',
+		'aws-sdk/credential-providers': 'aws-sdk/credential-providers',
+		snappy: 'snappy',
+		kerberos: 'kerberos',
+		'arc-templates': 'arc-templates',
+		'dustjs-helpers': 'dustjs-helpers',
+		'then-jade': 'then-jade',
+		jade: 'jade',
+		tinyliquid: 'tinyliquid',
+		nunjucks: 'nunjucks',
+		'mariadb/callback': 'mariadb/callback',
+		'@opentelemetry/exporter-jaeger': '@opentelemetry/exporter-jaeger'
 	};
+
+	config.module = config.module || {};
+
+	config.module.noParse = [
+		// This will match any path containing `node_modules/@libsql`
+		/[\\/]node_modules[\\/]@libsql/
+	];
 
 	return config;
 };

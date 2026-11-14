@@ -1,61 +1,159 @@
+import { AsyncPipe, LowerCasePipe, NgTemplateOutlet, TitleCasePipe } from '@angular/common';
 import {
+	AfterViewInit,
 	Component,
-	OnInit,
-	ChangeDetectionStrategy,
-	ViewChild,
 	ElementRef,
-	ChangeDetectorRef
+	Inject,
+	inject,
+	NgZone,
+	OnDestroy,
+	OnInit,
+	Optional,
+	ViewChild,
+	ChangeDetectionStrategy
 } from '@angular/core';
-import { Router } from '@angular/router';
+import { FormsModule } from '@angular/forms';
+import { DomSanitizer, SafeResourceUrl } from '@angular/platform-browser';
+import { DEFAULT_SCREENSHOT_FREQUENCY_OPTIONS } from '@gauzy/constants';
+import { IDesktopScreenshotSound, IDesktopScreenshotSoundResult, IOSInfo, LanguagesEnum } from '@gauzy/contracts';
+import {
+	NbAccordionModule,
+	NbButtonModule,
+	NbCardModule,
+	NbDialogService,
+	NbIconModule,
+	NbInputModule,
+	NbLayoutModule,
+	NbListModule,
+	NbOptionModule,
+	NbProgressBarModule,
+	NbSelectModule,
+	NbSidebarModule,
+	NbSpinnerModule,
+	NbTabsetModule,
+	NbToastrService,
+	NbToggleModule,
+	NbTooltipModule
+} from '@nebular/theme';
+import { UntilDestroy, untilDestroyed } from '@ngneat/until-destroy';
+import { TranslatePipe, TranslateService } from '@ngx-translate/core';
+import * as moment from 'moment';
+import { BehaviorSubject, Observable, filter, firstValueFrom, tap } from 'rxjs';
+import { AuthStrategy } from '../auth';
+import { GAUZY_ENV } from '../constants';
+import { AboutComponent } from '../dialogs/about/about.component';
+import { SpinnerButtonDirective } from '../directives/spinner-button.directive';
+import { ElectronService } from '../electron/services';
+import { changesScreenshotSound, ScreenshotSoundSettingService } from './screenshot-sound';
+import { LanguageElectronService } from '../language/language-electron.service';
+import { LanguageSelectorComponent } from '../language/language-selector.component';
+import { TimeZoneManager, ToastrNotificationService, ZoneEnum, Store } from '../services';
+import { SetupService } from '../setup/setup.service';
+import { SwitchThemeComponent } from '../theme-selector/switch-theme/switch-theme.component';
+import { ReplacePipe } from '../time-tracker/pipes/replace.pipe';
 import { TimeTrackerService } from '../time-tracker/time-tracker.service';
-import { NbToastrService } from '@nebular/theme';
-import { ElectronServices } from '../electron/services';
+import { SslComponent } from './ssl/ssl.component';
+import {
+	isValidServerHost,
+	normalizeServerHost,
+	SERVER_HOST_INVALID_MESSAGE,
+	ServerHostInputComponent
+} from './server-host';
+import { PermissionManagerComponent } from '../permission-manager/permission-manager.component';
+
+@UntilDestroy({ checkProperties: true })
 @Component({
 	selector: 'ngx-settings',
 	templateUrl: './settings.component.html',
 	styleUrls: ['./settings.component.scss'],
-	changeDetection: ChangeDetectionStrategy.OnPush,
-	styles: [`
-    :host nb-tab {
-      padding: 1.25rem;
-    }
-  `],
+	styles: [
+		`
+			:host nb-tab {
+				padding: 1rem;
+			}
+		`
+	],
+	changeDetection: ChangeDetectionStrategy.Eager,
+	imports: [
+		NbLayoutModule,
+		NbSpinnerModule,
+		NbSidebarModule,
+		NbListModule,
+		LanguageSelectorComponent,
+		SwitchThemeComponent,
+		NbCardModule,
+		NbIconModule,
+		NbToggleModule,
+		FormsModule,
+		NbSelectModule,
+		NbOptionModule,
+		NbButtonModule,
+		NbTooltipModule,
+		NbProgressBarModule,
+		NbAccordionModule,
+		NbTabsetModule,
+		NbInputModule,
+		SpinnerButtonDirective,
+		NgTemplateOutlet,
+		SslComponent,
+		ServerHostInputComponent,
+		AsyncPipe,
+		LowerCasePipe,
+		TitleCasePipe,
+		TranslatePipe,
+		ReplacePipe,
+		PermissionManagerComponent
+	]
 })
-export class SettingsComponent implements OnInit {
+export class SettingsComponent implements OnInit, AfterViewInit, OnDestroy {
 	@ViewChild('selectRef') selectProjectElement: ElementRef;
-	@ViewChild('logbox') logbox: ElementRef;
+	@ViewChild('logBox', { read: ElementRef })
+	set logBox(content: ElementRef) {
+		if (content) {
+			this._logBox = content;
+		}
+	}
 	@ViewChild('logUpdate') logAccordion;
-	logContents:any = [];
-	logIsOpen:boolean = false;
+	private _logBox: ElementRef;
+	private _logContents$: BehaviorSubject<any[]> = new BehaviorSubject([]);
+	public get logContents$(): Observable<any[]> {
+		return this._logContents$.asObservable();
+	}
+	public set logContents(value: any) {
+		const logs = this._logContents$.getValue();
+		logs.push(value);
+		this._logContents$.next(logs);
+	}
+	logIsOpen = false;
+	private _isRestart$: BehaviorSubject<boolean>;
 
 	appName: string = this.electronService.remote.app.getName();
-	menus = this.appName === 'gauzy-server' ? ['Update', 'Advanced Setting'] : ['Screen Capture', 'Timer', 'Update', 'Advanced Setting'];
-	gauzyIcon =
-		this.appName === 'gauzy-desktop-timer' || this.appName === 'gauzy-server'
+	menus = [];
+	gauzyIcon: SafeResourceUrl =
+		this.isDesktopTimer || this.isServer || this.isAgent
 			? './assets/images/logos/logo_Gauzy.svg'
 			: '../assets/images/logos/logo_Gauzy.svg';
 
-	monitorsOption = [
+	private _monitorsOption$: BehaviorSubject<any> = new BehaviorSubject([
 		{
 			value: 'all',
-			title: 'Capture All Monitors',
-			subtitle: 'All connected monitors',
+			title: 'TIMER_TRACKER.SETTINGS.CAPTURE_ALL_MONITORS',
+			subtitle: 'TIMER_TRACKER.SETTINGS.ALL_CONNECTED_MONITORS',
 			accent: 'basic',
 			status: 'basic'
 		},
 		{
 			value: 'active-only',
-			title: 'Capture Active Monitor',
-			subtitle: 'Monitor current pointer position',
+			title: 'TIMER_TRACKER.SETTINGS.CAPTURE_ACTIVE_MONITOR',
+			subtitle: 'TIMER_TRACKER.SETTINGS.MONITOR_CURRENT_POSITION',
 			iconStyle: 'all-monitor_icon',
 			accent: 'basic',
 			status: 'basic'
 		}
-	];
-
+	]);
 	thirdPartyConfig = [
 		{
-			title: 'UNLEASH_APP',
+			title: 'Unleash',
 			fields: [
 				{
 					name: 'UNLEASH_APP_NAME',
@@ -75,12 +173,17 @@ export class SettingsComponent implements OnInit {
 				{
 					name: 'UNLEASH_REFRESH_INTERVAL',
 					field: 'UNLEASH_REFRESH_INTERVAL',
-					value: 1000
+					value: 15000
 				},
 				{
 					name: 'UNLEASH_METRICS_INTERVAL',
 					field: 'UNLEASH_METRICS_INTERVAL',
-					value: 1000
+					value: 60000
+				},
+				{
+					name: 'UNLEASH_API_KEY',
+					field: 'UNLEASH_API_KEY',
+					value: ''
 				}
 			]
 		},
@@ -153,24 +256,24 @@ export class SettingsComponent implements OnInit {
 			title: 'Github',
 			fields: [
 				{
-					name: 'GITHUB_CLIENT_ID',
-					field: 'GITHUB_CLIENT_ID',
+					name: 'GAUZY_GITHUB_OAUTH_CLIENT_ID',
+					field: 'GAUZY_GITHUB_OAUTH_CLIENT_ID',
 					value: ''
 				},
 				{
-					name: 'GITHUB_CLIENT_SECRET',
-					field: 'GITHUB_CLIENT_SECRET',
+					name: 'GAUZY_GITHUB_OAUTH_CLIENT_SECRET',
+					field: 'GAUZY_GITHUB_OAUTH_CLIENT_SECRET',
 					value: ''
 				},
 				{
-					name: 'GITHUB_CALLBACK_URL',
-					field: 'GITHUB_CALLBACK_URL',
+					name: 'GAUZY_GITHUB_OAUTH_CALLBACK_URL',
+					field: 'GAUZY_GITHUB_OAUTH_CALLBACK_URL',
 					value: ''
 				}
 			]
 		},
 		{
-			title: 'Linkedin',
+			title: 'LinkedIn',
 			fields: [
 				{
 					name: 'LINKEDIN_CLIENT_ID',
@@ -211,7 +314,6 @@ export class SettingsComponent implements OnInit {
 					name: 'MICROSOFT_TENANT',
 					field: 'MICROSOFT_TENANT',
 					value: ''
-
 				},
 				{
 					name: 'MICROSOFT_CALLBACK_URL',
@@ -223,32 +325,32 @@ export class SettingsComponent implements OnInit {
 		{
 			title: 'Fiverr',
 			fields: [
-				{ 
+				{
 					name: 'FIVERR_CLIENT_ID',
 					field: 'FIVERR_CLIENT_ID',
 					value: ''
 				},
-				{ 
+				{
 					name: 'FIVERR_CLIENT_SECRET',
 					field: 'FIVERR_CLIENT_SECRET',
 					value: ''
-				},
+				}
 			]
 		},
 		{
 			title: 'Auth0',
 			fields: [
-				{ 
+				{
 					name: 'AUTH0_CLIENT_ID',
 					field: 'AUTH0_CLIENT_ID',
 					value: ''
 				},
-				{ 
+				{
 					name: 'AUTH0_CLIENT_SECRET',
 					field: 'AUTH0_CLIENT_SECRET',
 					value: ''
 				},
-				{ 
+				{
 					name: 'AUTH0_DOMAIN',
 					field: 'AUTH0_DOMAIN',
 					value: ''
@@ -256,31 +358,65 @@ export class SettingsComponent implements OnInit {
 			]
 		},
 		{
-			title: 'KEYCLOAK',
+			title: 'Keycloak',
 			fields: [
-				{ 
+				{
 					name: 'KEYCLOAK_REALM',
 					field: 'KEYCLOAK_REALM',
 					value: ''
 				},
-				{ 
+				{
 					name: 'KEYCLOAK_CLIENT_ID',
 					field: 'KEYCLOAK_CLIENT_ID',
 					value: ''
 				},
-				{ 
-					name: 'KEYCLOAK_SECRET',
-					field: 'KEYCLOAK_SECRET',
+				{
+					name: 'KEYCLOAK_CLIENT_SECRET',
+					field: 'KEYCLOAK_CLIENT_SECRET',
 					value: ''
 				},
-				{ 
+				{
 					name: 'KEYCLOAK_AUTH_SERVER_URL',
 					field: 'KEYCLOAK_AUTH_SERVER_URL',
 					value: ''
 				},
-				{ 
+				{
 					name: 'KEYCLOAK_COOKIE_KEY',
 					field: 'KEYCLOAK_COOKIE_KEY',
+					value: ''
+				}
+			]
+		},
+		{
+			title: 'Anonymous usage statistics',
+			fields: [
+				{
+					// `false` switches the anonymous usage statistics off (applies on the next start).
+					name: 'EVER_STATS_ENABLED',
+					field: 'EVER_STATS_ENABLED',
+					value: ''
+				},
+				{
+					// Two-letter country to declare in the reports (empty: undeclared).
+					name: 'EVER_STATS_COUNTRY',
+					field: 'EVER_STATS_COUNTRY',
+					value: ''
+				}
+			]
+		},
+		{
+			title: 'Ever Platform',
+			fields: [
+				{
+					// `true` loads the Ever Platform connection (applies on the next start; off otherwise).
+					name: 'EVER_CONNECT_ENABLED',
+					field: 'EVER_CONNECT_ENABLED',
+					value: ''
+				},
+				{
+					// `interval` reads Ever Platform events every 15 minutes instead of a long poll.
+					name: 'EVER_CONNECT_FEED_MODE',
+					field: 'EVER_CONNECT_FEED_MODE',
 					value: ''
 				}
 			]
@@ -299,166 +435,466 @@ export class SettingsComponent implements OnInit {
 					value: ''
 				}
 			]
-		},
-	]
+		}
+	];
 
-	selectedMenu = 'Screen Capture';
-
-	monitorOptionSelected = null;
-	appSetting = null;
-	periodOption = [1, 5, 10];
-	selectedPeriod = 10;
+	private _selectedMenu$: BehaviorSubject<string>;
+	private get _selectedMenu(): string {
+		return this._selectedMenu$.getValue();
+	}
+	/* Set Default Value */
+	appSetting = {
+		timerStarted: false,
+		randomScreenshotTime: 10,
+		trackOnPcSleep: false,
+		preventDisplaySleep: false,
+		visibleAwOption: true,
+		visibleWakatimeOption: false,
+		preferredLanguage: LanguagesEnum.ENGLISH,
+		enforced: false,
+		/** Short tones when the timer starts and stops (#7141): off unless turned on */
+		timerStartStopSound: false,
+		/** The screenshot sound chosen on this computer (#6715), `null` for the bundled sound */
+		customScreenshotSound: null as IDesktopScreenshotSound | null
+	};
+	periodOption = DEFAULT_SCREENSHOT_FREQUENCY_OPTIONS;
+	selectedPeriod = 5;
 	screenshotNotification = null;
-	config = null;
-	restartDisable = false;
-	loading = false;
+	/** Display chosen for the screenshot notification; `null` is the primary display (the default) */
+	screenshotNotificationDisplayId: number | null = null;
+	/** The connected displays offered for that choice, loaded from the main process */
+	notificationDisplays: { id: number; label: string }[] = [];
+	config = {
+		/* Default Selected dialect	*/
+		db: 'better-sqlite',
+		/* Default Mysql config */
+		mysql: {
+			dbHost: '127.0.0.1',
+			dbPort: 3306,
+			dbUsername: 'root',
+			dbPassword: ''
+		},
+		/* Default PostgresSQL config */
+		postgres: {
+			dbHost: '127.0.0.1',
+			dbPort: 5432,
+			dbUsername: 'postgres',
+			dbPassword: 'postgres'
+		},
+		timeTrackerWindow: null,
+		isLocalServer: false,
+		serverType: null,
+		serverUrl: null,
+		awPort: null,
+		awHost: null,
+		port: 3000,
+		portUi: 4200,
+		host: '0.0.0.0',
+		/* Server apps: whether other computers may connect. Unset (null) means on, as before the setting */
+		lanAccess: null,
+		secureProxy: {
+			ssl: {
+				key: '',
+				cert: ''
+			},
+			secure: true,
+			enable: false
+		},
+		autoStart: true
+	};
 	version = '0.0.0';
-	notAvailable = false;
-	message = 'Application Update';
+	message = {
+		text: 'TIMER_TRACKER.SETTINGS.MESSAGES.APP_UPDATE',
+		status: 'basic'
+	};
 	downloadFinish = false;
 	progressDownload = 0;
 	showProgressBar = false;
 	autoLaunch = null;
 	minimizeOnStartup = null;
 	authSetting = null;
-	currentUser = null;
+	currentUser$: BehaviorSubject<any> = new BehaviorSubject(null);
 	serverTypes = {
 		integrated: 'Integrated',
-		localNetwork: 'Local Network',
+		custom: 'Custom',
 		live: 'Live'
 	};
 	waitRestart = false;
 	serverIsRunning = false;
 
 	serverOptions =
-		this.appName === 'gauzy-desktop-timer'
-			? [this.serverTypes.localNetwork, this.serverTypes.live]
-			: [
-					this.serverTypes.integrated,
-					this.serverTypes.localNetwork,
-					this.serverTypes.live
-			  ];
+		this.isDesktopTimer || this.isAgent
+			? [this.serverTypes.custom, this.serverTypes.live]
+			: [this.serverTypes.integrated, this.serverTypes.custom, this.serverTypes.live];
 
-	driverOptions = ['sqlite', 'postgres'];
+	driverOptions = ['better-sqlite', 'sqlite', 'postgres', ...(this.isDesktopTimer || this.isAgent ? ['mysql'] : [])];
+	muted: boolean;
+	/** True while the screenshot sound is being chosen or reset */
+	isChangingScreenshotSound = false;
+	private readonly _screenshotSound = inject(ScreenshotSoundSettingService);
+
+	delayOptions: number[] = [0.5, 1, 3, 24];
+	zones = TimeZoneManager.zones;
+	selectedZone: ZoneEnum = ZoneEnum.LOCAL;
+	companyName: string;
+	companyLink: string;
+	companySite: string;
+
+	private _loading$: BehaviorSubject<boolean>;
+	private _automaticUpdate$: BehaviorSubject<boolean>;
+	private _automaticUpdateDelay$: BehaviorSubject<number>;
+	private _available$: BehaviorSubject<boolean>;
+	private _updaterServer$: BehaviorSubject<any>;
+	private _file$: BehaviorSubject<any>;
+	private _prerelease$: BehaviorSubject<boolean>;
+	private _isCheckDatabase$: BehaviorSubject<boolean>;
+	private _isCheckHost$: BehaviorSubject<{
+		isLoading: boolean;
+		isHidden: boolean;
+		message: string;
+		status: boolean;
+	}>;
+	private _isConnectedDatabase$: BehaviorSubject<{
+		status: boolean;
+		message: string;
+	}>;
+	private _restartDisable$: BehaviorSubject<boolean>;
+	private _isHidden$: BehaviorSubject<boolean>;
+	private _simpleScreenshotNotification$: BehaviorSubject<boolean>;
+	private _timeZoneManager = TimeZoneManager;
+	private platformInfo: Partial<IOSInfo> = {};
 
 	constructor(
-		private electronService: ElectronServices,
-		private _cdr: ChangeDetectorRef,
-		private readonly router: Router,
+		private electronService: ElectronService,
+		private _ngZone: NgZone,
 		private readonly timeTrackerService: TimeTrackerService,
 		private toastrService: NbToastrService,
+		private readonly _dialogService: NbDialogService,
+		private _setupService: SetupService,
+		private _notifier: ToastrNotificationService,
+		private _translateService: TranslateService,
+		@Optional()
+		private _authStrategy: AuthStrategy,
+		@Inject(GAUZY_ENV)
+		private readonly _environment: any,
+		private readonly _domSanitizer: DomSanitizer,
+		private readonly _languageElectronService: LanguageElectronService,
+		private readonly _store: Store
 	) {
-		this.electronService.ipcRenderer.on('app_setting', (event, arg) => {
-			const { setting, config, auth, additionalSetting } = arg;
-			this.appSetting = setting;
-			this.config = config;
-			this.authSetting = auth;
-			this.mappingAdditionalSetting(additionalSetting || null);
-
-			this.config.awPort = this.config.timeTrackerWindow
-				? this.config.awHost.split('t:')[1]
-				: null;
-			this.serverConnectivity();
-			this.selectMonitorOption({
-				value: setting.monitor.captured
-			});
-			this.screenshotNotification = setting.screenshotNotification;
-			this.autoLaunch = setting.autoLaunch;
-			this.minimizeOnStartup = setting.minimizeOnStartup;
-
-			this.selectPeriod(setting.timer.updatePeriod);
-			if (this.appName !== 'gauzy-server') {
-				this.getUserDetails();
-			}
-
-			this._cdr.detectChanges();
+		this._loading$ = new BehaviorSubject(false);
+		this._automaticUpdate$ = new BehaviorSubject(false);
+		this._automaticUpdateDelay$ = new BehaviorSubject(1);
+		this._available$ = new BehaviorSubject(false);
+		this._file$ = new BehaviorSubject({ uri: null });
+		this._updaterServer$ = new BehaviorSubject({
+			github: false,
+			digitalOcean: true,
+			local: false
 		});
-
-		this.electronService.ipcRenderer.on(
-			'app_setting_update',
-			(event, arg) => {
-				const { setting } = arg;
-				this.appSetting = setting;
-			}
-		);
-
-		electronService.ipcRenderer.on('update_not_available', () => {
-			this.notAvailable = true;
-			this.message = 'Update Not Available';
-			this.logContents.push(this.message);
-			this.scrollToBottom();
-			this.loading = false;
-			this._cdr.detectChanges();
+		this._prerelease$ = new BehaviorSubject(false);
+		this._selectedMenu$ = new BehaviorSubject(null);
+		this._isCheckDatabase$ = new BehaviorSubject(false);
+		this._isCheckHost$ = new BehaviorSubject({
+			isLoading: false,
+			isHidden: true,
+			status: false,
+			message: ''
 		});
-
-		electronService.ipcRenderer.on('error_update', (event, arg) => {
-			this.notAvailable = true;
-			this.message = 'Update Error';
-			this.logContents.push(this.message);
-			this.logContents.push(`error message: ${arg}`)
-			this.scrollToBottom();
-			this._cdr.detectChanges();
+		this._isConnectedDatabase$ = new BehaviorSubject({
+			status: false,
+			message: null
 		});
-
-		electronService.ipcRenderer.on('update_available', () => {
-			this.notAvailable = true;
-			this.message = 'Update Available';
-			this.logContents.push(this.message);
-			this.scrollToBottom();
-			this._cdr.detectChanges();
-		});
-
-		electronService.ipcRenderer.on('update_downloaded', () => {
-			this.notAvailable = true;
-			this.message = 'Update Download Completed';
-			this.logContents.push(this.message);
-			this.scrollToBottom();
-			this.showProgressBar = false;
-			this.downloadFinish = true;
-			this.loading = false;
-			this._cdr.detectChanges();
-		});
-
-		electronService.ipcRenderer.on('download_on_progress', (event, arg) => {
-			this.notAvailable = true;
-			this.showProgressBar = true;
-			this.message = `Update Downloading`;
-			this.progressDownload = Math.floor(Number(arg.percent));
-			this.logContents.push(`Downloading update ${Math.floor(arg.transferred/1000000)} MB of ${Math.floor(arg.total/1000000)} MB  ->> ${Math.floor(arg.bytesPerSecond/1000)} KB/s`);
-			this.scrollToBottom();
-			this._cdr.detectChanges();
-		});
-
-		electronService.ipcRenderer.on('goto_update', () => {
-			this.selectMenu('Update');
-		});
-
-		electronService.ipcRenderer.on('goto_top_menu', () => {
-			if (this.appName === 'gauzy-server') {
-				this.selectMenu('Advanced Setting');
-			} else this.selectMenu('Screen Capture');
-		});
-
-		electronService.ipcRenderer.on('goto_advanced_setting', () => {
-			this.selectMenu('Advanced Setting');
-		});
-
-		electronService.ipcRenderer.on('logout_success', () => {
-			this.currentUser = null;
-			this._cdr.detectChanges();
-		})
-
-		electronService.ipcRenderer.on('resp_msg', (event, arg) => {
-			this.showAlert(arg);
-		})
-		electronService.ipcRenderer.on('server_status', (event, arg) => {
-			this.serverIsRunning = arg;
-		})
+		this._restartDisable$ = new BehaviorSubject(false);
+		this._isHidden$ = new BehaviorSubject(true);
+		this._simpleScreenshotNotification$ = new BehaviorSubject(false);
+		this._isRestart$ = new BehaviorSubject(false);
+		this.companyName = this._environment.COMPANY_NAME;
+		this.companySite = this._environment.COMPANY_SITE_NAME;
+		this.companyLink = this._environment.COMPANY_LINK;
+		this.gauzyIcon = this._domSanitizer.bypassSecurityTrustResourceUrl(this._environment.PLATFORM_LOGO);
+		this.handleIpcEvent = this.handleIpcEvent.bind(this);
 	}
 
 	ngOnInit(): void {
-		this.electronService.ipcRenderer.send('request_permission');
+		// this.electronService.ipcRenderer.send('request_permission');
+		this.electronService.ipcRenderer.once('get-arch', (_, arg) => {
+			this._ngZone.run(() => {
+				this.platformInfo.arch = arg;
+			});
+		});
+		this.setPlatform();
+		this.electronService.ipcRenderer.send('get-arch');
 		this.version = this.electronService.remote.app.getVersion();
+		this.isConnectedDatabase$
+			.pipe(
+				tap(({ status }) => this._restartDisable$.next(!status)),
+				filter(() => !this._isCheckHost.status),
+				tap(() => this._restartDisable$.next(true)),
+				untilDestroyed(this)
+			)
+			.subscribe();
+		this.isCheckHost$
+			.pipe(
+				tap(({ status }) => this._restartDisable$.next(!status)),
+				filter(() => !this._isConnectedDatabase.status),
+				tap(() => this._restartDisable$.next(true)),
+				untilDestroyed(this)
+			)
+			.subscribe();
+		this.isRestart$
+			.pipe(
+				tap((isRestart: boolean) => this._restartDisable$.next(isRestart)),
+				untilDestroyed(this)
+			)
+			.subscribe();
+	}
+
+	async setPlatform() {
+		const platform: IOSInfo = await this.electronService.ipcRenderer.invoke('GET_PLATFORM');
+		this.platformInfo = platform;
+	}
+
+	ngOnDestroy(): void {
+		this.electronService.ipcRenderer.removeListener('setting_page_ipc', this.handleIpcEvent);
+	}
+
+	async getAppSetting() {
+		const appSetting = await this.electronService.ipcRenderer.invoke('app_setting');
+		this._ngZone.run(async () => {
+			const { setting, config, auth, additionalSetting } = appSetting;
+			this.appSetting = {
+				...this.appSetting,
+				...setting
+			};
+			this.config = {
+				...this.config,
+				...config
+			};
+			this.rememberSettings(this.appSetting, this.persistedAppSetting);
+			this.rememberSettings(this.config, this.persistedServerConfig);
+			this.checkDatabaseConnectivity();
+			this.authSetting = auth;
+			this.mappingAdditionalSetting(additionalSetting || null);
+			this.selectedZone = setting?.zone || ZoneEnum.LOCAL;
+			this._timeZoneManager.changeZone(this.selectedZone);
+			if (!this.isServer && !this.config?.isLocalServer) {
+				await this.checkHostConnectivity();
+			} else {
+				this._isCheckHost$.next({
+					...this._isCheckHost,
+					status: true
+				});
+			}
+			this.config.awPort = this.config.timeTrackerWindow ? this.config.awHost.split('t:')[1] : null;
+			this.serverConnectivity();
+			this._monitorsOption = { value: setting?.monitor?.captured };
+			this.screenshotNotification = setting?.screenshotNotification;
+			this.screenshotNotificationDisplayId = setting?.screenshotNotificationDisplayId ?? null;
+			await this.loadNotificationDisplays();
+			this.muted = setting?.mutedNotification;
+			this.autoLaunch = setting?.autoLaunch;
+			this.minimizeOnStartup = setting?.minimizeOnStartup;
+			this._automaticUpdate$.next(setting?.automaticUpdate);
+			this._automaticUpdateDelay$.next(setting?.automaticUpdateDelay);
+			this._prerelease$.next(setting?.prerelease);
+			this._updaterServer$ = new BehaviorSubject({
+				github: setting?.cdnUpdater?.github == true,
+				digitalOcean: setting?.cdnUpdater?.digitalOcean == true,
+				local: false
+			});
+			this._simpleScreenshotNotification$.next(setting?.simpleScreenshotNotification);
+			this.selectedPeriod = setting?.timer?.updatePeriod;
+			if (this.isDesktopTimer || this.isAgent) {
+				await this.getUserDetails();
+			}
+			const allowScreenshotCapture = auth?.allowScreenshotCapture || auth?.user?.employee?.allowScreenshotCapture;
+			this.menus = this.isServer
+				? ['TIMER_TRACKER.SETTINGS.UPDATE', 'TIMER_TRACKER.SETTINGS.ADVANCED_SETTINGS', 'MENU.ABOUT']
+				: [
+						...(allowScreenshotCapture ? ['TIMER_TRACKER.SETTINGS.SCREEN_CAPTURE'] : []),
+						...(allowScreenshotCapture && this.isDesktopTimer
+							? ['TIMER_TRACKER.PERMISSIONS.MENU_LABEL']
+							: []),
+						'TIMER_TRACKER.TIMER',
+						'TIMER_TRACKER.SETTINGS.UPDATE',
+						'TIMER_TRACKER.SETTINGS.ADVANCED_SETTINGS',
+						'MENU.ABOUT'
+					];
+			const lastMenu =
+				this._selectedMenu && this.menus.includes(this._selectedMenu) ? this._selectedMenu : this.menus[0];
+			this._selectedMenu$.next(lastMenu);
+		});
+	}
+
+	handleIpcEvent(_: any, arg: { type: string; data: any }) {
+		switch (arg.type) {
+			case 'app_setting_update':
+				this._ngZone.run(() => {
+					const { setting } = arg.data;
+					this.appSetting = setting;
+					this.rememberSettings(this.appSetting, this.persistedAppSetting);
+				});
+				break;
+			case 'update_not_available': {
+				this._ngZone.run(() => {
+					this._available$.next(false);
+					this.message = {
+						text: 'TIMER_TRACKER.SETTINGS.MESSAGES.UPDATE_NOT_AVAILABLE',
+						status: 'basic'
+					};
+					this.logContents = this._translateService.instant(this.message.text);
+					this.scrollToBottom();
+					this._loading$.next(false);
+				});
+				break;
+			}
+			case 'error_update': {
+				this._ngZone.run(() => {
+					this._available$.next(false);
+					this.message = {
+						text: 'TIMER_TRACKER.SETTINGS.MESSAGES.UPDATE_ERROR',
+						status: 'danger'
+					};
+					this.logContents = this._translateService.instant(this.message.text);
+					this.logContents = `error message: ${arg.data}`;
+					this.scrollToBottom();
+					this._loading$.next(false);
+				});
+				break;
+			}
+			case 'update_available': {
+				this._ngZone.run(() => {
+					this._available$.next(true);
+					this._loading$.next(false);
+					this.message = {
+						text: 'TIMER_TRACKER.SETTINGS.MESSAGES.UPDATE_AVAILABLE',
+						status: 'primary'
+					};
+					this.logContents = this._translateService.instant(this.message.text);
+					this.scrollToBottom();
+				});
+				break;
+			}
+			case 'update_downloaded': {
+				this._ngZone.run(() => {
+					this._available$.next(true);
+					this.message = {
+						text: 'TIMER_TRACKER.SETTINGS.MESSAGES.UPDATE_DOWNLOAD_COMPLETED',
+						status: 'success'
+					};
+					this.logContents = this._translateService.instant(this.message.text);
+					this.scrollToBottom();
+					this.showProgressBar = false;
+					this.downloadFinish = true;
+					this._loading$.next(false);
+				});
+				break;
+			}
+			case 'download_on_progress': {
+				this._ngZone.run(() => {
+					this._loading$.next(true);
+					this._available$.next(true);
+					this.showProgressBar = true;
+					this.message = {
+						text: 'TIMER_TRACKER.SETTINGS.MESSAGES.UPDATE_DOWNLOADING',
+						status: 'warning'
+					};
+					this.progressDownload = arg.data.percent ? Math.floor(Number(arg.data.percent)) : 0;
+					this.logContents = this._translateService.instant(
+						'TIMER_TRACKER.SETTINGS.MESSAGES.DOWNLOADING_UPDATE',
+						{
+							current: Math.floor(arg.data.transferred / 1000000),
+							total: Math.floor(arg.data.total / 1000000),
+							bandwidth: Math.floor(arg.data.bytesPerSecond / 1000)
+						}
+					);
+					this.scrollToBottom();
+				});
+				break;
+			}
+			case 'goto_update': {
+				this._ngZone.run(() => {
+					this.selectMenu('TIMER_TRACKER.SETTINGS.UPDATE');
+				});
+				break;
+			}
+			case 'goto_top_menu': {
+				this._ngZone.run(() => {
+					const lastMenu =
+						this._selectedMenu && this.menus.includes(this._selectedMenu)
+							? this._selectedMenu
+							: this.menus[0];
+					this.selectMenu(lastMenu);
+				});
+				break;
+			}
+			case 'goto_advanced_setting': {
+				this.selectMenu('TIMER_TRACKER.SETTINGS.ADVANCED_SETTINGS');
+				break;
+			}
+			case 'goto_permission': {
+				this.selectMenu('TIMER_TRACKER.PERMISSIONS.MENU_LABEL');
+				break;
+			}
+			case 'logout_success': {
+				this._ngZone.run(() => {
+					this.currentUser$.next(null);
+				});
+				break;
+			}
+			// please check this resp_msg letter
+			case 'resp_msg': {
+				this._ngZone.run(() => {
+					this.showAlert(arg);
+				});
+				break;
+			}
+			case 'server_status': {
+				this._ngZone.run(() => {
+					this.serverIsRunning = arg.data;
+				});
+				break;
+			}
+			case 'update_files_directory': {
+				this._ngZone.run(() => {
+					this._file$.next(arg);
+				});
+				break;
+			}
+			case 'displays_changed': {
+				this._ngZone.run(() => this.loadNotificationDisplays());
+				break;
+			}
+			case 'show_about': {
+				this._ngZone.run(() => {
+					this._dialogService.open(AboutComponent);
+				});
+				break;
+			}
+			case 'database_status': {
+				this._ngZone.run(() => {
+					this._isCheckDatabase$.next(false);
+					this._isConnectedDatabase$.next(arg.data);
+					this._isHidden$.next(false);
+				});
+				break;
+			}
+			case '_logout_quit_install_': {
+				this._ngZone.run(async () => {
+					await this.restartAndUpdate();
+				});
+				break;
+			}
+			default:
+				break;
+		}
+	}
+
+	ngAfterViewInit(): void {
+		this.getAppSetting();
+		this.electronService.ipcRenderer.on('setting_page_ipc', this.handleIpcEvent);
+		this._languageElectronService.initialize<void>();
+		this.electronService.ipcRenderer.send('setting_window_ready');
 	}
 
 	mappingAdditionalSetting(values) {
@@ -466,36 +902,78 @@ export class SettingsComponent implements OnInit {
 			this.thirdPartyConfig.forEach((item) => {
 				item.fields.forEach((itemField) => {
 					itemField.value = values[itemField.field];
-				})
-			})
+				});
+			});
 		}
 	}
 
+	/**
+	 * Lists the connected displays for the notification display setting. Reloaded whenever the main
+	 * process reports a display change.
+	 *
+	 * The saved choice is left as it is on purpose when its display is disconnected: the selector then
+	 * shows the primary-display placeholder, which matches what the main process does (it falls back to
+	 * the primary display), and the choice applies again as soon as that display is plugged back in.
+	 */
+	async loadNotificationDisplays(): Promise<void> {
+		try {
+			const displays: { id: number; label?: string; bounds: { width: number; height: number } }[] =
+				await this.electronService.ipcRenderer.invoke('GET_ALL_DISPLAYS');
+			this.notificationDisplays = displays.map((display, index) => {
+				const name = display.label || `Display ${index + 1}`;
+				return { id: display.id, label: `${name} (${display.bounds.width}×${display.bounds.height})` };
+			});
+		} catch (error) {
+			console.error('Could not list the displays:', error);
+			this.notificationDisplays = [];
+		}
+	}
+
+	selectNotificationDisplay(displayId: number | null) {
+		this.screenshotNotificationDisplayId = displayId;
+		this.updateSetting(displayId, 'screenshotNotificationDisplayId');
+	}
+
 	selectMonitorOption(item) {
-		this.monitorOptionSelected = item.value;
-		this.updateSetting({ captured: item.value }, 'monitor');
-		this.monitorsOption = this.monitorsOption.map((x) => {
-			if (x.value === item.value) {
-				x.accent = 'success';
-				x.status = 'success';
-			} else {
-				x.accent = 'basic';
-				x.status = 'basic';
-			}
-			return x;
-		});
+		this._monitorsOption = item;
+		this.updateSetting({ captured: item?.value }, 'monitor');
+	}
+
+	private set _monitorsOption(item) {
+		this._monitorsOption$.next(
+			this._monitorsOption.map((x) => {
+				if (x.value === item?.value) {
+					x.accent = 'primary';
+					x.status = 'primary';
+				} else {
+					x.accent = 'basic';
+					x.status = 'basic';
+				}
+				return x;
+			})
+		);
 	}
 
 	selectMenu(menu) {
-		this.selectedMenu = menu;
-		this._cdr.detectChanges();
+		this._selectedMenu$.next(menu);
 	}
 
-	updateSetting(value, type) {
+	updateSetting(value, type: string, showNotification = true) {
+		// Re-selecting the current option used to toast again and stack alerts.
+		// Compare the last saved copy: some controls write appSetting before this runs.
+		if (this.isSameSettingValue(this.persistedAppSetting[type], value)) {
+			return;
+		}
 		this.appSetting[type] = value;
+		this.persistedAppSetting[type] = this.cloneSettingValue(value);
 		this.electronService.ipcRenderer.send('update_app_setting', {
 			values: this.appSetting
 		});
+		if (showNotification) {
+			this._notifier.success(
+				'Update ' + type.replace(/([a-z])([A-Z])/g, '$1 $2').toLowerCase() + ' setting successfully'
+			);
+		}
 	}
 
 	selectPeriod(value) {
@@ -503,8 +981,75 @@ export class SettingsComponent implements OnInit {
 		this.updateSetting({ updatePeriod: value }, 'timer');
 	}
 
+	selectZone(value: ZoneEnum) {
+		this._timeZoneManager.changeZone(value);
+		this.updateSetting(value, 'zone');
+		this.electronService.ipcRenderer.send('refresh-timer');
+	}
+
 	toggleNotificationChange(value) {
-		this.updateSetting(value, 'screenshotNotification');
+		const isUpdateTwice = value && this.simpleScreenshotNotification;
+		this.updateSetting(value, 'screenshotNotification', !isUpdateTwice);
+		this.screenshotNotification = value;
+		if (isUpdateTwice) {
+			this.updateSetting(false, 'simpleScreenshotNotification');
+			this._simpleScreenshotNotification$.next(false);
+		}
+	}
+
+	toggleSimpleNotificationChange(value) {
+		const isUpdateTwice = value && this.screenshotNotification;
+		this.updateSetting(value, 'simpleScreenshotNotification', !isUpdateTwice);
+		this._simpleScreenshotNotification$.next(value);
+		if (isUpdateTwice) {
+			this.updateSetting(false, 'screenshotNotification');
+			this.screenshotNotification = false;
+		}
+	}
+
+	toggleNotificationSoundChange(value: boolean) {
+		this.updateSetting(!value, 'mutedNotification');
+		this.muted = !value;
+	}
+
+	/** The screenshot sound chosen on this computer, `null` for the bundled sound (#6715) */
+	get customScreenshotSound(): IDesktopScreenshotSound | null {
+		return this.appSetting?.customScreenshotSound ?? null;
+	}
+
+	/** Asks for a sound file to play when a screenshot is taken on this computer */
+	chooseScreenshotSound(): Promise<void> {
+		return this.changeScreenshotSound(() => this._screenshotSound.choose());
+	}
+
+	/** Goes back to the screenshot sound bundled with the app */
+	resetScreenshotSound(): Promise<void> {
+		return this.changeScreenshotSound(() => this._screenshotSound.reset());
+	}
+
+	/** Turns the timer start and stop tones on or off (#7141) */
+	toggleTimerStartStopSound(value: boolean) {
+		this.updateSetting(value, 'timerStartStopSound');
+	}
+
+	private async changeScreenshotSound(request: () => Promise<IDesktopScreenshotSoundResult>): Promise<void> {
+		if (this.isChangingScreenshotSound) {
+			return;
+		}
+		this.isChangingScreenshotSound = true;
+		try {
+			const result = await request();
+			if (changesScreenshotSound(result)) {
+				// The main process saved it. This page sends its whole copy of the settings back with its next change:
+				// keep that copy in step, or it would put the previous sound back.
+				this._ngZone.run(() => {
+					this.appSetting.customScreenshotSound = result.sound;
+					this.rememberSettings({ customScreenshotSound: result.sound }, this.persistedAppSetting);
+				});
+			}
+		} finally {
+			this._ngZone.run(() => (this.isChangingScreenshotSound = false));
+		}
 	}
 
 	toggleAutoLaunch(value) {
@@ -523,35 +1068,88 @@ export class SettingsComponent implements OnInit {
 		});
 	}
 
-	restartApp() {
-		if (this.appName === 'gauzy-server' && this.serverIsRunning) {
-			this.restartDisable = true;
+	toggleAutoStartOnStartup(value: boolean) {
+		this.updateServerConfig(value, 'autoStart');
+	}
+
+	toggleAutomaticUpdate(value) {
+		this._automaticUpdate$.next(value);
+		this.updateSetting(value, 'automaticUpdate');
+		this.electronService.ipcRenderer.send('automatic_update_setting', {
+			isEnabled: value,
+			delay: this._automaticUpdateDelay$.getValue()
+		});
+	}
+
+	selectAutomaticUpdateDelay(value) {
+		this._automaticUpdateDelay$.next(value);
+		this.updateSetting(value, 'automaticUpdateDelay');
+		this.electronService.ipcRenderer.send('automatic_update_setting', {
+			isEnabled: this._automaticUpdate$.getValue(),
+			delay: value
+		});
+	}
+
+	togglePrerelease(value) {
+		this._prerelease$.next(value);
+		this.updateSetting(value, 'prerelease');
+	}
+
+	toggleAlwaysOn(value: boolean) {
+		this.updateSetting(value, 'alwaysOn');
+		if (this.isAgent) {
+			this.electronService.ipcRenderer.send('always_on_setting', { isEnabled: value });
+			return;
+		}
+		this.electronService.ipcRenderer.send(value ? 'show_ao' : 'hide_ao');
+	}
+
+	async toggleTrackKbMouse(value: boolean) {
+		this.updateSetting(value, 'kbMouseTracking');
+		this.electronService.ipcRenderer.invoke('mouse_kb_tracking', value);
+	}
+
+	public async restartApp(): Promise<void> {
+		// Server apps: never save a "Server Hostname / IP Address" the server cannot use (#7550).
+		if (this.isServerHostInvalid) {
+			this._notifier.error(this._translateService.instant(SERVER_HOST_INVALID_MESSAGE));
+			return;
+		}
+		this._isRestart$.next(true);
+		if (!this.isServer && !this.authSetting.isLogout) {
+			// isRestart=true prevents the settings window from being closed during logout,
+			// allowing the restart flow to continue using the same window.
+			await firstValueFrom(this._authStrategy.logout(true));
+			this.currentUser$.next(null);
+			localStorage.clear();
 		}
 		const thConfig = {};
 		this.thirdPartyConfig.forEach((item) => {
 			item.fields.forEach((itemField) => {
 				thConfig[itemField.field] = itemField.value;
-			})
+			});
 		});
 		const newConfig: any = {
-			...this.config
+			...this.config,
+			...(this.isServer && { host: normalizeServerHost(this.config.host) })
 		};
-		if (this.config.timeTrackerWindow)
-			newConfig.awHost = `http://localhost:${this.config.awPort}`;
-		this.electronService.ipcRenderer.send('restart_app', newConfig);
+		if (this.config.timeTrackerWindow) newConfig.awHost = `http://127.0.0.1:${this.config.awPort}`;
 		this.electronService.ipcRenderer.send('save_additional_setting', thConfig);
+		this.electronService.ipcRenderer.send('restart_app', newConfig);
 	}
 
 	portChange(val, type) {
 		if (type === 'api') {
-			if (
-				['5621', '5622'].findIndex((item) => item === val.toString()) >
-				-1
-			) {
-				this.restartDisable = true;
+			if (['5621', '5622'].findIndex((item) => item === val.toString()) > -1) {
+				this._restartDisable$.next(true);
 			} else {
-				this.restartDisable = false;
+				this._restartDisable$.next(false);
 			}
+		}
+		if (type === 'db') {
+			console.log('Port change', val);
+			this._restartDisable$.next(true);
+			this._isHidden$.next(true);
 		}
 	}
 
@@ -560,12 +1158,10 @@ export class SettingsComponent implements OnInit {
 			case this.config.isLocalServer:
 				this.config.serverType = 'Integrated';
 				break;
-			case !this.config.isLocalServer &&
-				this.config.serverUrl !== 'https://api.gauzy.co':
-				this.config.serverType = 'Local Network';
+			case !this.config.isLocalServer && this.config.serverUrl !== 'https://api.gauzy.co':
+				this.config.serverType = 'Custom';
 				break;
-			case !this.config.isLocalServer &&
-				this.config.serverUrl === 'https://api.gauzy.co':
+			case !this.config.isLocalServer && this.config.serverUrl === 'https://api.gauzy.co':
 				this.config.serverType = 'Live';
 				break;
 			default:
@@ -573,15 +1169,21 @@ export class SettingsComponent implements OnInit {
 		}
 	}
 
-	checkForUpdate() {
-		this.loading = true;
-		this.logIsOpen = true;
-		this.electronService.ipcRenderer.send('check_for_update');
-		this._cdr.detectChanges();
+	public checkDatabaseConnectivity() {
+		this._isHidden$.next(false);
+		this._restartDisable$.next(true);
+		this._isCheckDatabase$.next(true);
+		this.electronService.ipcRenderer.send('check_database_connection', this.config);
 	}
 
-	restartAndUpdate() {
-		this.electronService.ipcRenderer.send('restart_and_update');
+	checkForUpdate() {
+		this._loading$.next(true);
+		this.logIsOpen = true;
+		this.electronService.ipcRenderer.send('check_for_update');
+	}
+
+	public async restartAndUpdate(): Promise<void> {
+		await this.logout(true);
 	}
 
 	toggleAwView(value) {
@@ -605,38 +1207,59 @@ export class SettingsComponent implements OnInit {
 	/*
 	 * Get logged in user details
 	 */
-	getUserDetails() {
-		const request = {
-			...this.authSetting,
-			...this.config,
-			apiHost: this.config.serverUrl
-		};
-		this.timeTrackerService.getUserDetail(request).then((res) => {
-			if (!this.authSetting.isLogout) {
-				this.currentUser = res;
+	public async getUserDetails() {
+		if (this.authSetting) {
+			try {
+				if (this.authSetting.isLogout) {
+					this.currentUser$.next(null);
+					return;
+				}
+				if (this._store.isOffline) {
+					const usr = this._store.user;
+					this.currentUser$.next(usr);
+				} else {
+					const user = await this.timeTrackerService.getUserDetail();
+					this.currentUser$.next(user);
+				}
+			} catch (error) {
+				console.log('User Detail error', error);
 			}
-			this._cdr.detectChanges();
-		});
+		} else {
+			this.currentUser$.next(null);
+		}
 	}
 
 	/*
 	 * Logout desktop timer
 	 */
-	logout() {
-		console.log('On Logout s');
-		this.electronService.ipcRenderer.send('logout_desktop');
+	public async logout(isAfterUpgrade?: boolean): Promise<void> {
+		let isLogout = true;
+
+		if (this.appSetting?.timerStarted) {
+			isLogout = await this.electronService.ipcRenderer.invoke('LOGOUT_STOP');
+		} else {
+			localStorage.clear();
+		}
+
+		if (isLogout) {
+			console.log('On Logout');
+			this.electronService.ipcRenderer.send('logout_desktop', isAfterUpgrade);
+		} else {
+			console.log('Logout Cancelled');
+		}
 	}
 
 	onServerChange(val) {
+		this._restartDisable$.next(true);
 		switch (val) {
 			case this.serverTypes.integrated:
 				this.config.isLocalServer = true;
-				this.config.port = 5620;
+				this.config.port = 3000;
 				this.config.serverUrl = null;
 				break;
-			case this.serverTypes.localNetwork:
+			case this.serverTypes.custom:
 				this.config.isLocalServer = false;
-				this.config.serverUrl = 'http://localhost:3000';
+				this.config.serverUrl = 'http://127.0.0.1:3000';
 				break;
 			case this.serverTypes.live:
 				this.config.isLocalServer = false;
@@ -648,12 +1271,20 @@ export class SettingsComponent implements OnInit {
 	}
 
 	onDriverChange(val) {
+		this._restartDisable$.next(true);
+		this._isHidden$.next(true);
 		switch (val) {
 			case 'sqlite':
 				this.config.db = 'sqlite';
 				break;
 			case 'postgres':
 				this.config.db = 'postgres';
+				break;
+			case 'mysql':
+				this.config.db = 'mysql';
+				break;
+			case 'better-sqlite':
+				this.config.db = 'better-sqlite';
 				break;
 			default:
 				break;
@@ -662,24 +1293,21 @@ export class SettingsComponent implements OnInit {
 
 	showAlert(arg) {
 		let message = '';
-		switch (arg.type) {
+		switch (arg?.type) {
 			case 'update_config':
-				message = 'Server configuration updated, please wait for server restart';
+				message = arg?.message ?? arg?.message ?? 'TIMER_TRACKER.SETTINGS.MESSAGES.SERVER_CONFIG_UPDATED';
 				break;
 			case 'start_server':
-				this.restartDisable = false;
-				this._cdr.detectChanges();
-				message = 'Server Successfully restated'
+				this._restartDisable$.next(false);
+				message = 'TIMER_TRACKER.SETTINGS.MESSAGES.SERVER_RESTARTED';
 				break;
 			default:
 				break;
 		}
-		this.toastrService.show(
-			message,
-			`Success`,
-			{ status: arg.status }
-		);
+		this._notifier.success(this._translateService.instant(message));
+		this._isRestart$.next(false);
 	}
+
 	logBoxChange(e) {
 		if (e) {
 			this.logIsOpen = false;
@@ -689,6 +1317,319 @@ export class SettingsComponent implements OnInit {
 	}
 
 	private scrollToBottom() {
-        this.logbox.nativeElement.scrollTop = this.logbox.nativeElement.scrollHeight;
-    }
+		if (this.logIsOpen && this._logBox) {
+			this._logBox.nativeElement.scrollTop = this._logBox.nativeElement.scrollHeight;
+		}
+	}
+
+	public togglePreventDisplaySleep(event: boolean): void {
+		this.updateSetting(event, 'preventDisplaySleep');
+	}
+
+	public openLink() {
+		const url = 'https://gauzy.co';
+		this.electronService.shell.openExternal(url);
+	}
+
+	public get loading$() {
+		return this._loading$.asObservable();
+	}
+
+	public get available$() {
+		return this._available$.asObservable();
+	}
+
+	public get automaticUpdate$(): Observable<boolean> {
+		return this._automaticUpdate$.asObservable();
+	}
+
+	public get prerelease$(): Observable<boolean> {
+		return this._prerelease$.asObservable();
+	}
+
+	public downloadNow() {
+		this._loading$.next(true);
+		this.logIsOpen = true;
+		this.electronService.ipcRenderer.send('download_update');
+	}
+
+	public selectDirectory() {
+		this.electronService.ipcRenderer.send('update_locally');
+	}
+
+	public get updaterServer$(): Observable<any> {
+		return this._updaterServer$.asObservable();
+	}
+
+	public get file$(): Observable<any> {
+		return this._file$.asObservable();
+	}
+
+	public toggleGithubDefaultServer(event: boolean) {
+		this._updaterServer$.next({
+			github: event,
+			digitalOcean: !event,
+			local: false
+		});
+		this.updateSetting(this._updaterServer$.getValue(), 'cdnUpdater');
+		this.electronService.ipcRenderer.send('change_update_strategy', this._updaterServer$.getValue());
+	}
+
+	public toggleDigitalOceanDefaultServer(event: boolean) {
+		this._updaterServer$.next({
+			github: !event,
+			digitalOcean: event,
+			local: false
+		});
+		this.updateSetting(this._updaterServer$.getValue(), 'cdnUpdater');
+		this.electronService.ipcRenderer.send('change_update_strategy', this._updaterServer$.getValue());
+	}
+
+	public toggleLocalServer(event: boolean) {
+		this._file$.next({});
+		this._updaterServer$.next({
+			...this._updaterServer$.getValue(),
+			local: event
+		});
+		this.electronService.ipcRenderer.send('change_update_strategy', this._updaterServer$.getValue());
+	}
+
+	public get isDesktopTimer(): boolean {
+		return this._environment.IS_DESKTOP_TIMER;
+	}
+
+	public get isDesktop(): boolean {
+		return this._environment.IS_DESKTOP;
+	}
+
+	public get isServer(): boolean {
+		return this._environment.IS_SERVER;
+	}
+
+	public get isServerApi(): boolean {
+		return this._environment.IS_SERVER_API;
+	}
+
+	public get isAgent(): boolean {
+		return this._environment.IS_AGENT;
+	}
+
+	public get selectedMenu$(): Observable<string> {
+		return this._selectedMenu$.asObservable();
+	}
+
+	public get _isConnectedDatabase(): { status: boolean; message: string } {
+		return this._isConnectedDatabase$.getValue();
+	}
+
+	public get isConnectedDatabase$(): Observable<{
+		status: boolean;
+		message: string;
+	}> {
+		return this._isConnectedDatabase$.asObservable();
+	}
+
+	public get _isCheckDatabase(): boolean {
+		return this._isCheckDatabase$.getValue();
+	}
+
+	public get _isCheckHost(): {
+		isLoading: boolean;
+		isHidden: boolean;
+		message: string;
+		status: boolean;
+	} {
+		return this._isCheckHost$.getValue();
+	}
+
+	public get isCheckHost$(): Observable<{
+		isLoading: boolean;
+		isHidden: boolean;
+		message: string;
+		status: boolean;
+	}> {
+		return this._isCheckHost$.asObservable();
+	}
+
+	public get isCheckDatabase$(): Observable<boolean> {
+		return this._isCheckDatabase$.asObservable();
+	}
+
+	public get restartDisable$(): Observable<boolean> {
+		return this._restartDisable$.asObservable();
+	}
+
+	public get isHidden$(): Observable<boolean> {
+		return this._isHidden$.asObservable();
+	}
+
+	public onHide() {
+		this._isHidden$.next(true);
+	}
+
+	public onHideApi() {
+		this._isCheckHost$.next({
+			...this._isCheckHost,
+			isHidden: true
+		});
+	}
+
+	public async checkHostConnectivity(): Promise<any> {
+		try {
+			this._isCheckHost$.next({
+				...this._isCheckHost,
+				isLoading: true
+			});
+			const url = new URL(this.config.serverUrl);
+			if (url.pathname.length > 1) {
+				this.config.serverUrl = url.origin;
+			}
+			const isOk = await this._setupService.pingServer({
+				host: url.origin
+			});
+			if (isOk) {
+				this._isCheckHost$.next({
+					status: true,
+					isHidden: false,
+					isLoading: false,
+					message: 'TIMER_TRACKER.SETTINGS.MESSAGES.CONNECTION_SUCCEEDS'
+				});
+			}
+		} catch (error) {
+			this._isCheckHost$.next({
+				status: false,
+				isHidden: false,
+				isLoading: false,
+				message: error.message
+			});
+		}
+	}
+
+	public onHostChange(host: string) {
+		this._restartDisable$.next(true);
+	}
+
+	private get _monitorsOption() {
+		return this._monitorsOption$.getValue();
+	}
+
+	public get monitorsOption$(): Observable<any> {
+		return this._monitorsOption$.asObservable();
+	}
+
+	public humanize(value: number): string {
+		return moment.duration(value, 'hours').humanize(false, {});
+	}
+
+	public get automaticUpdateDelay$(): Observable<number> {
+		return this._automaticUpdateDelay$.asObservable();
+	}
+
+	public get simpleScreenshotNotification$(): Observable<boolean> {
+		return this._simpleScreenshotNotification$.asObservable();
+	}
+
+	public get simpleScreenshotNotification(): boolean {
+		return this._simpleScreenshotNotification$.getValue();
+	}
+
+	public get isRestart$(): Observable<boolean> {
+		return this._isRestart$.asObservable();
+	}
+
+	public updateSslSetting(value) {
+		this.updateServerConfig(value, 'secureProxy');
+	}
+
+	public updateServerConfig(value, type: string, showNotification = true) {
+		// SSL and auto-start mutate config before this runs, so compare the last saved copy.
+		if (this.isSameSettingValue(this.persistedServerConfig[type], value)) {
+			return;
+		}
+		this.config[type] = value;
+		this.persistedServerConfig[type] = this.cloneSettingValue(value);
+		this.electronService.ipcRenderer.send('update_server_config', this.serverConfigToStore());
+		if (showNotification) {
+			this._notifier.success(
+				'Update ' + type.replace(/([a-z])([A-Z])/g, '$1 $2').toLowerCase() + ' setting successfully'
+			);
+		}
+	}
+
+	/**
+	 * Gauzy Server and Gauzy API Server: the "Server Hostname / IP Address" typed in the settings is
+	 * neither an IP address nor a host name, so Save stays disabled until it is fixed (#7550).
+	 */
+	public get isServerHostInvalid(): boolean {
+		return this.isServer && !isValidServerHost(this.config?.host);
+	}
+
+	/**
+	 * The server config an immediate update (SSL, auto start) stores. Server apps store the host trimmed,
+	 * as Save does, without changing the text being typed; while it is invalid it is left out: the
+	 * stored config is merged, so it keeps the last saved host.
+	 */
+	private serverConfigToStore(): Record<string, unknown> {
+		if (!this.isServer) {
+			return this.config;
+		}
+		const config: Record<string, unknown> = { ...this.config };
+		if (this.isServerHostInvalid) {
+			delete config['host'];
+		} else {
+			config['host'] = normalizeServerHost(this.config.host);
+		}
+		return config;
+	}
+
+	/** Last values sent to the desktop process. Forms may mutate appSetting/config before save. */
+	private persistedAppSetting: Record<string, unknown> = {};
+	private persistedServerConfig: Record<string, unknown> = {};
+
+	private rememberSettings(source: object | null | undefined, target: Record<string, unknown>): void {
+		if (!source) {
+			return;
+		}
+		for (const key of Object.keys(source)) {
+			target[key] = this.cloneSettingValue(source[key]);
+		}
+	}
+
+	private cloneSettingValue(value: unknown): unknown {
+		if (value == null || typeof value !== 'object') {
+			return value;
+		}
+		try {
+			return JSON.parse(JSON.stringify(value));
+		} catch {
+			return value;
+		}
+	}
+
+	/** True when a settings write would not change the stored value. */
+	private isSameSettingValue(current: unknown, next: unknown): boolean {
+		if (Object.is(current, next)) {
+			return true;
+		}
+		if (current == null || next == null || typeof current !== 'object' || typeof next !== 'object') {
+			return false;
+		}
+		try {
+			return JSON.stringify(current) === JSON.stringify(next);
+		} catch {
+			return false;
+		}
+	}
+
+	public get os(): NodeJS.Platform {
+		return this.platformInfo?.os;
+	}
+
+	public get arch(): string {
+		return this.platformInfo?.arch;
+	}
+
+	public get systemVersion() {
+		return this.platformInfo?.version;
+	}
 }

@@ -5,12 +5,18 @@ WORKDIR /opt/src
 COPY apps/desktop-timer/package.json ./apps/desktop-timer/
 COPY apps/api/package.json ./apps/api/
 COPY package.json yarn.lock ./
+# Vendored packages the lockfile resolves from file: (vendor/nebular/README.md)
+COPY vendor ./vendor
 
-RUN yarn install --frozen-lockfile
+# Copy patch-package patches so `yarn postinstall.manual` (patch-package) can apply them.
+# Without this, patch-package prints "No patch files found" and the typeorm v1 compat patch
+# (needed to compile @gauzy/core, which the embedded API uses) is never applied.
+COPY patches ./patches
+
+RUN yarn install --network-timeout 1000000 --frozen-lockfile --ignore-scripts
+RUN yarn postinstall.manual
 
 COPY . .
-
-RUN yarn bootstrap
 
 RUN yarn build:desktop-timer:windows
 

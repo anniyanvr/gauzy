@@ -1,20 +1,18 @@
-import { Component, OnInit } from '@angular/core';
+import { Component, OnInit, ChangeDetectionStrategy } from '@angular/core';
 import { NbDialogRef } from '@nebular/theme';
 import { TranslateService } from '@ngx-translate/core';
-import { TranslationBaseComponent } from '../../../@shared/language-base/translation-base.component';
+import { TranslationBaseComponent } from '@gauzy/ui-core/i18n';
 import { IInvoice, ITag, InvoiceStatusTypesEnum } from '@gauzy/contracts';
-import { InvoicesService } from '../../../@core/services/invoices.service';
-import { Store } from '../../../@core/services/store.service';
-import { InvoiceEstimateHistoryService } from '../../../@core/services/invoice-estimate-history.service';
-import { ToastrService } from '../../../@core/services/toastr.service';
+import { InvoiceEstimateHistoryService, InvoicesService, Store, ToastrService } from '@gauzy/ui-core/core';
 
 @Component({
-	selector: 'ga-invoice-send',
-	templateUrl: './invoice-send-mutation.component.html'
+    selector: 'ga-invoice-send',
+    templateUrl: './invoice-send-mutation.component.html',
+    styleUrls: ['./invoice-send-mutation.component.scss'],
+    changeDetection: ChangeDetectionStrategy.Eager,
+    standalone: false
 })
-export class InvoiceSendMutationComponent
-	extends TranslationBaseComponent
-	implements OnInit {
+export class InvoiceSendMutationComponent extends TranslationBaseComponent implements OnInit {
 	invoice: IInvoice;
 	alreadySent = false;
 	tags: ITag[];
@@ -42,10 +40,20 @@ export class InvoiceSendMutationComponent
 	}
 
 	async send() {
-		await this.invoicesService.update(this.invoice.id, {
-			sentTo: this.invoice.organizationContactId,
-			status: InvoiceStatusTypesEnum.SENT
-		});
+		try {
+			/**
+			 * Status changes go through the dedicated action endpoint. A plain `PUT /invoices/:id`
+			 * validates against `UpdateInvoiceDTO`, which requires the full invoice
+			 * (invoiceNumber/invoiceDate/dueDate/currency) and therefore rejects this partial payload.
+			 */
+			await this.invoicesService.updateAction(this.invoice.id, {
+				sentTo: this.invoice.organizationContactId,
+				status: InvoiceStatusTypesEnum.SENT
+			});
+		} catch (error) {
+			this.toastrService.danger(error);
+			return;
+		}
 		this.dialogRef.close();
 
 		await this.invoiceEstimateHistoryService.add({
@@ -64,10 +72,6 @@ export class InvoiceSendMutationComponent
 			organizationId: this.invoice.fromOrganization.id
 		});
 
-		this.toastrService.success(
-			this.isEstimate
-				? 'INVOICES_PAGE.SEND_ESTIMATE'
-				: 'INVOICES_PAGE.SEND_INVOICE'
-		);
+		this.toastrService.success(this.isEstimate ? 'INVOICES_PAGE.SEND_ESTIMATE' : 'INVOICES_PAGE.SEND_INVOICE');
 	}
 }

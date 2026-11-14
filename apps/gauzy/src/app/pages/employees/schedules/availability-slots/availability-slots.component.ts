@@ -1,4 +1,4 @@
-import { Component, OnInit, ViewChild, OnDestroy, AfterViewInit } from '@angular/core';
+import { Component, OnInit, ViewChild, OnDestroy, AfterViewInit, ChangeDetectionStrategy } from '@angular/core';
 import { CalendarOptions, EventInput } from '@fullcalendar/core';
 import { FullCalendarComponent } from '@fullcalendar/angular';
 import dayGridPlugin from '@fullcalendar/daygrid';
@@ -23,25 +23,20 @@ import { ActivatedRoute } from '@angular/router';
 import { TranslateService } from '@ngx-translate/core';
 import { UntilDestroy, untilDestroyed } from '@ngneat/until-destroy';
 import { NgxPermissionsService } from 'ngx-permissions';
-import { distinctUntilChange, isEmpty, isNotEmpty } from '@gauzy/common-angular';
-import { TranslationBaseComponent } from '../../../../@shared/language-base/translation-base.component';
-import {
-	AvailabilitySlotsService,
-	ErrorHandlingService,
-	Store,
-	TimeOffService,
-	ToastrService
-} from './../../../../@core/services';
+import { distinctUntilChange, isEmpty, isNotEmpty } from '@gauzy/ui-core/common';
+import { TranslationBaseComponent } from '@gauzy/ui-core/i18n';
+import { ErrorHandlingService, Store, ToastrService } from '@gauzy/ui-core/core';
+import { AvailabilitySlotsService, TimeOffService } from '@gauzy/ui-core/core';
 
 @UntilDestroy({ checkProperties: true })
 @Component({
 	selector: 'ngx-availability-slots',
-	templateUrl: './availability-slots.component.html'
+	templateUrl: './availability-slots.component.html',
+	styleUrls: ['./availability-slots.component.scss'],
+	changeDetection: ChangeDetectionStrategy.Eager,
+	standalone: false
 })
-export class AvailabilitySlotsComponent
-	extends TranslationBaseComponent
-	implements AfterViewInit, OnInit, OnDestroy {
-
+export class AvailabilitySlotsComponent extends TranslationBaseComponent implements AfterViewInit, OnInit, OnDestroy {
 	@ViewChild('calendar', { static: false })
 	calendar: FullCalendarComponent;
 
@@ -54,10 +49,10 @@ export class AvailabilitySlotsComponent
 		center: string;
 		right: string;
 	} = {
-			left: 'next',
-			center: 'title',
-			right: 'dayGridMonth,timeGridWeek'
-		};
+		left: 'next',
+		center: 'title',
+		right: 'dayGridMonth,timeGridWeek'
+	};
 
 	recurringAvailabilityMode: boolean;
 	dateSelected: boolean;
@@ -92,26 +87,22 @@ export class AvailabilitySlotsComponent
 
 	ngOnInit() {
 		this.getCalendarOption();
-		this.route.data
-			.pipe(untilDestroyed(this))
-			.subscribe(({ page }) => {
-				this.recurringAvailabilityMode = (page === 'recurring');
-				if (page === 'recurring') {
-					delete this.calendarOptions.selectAllow;
-					this.calendarOptions.hiddenDays = [];
-					this.calendarOptions.dayHeaderFormat = { weekday: 'long' };
-					this.calendarOptions.headerToolbar = {
-						center: '',
-						right: '',
-						left: ''
-					};
-				}
-			});
+		this.route.data.pipe(untilDestroyed(this)).subscribe(({ page }) => {
+			this.recurringAvailabilityMode = page === 'recurring';
+			if (page === 'recurring') {
+				delete this.calendarOptions.selectAllow;
+				this.calendarOptions.hiddenDays = [];
+				this.calendarOptions.dayHeaderFormat = { weekday: 'long' };
+				this.calendarOptions.headerToolbar = {
+					center: '',
+					right: '',
+					left: ''
+				};
+			}
+		});
 		this.store.userRolePermissions$
 			.pipe(
-				filter(
-					(permissions: IRolePermission[]) => isNotEmpty(permissions)
-				),
+				filter((permissions: IRolePermission[]) => isNotEmpty(permissions)),
 				untilDestroyed(this)
 			)
 			.subscribe((data) => {
@@ -124,9 +115,7 @@ export class AvailabilitySlotsComponent
 			.pipe(
 				debounceTime(300),
 				filter(([organization]) => !!organization),
-				tap(([organization]) => (
-					this.organization = organization as IOrganization
-				)),
+				tap(([organization]) => (this.organization = organization as IOrganization)),
 				distinctUntilChange(),
 				tap(([organization, employee]) => {
 					const { defaultStartTime, defaultEndTime } = organization;
@@ -159,8 +148,8 @@ export class AvailabilitySlotsComponent
 	}
 
 	/*
-	* Get calendar option
-	*/
+	 * Get calendar option
+	 */
 	getCalendarOption() {
 		let currentDay = moment().day();
 		while (currentDay > 0) {
@@ -170,12 +159,7 @@ export class AvailabilitySlotsComponent
 			initialView: 'timeGridWeek',
 			headerToolbar: this.headerToolbarOptions,
 			themeSystem: 'bootstrap',
-			plugins: [
-				dayGridPlugin,
-				timeGrigPlugin,
-				interactionPlugin,
-				bootstrapPlugin
-			],
+			plugins: [dayGridPlugin, timeGrigPlugin, interactionPlugin, bootstrapPlugin],
 			weekends: true,
 			selectable: true,
 			height: 'auto',
@@ -193,8 +177,8 @@ export class AvailabilitySlotsComponent
 	}
 
 	/*
-	* Schedule Drag & Drop Event Calendar
-	*/
+	 * Schedule Drag & Drop Event Calendar
+	 */
 	async dragDropEvent($event) {
 		const event = $event.event;
 		const { id } = event.extendedProps;
@@ -205,9 +189,7 @@ export class AvailabilitySlotsComponent
 		const input = {
 			startTime: event.start,
 			endTime: event.end,
-			type: this.recurringAvailabilityMode
-				? AvailabilitySlotType.RECURRING
-				: AvailabilitySlotType.DEFAULT,
+			type: this.recurringAvailabilityMode ? AvailabilitySlotType.RECURRING : AvailabilitySlotType.DEFAULT,
 			allDay: event.allDay,
 			organizationId,
 			tenantId
@@ -216,9 +198,7 @@ export class AvailabilitySlotsComponent
 			input['employeeId'] = this.selectedEmployee.id;
 		}
 		if (event.allDay) {
-			input['endTime'] = new Date(
-				moment(event.start).endOf('day').format('YYYY-MM-DD hh:mm:ss')
-			);
+			input['endTime'] = new Date(moment(event.start).endOf('day').format('YYYY-MM-DD hh:mm:ss'));
 		}
 		await this.availabilitySlotsService.update(id, { ...input });
 	}
@@ -227,21 +207,12 @@ export class AvailabilitySlotsComponent
 		if (this.calendar && !this.recurringAvailabilityMode) {
 			const currentStart = this.calendar.getApi().view.currentStart;
 			const currentEnd = this.calendar.getApi().view.currentEnd;
-			const hideDays = moment().isBetween(
-				currentStart,
-				currentEnd,
-				'day',
-				'[]'
-			)
-				? this.hiddenDays
-				: [];
+			const hideDays = moment().isBetween(currentStart, currentEnd, 'day', '[]') ? this.hiddenDays : [];
 			this.calendar.getApi().setOption('hiddenDays', hideDays);
-			this.headerToolbarOptions.left = moment(currentStart).isSameOrBefore(moment(), 'day') ?
-				'next' :
-				'prev,next';
-			this.calendar
-				.getApi()
-				.setOption('headerToolbar', this.headerToolbarOptions);
+			this.headerToolbarOptions.left = moment(currentStart).isSameOrBefore(moment(), 'day')
+				? 'next'
+				: 'prev,next';
+			this.calendar.getApi().setOption('headerToolbar', this.headerToolbarOptions);
 			this.renderTimeOff(config.date);
 		}
 	}
@@ -251,8 +222,8 @@ export class AvailabilitySlotsComponent
 			return;
 		}
 		const isDayOff = this.timeOffs.find(
-			(off: ITimeOff) => off.status === StatusTypesEnum.APPROVED &&
-				moment(date).isBetween(off.start, off.end, 'date', '[]')
+			(off: ITimeOff) =>
+				off.status === StatusTypesEnum.APPROVED && moment(date).isBetween(off.start, off.end, 'date', '[]')
 		);
 		if (isDayOff) {
 			this._prepareEvent(
@@ -280,9 +251,7 @@ export class AvailabilitySlotsComponent
 			this.dateSelected = true;
 			this.saveSelectedDateRange();
 		}
-		this.calendarEvents = this.calendarEvents.filter(
-			(e) => !moment(e.start).isSame(moment(o.event.start))
-		);
+		this.calendarEvents = this.calendarEvents.filter((e) => !moment(e.start).isSame(moment(o.event.start)));
 		this.calendar.getApi().refetchEvents();
 	}
 
@@ -309,8 +278,8 @@ export class AvailabilitySlotsComponent
 		const { id: employeeId } = this.selectedEmployee;
 
 		const payload: IAvailabilitySlotsCreateInput[] = [];
-		const calender = this.calendar.getApi();
-		const range = calender.getCurrentData().dateProfile.currentRange;
+		const calendarApi = this.calendar.getApi();
+		const range = calendarApi.getCurrentData().dateProfile.currentRange;
 		let start = range.start;
 		while (start < range.end) {
 			const date = moment(start).format('YYYY-MM-DD');
@@ -322,8 +291,8 @@ export class AvailabilitySlotsComponent
 			}
 			if (days.indexOf(moment(start).weekday()) >= 0) {
 				payload.push({
-					startTime: moment(date + " " + this.createForm.startTime).toDate(),
-					endTime: moment(date + " " + this.createForm.endTime).toDate(),
+					startTime: moment(date + ' ' + this.createForm.startTime).toDate(),
+					endTime: moment(date + ' ' + this.createForm.endTime).toDate(),
 					employeeId,
 					organizationId,
 					tenantId,
@@ -370,14 +339,12 @@ export class AvailabilitySlotsComponent
 				await this.availabilitySlotsService.createBulk(payload);
 			}
 			for (const e of this.removedEvents) {
-				await this.availabilitySlotsService.delete(
-					e.extendedProps['id']
-				);
+				await this.availabilitySlotsService.delete(e.extendedProps['id']);
 			}
 			this.toastrService.success('NOTES.AVAILABILITY_SLOTS.SAVE');
 
 			this.removedEvents = [];
-			this.availableSlots$.next(true)
+			this.availableSlots$.next(true);
 			this.dateSelected = false;
 		} catch (error) {
 			this.errorHandler.handleError(error);
@@ -390,16 +357,16 @@ export class AvailabilitySlotsComponent
 		let request: any = {
 			organizationId,
 			tenantId
-		}
+		};
 		if (this.selectedEmployee) {
 			const { id: employeeId } = this.selectedEmployee;
 			request = {
 				...request,
 				employeeId
-			}
+			};
 		}
-		const { items = [] } = await firstValueFrom(this.timeOffService
-			.getAllTimeOffRecords(['employees', 'employees.user'], { ...request })
+		const { items = [] } = await firstValueFrom(
+			this.timeOffService.getAllTimeOffRecords(['employees', 'employees.user'], { ...request })
 		);
 		this.timeOffs = items;
 	}
@@ -409,9 +376,7 @@ export class AvailabilitySlotsComponent
 		const { tenantId } = this.store.user;
 		const { id: organizationId } = this.organization;
 		let findObj: any = {
-			type: this.recurringAvailabilityMode ?
-				AvailabilitySlotType.RECURRING :
-				AvailabilitySlotType.DEFAULT,
+			type: this.recurringAvailabilityMode ? AvailabilitySlotType.RECURRING : AvailabilitySlotType.DEFAULT,
 			organizationId,
 			tenantId
 		};
@@ -419,17 +384,14 @@ export class AvailabilitySlotsComponent
 			findObj = {
 				...findObj,
 				employeeId: this.selectedEmployee.id
-			}
+			};
 		}
 		try {
 			this.loading = false;
 			if (!this.recurringAvailabilityMode) {
 				await this.fetchTimeOff();
 			}
-			const slots = await this.availabilitySlotsService.getAll(
-				[],
-				findObj
-			);
+			const slots = await this.availabilitySlotsService.getAll([], findObj);
 			const start = this.calendar.getApi().view.currentStart;
 			const end = this.calendar.getApi().view.currentEnd;
 			let date = moment(start);
@@ -474,10 +436,7 @@ export class AvailabilitySlotsComponent
 		}
 	}
 
-	private _prepareEvent(
-		slot: IAvailabilitySlotsView,
-		isDayOff: ITimeOff = null
-	) {
+	private _prepareEvent(slot: IAvailabilitySlotsView, isDayOff: ITimeOff = null) {
 		const eventStartTime = slot.startTime;
 		const eventEndTime = slot.endTime;
 
@@ -490,14 +449,14 @@ export class AvailabilitySlotsComponent
 			start: eventStartTime,
 			end: eventEndTime,
 			allDay: slot.allDay,
-			color: isDayOff ? 'red' : 'seablue',
+			color: isDayOff ? '#FF0000' : '#4682B4',
 			extendedProps: {
 				id: slot.id,
-				isDayOff: isDayOff ? true : false
+				isDayOff: !!isDayOff // Simplified boolean assignment
 			}
 		});
 		this.calendar.getApi().refetchEvents();
 	}
 
-	ngOnDestroy() { }
+	ngOnDestroy() {}
 }

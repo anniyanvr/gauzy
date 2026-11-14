@@ -1,116 +1,212 @@
-import { Component, OnInit, OnDestroy } from '@angular/core';
+import { Component, OnInit, OnDestroy, TemplateRef, ViewChild, ChangeDetectionStrategy } from '@angular/core';
+import { ActivatedRoute } from '@angular/router';
+import { HttpClient } from '@angular/common/http';
+import { UntypedFormGroup, UntypedFormBuilder, Validators } from '@angular/forms';
+import { NbDialogRef, NbDialogService } from '@nebular/theme';
+import { TranslateService } from '@ngx-translate/core';
+import { debounceTime, firstValueFrom, Subject } from 'rxjs';
+import { filter, tap } from 'rxjs/operators';
+import { UntilDestroy, untilDestroyed } from '@ngneat/until-destroy';
+import { Cell } from 'angular2-smart-table';
+import {
+	ErrorHandlingService,
+	OrganizationVendorsService,
+	ServerDataSource,
+	Store,
+	ToastrService,
+	GenericFavoriteService
+} from '@gauzy/ui-core/core';
 import {
 	IOrganizationVendor,
 	ITag,
 	ComponentLayoutStyleEnum,
-	IOrganization
+	IOrganization,
+	IFavorite,
+	BaseEntityEnum
 } from '@gauzy/contracts';
-import { Router, RouterEvent, NavigationEnd } from '@angular/router';
-import { FormGroup, FormBuilder, Validators } from '@angular/forms';
-import { NbDialogService } from '@nebular/theme';
-import { TranslateService } from '@ngx-translate/core';
-import { filter, tap } from 'rxjs/operators';
-import { firstValueFrom } from 'rxjs';
-import { LocalDataSource } from 'ng2-smart-table';
-import { UntilDestroy, untilDestroyed } from '@ngneat/until-destroy';
-import { TranslationBaseComponent } from './../../@shared/language-base/translation-base.component';
-import { ComponentEnum } from './../../@core/constants';
-import { NotesWithTagsComponent } from './../../@shared/table-components';
-import { DeleteConfirmationComponent } from './../../@shared/user/forms';
-import { ErrorHandlingService, OrganizationVendorsService, Store, ToastrService } from '../../@core/services';
+import { API_PREFIX, ComponentEnum, distinctUntilChange } from '@gauzy/ui-core/common';
+import {
+	CompanyLogoComponent,
+	DeleteConfirmationComponent,
+	EmailComponent,
+	ExternalLinkComponent,
+	IPaginationBase,
+	PaginationFilterBaseComponent,
+	TagsOnlyComponent
+} from '@gauzy/ui-core/shared';
 
 @UntilDestroy({ checkProperties: true })
 @Component({
 	selector: 'ga-vendors',
 	templateUrl: './vendors.component.html',
-	styleUrls: ['vendors.component.scss']
+	styleUrls: ['vendors.component.scss'],
+	changeDetection: ChangeDetectionStrategy.Eager,
+	standalone: false
 })
-export class VendorsComponent
-	extends TranslationBaseComponent
-	implements OnInit, OnDestroy {
+export class VendorsComponent extends PaginationFilterBaseComponent implements OnInit, OnDestroy {
+	public addEditDialogRef: NbDialogRef<any>;
+	public organization: IOrganization;
+	public vendors: IOrganizationVendor[] = [];
+	public viewComponentName: ComponentEnum;
+	public dataLayoutStyle = ComponentLayoutStyleEnum.TABLE;
+	public componentLayoutStyleEnum = ComponentLayoutStyleEnum;
+	public selectedVendor: IOrganizationVendor;
+	public tags: ITag[] = [];
+	public settingsSmartTable: object;
+	public smartTableSource: ServerDataSource;
+	public selected = {
+		vendor: null,
+		state: false
+	};
+	public disabled: boolean = true;
+	public saveDisabled: boolean = false;
+	public loading: boolean = false;
+	private _refresh$: Subject<any> = new Subject();
+	public favoriteVendors: IFavorite[] = [];
 
-	organization: IOrganization;
-	showAddCard: boolean;
-	vendors: IOrganizationVendor[];
-	viewComponentName: ComponentEnum;
-	dataLayoutStyle = ComponentLayoutStyleEnum.TABLE;
-	selectedVendor: IOrganizationVendor;
-	tags: ITag[] = [];
-	settingsSmartTable: object;
-	smartTableSource = new LocalDataSource();
-	form: FormGroup;
+	/*
+	 * Vendor Mutation Form
+	 */
+	public form: UntypedFormGroup = VendorsComponent.buildForm(this.fb);
+	static buildForm(fb: UntypedFormBuilder): UntypedFormGroup {
+		return fb.group({
+			name: [null, Validators.required],
+			phone: [null],
+			email: [null, [Validators.required, Validators.email]],
+			website: [null],
+			tags: [null]
+		});
+	}
+
+	@ViewChild('addEditTemplate') public addEditTemplateRef: TemplateRef<any>;
 
 	constructor(
 		private readonly organizationVendorsService: OrganizationVendorsService,
 		private readonly toastrService: ToastrService,
-		private readonly fb: FormBuilder,
+		private readonly fb: UntypedFormBuilder,
 		public readonly translateService: TranslateService,
 		private readonly dialogService: NbDialogService,
 		private readonly errorHandlingService: ErrorHandlingService,
 		private readonly store: Store,
-		private readonly router: Router
+		private readonly route: ActivatedRoute,
+		private readonly httpClient: HttpClient,
+		private readonly genericFavoriteService: GenericFavoriteService
 	) {
 		super(translateService);
 		this.setView();
 	}
 
 	ngOnInit(): void {
-		this._initializeForm();
-		this.loadSmartTable();
+		this._loadSmartTableSettings();
 		this._applyTranslationOnSmartTable();
-		this.store.selectedOrganization$
+		// Subscribe to the subject$ observable
+		this.subject$
 			.pipe(
-				filter((organization: IOrganization) => !!organization),
-				tap((organization) => this.organization = organization),
-				tap(() => this.loadVendors()),
+				// Execute the getVendors method when there's a new emission
+				tap(() => this.getVendors()),
+				// Automatically unsubscribe when the component is destroyed
 				untilDestroyed(this)
 			)
 			.subscribe();
-		this.router.events
-			.pipe(untilDestroyed(this))
-			.subscribe((event: RouterEvent) => {
-				if (event instanceof NavigationEnd) {
-					this.setView();
-				}
-			});
+		// Subscribe to the pagination$ observable
+		this.pagination$
+			.pipe(
+				// Ensure distinct consecutive values to avoid redundant processing
+				distinctUntilChange(),
+				// Trigger the subject$ observable with a new value when pagination changes
+				tap(() => this.subject$.next(true)),
+				// Automatically unsubscribe when the component is destroyed
+				untilDestroyed(this)
+			)
+			.subscribe();
+		// Subscribe to the selectedOrganization$ observable
+		this.store.selectedOrganization$
+			.pipe(
+				// Filter out falsy values, ensuring only truthy organizations are processed
+				filter((organization: IOrganization) => !!organization),
+				// Extract the organization and assign it to the component property
+				tap((organization: IOrganization) => (this.organization = organization)),
+				// Trigger the _refresh$ observable with a new value
+				tap(() => this._refresh$.next(true)),
+				// Trigger the subject$ observable with a new value
+				tap(() => this.subject$.next(true)),
+				tap(() => this.loadFavoriteVendors()), // Load favorite vendors on org change
+				// Automatically unsubscribe when the component is destroyed
+				untilDestroyed(this)
+			)
+			.subscribe();
+		// Subscribe to changes in the query parameters
+		this.route.queryParamMap
+			.pipe(
+				filter((params) => !!params && params.get('openAddDialog') === 'true'),
+				debounceTime(1000),
+				tap(() => this.openDialog(this.addEditTemplateRef, false)),
+				// Unsubscribe when the component is destroyed
+				untilDestroyed(this)
+			)
+			.subscribe();
+		// Subscribe to changes in the _refresh$ observable
+		this._refresh$
+			.pipe(
+				// Execute the refreshPagination method
+				tap(() => this.refreshPagination()),
+				// Set the vendors array to an empty array
+				tap(() => (this.vendors = [])),
+				// Unsubscribe when the component is destroyed
+				untilDestroyed(this)
+			)
+			.subscribe();
 	}
 
-	ngOnDestroy(): void { }
-
-	private _initializeForm() {
-		this.form = this.fb.group({
-			name: ['', Validators.required],
-			phone: [''],
-			email: ['', [Validators.required, Validators.email]],
-			website: [''],
-			tags: ['']
-		});
-	}
-
+	/**
+	 * Set up the view for the VENDORS component.
+	 */
 	setView() {
+		// Set the current view component name to VENDORS
 		this.viewComponentName = ComponentEnum.VENDORS;
+
+		// Subscribe to changes in the component layout
 		this.store
 			.componentLayout$(this.viewComponentName)
-			.pipe(untilDestroyed(this))
-			.subscribe((componentLayout) => {
-				this.dataLayoutStyle = componentLayout;
-
-				this.selectedVendor = null;
-
-				//when layout selector change then hide edit showcard
-				this.showAddCard = false;
-			});
+			.pipe(
+				// Ensure distinct consecutive values to avoid redundant processing
+				distinctUntilChange(),
+				// Set the dataLayoutStyle property based on the componentLayout
+				tap((componentLayout) => (this.dataLayoutStyle = componentLayout)),
+				// Trigger the _refresh$ observable with a new value
+				tap(() => this._refresh$.next(true)),
+				// Trigger the subject$ observable with a new value
+				tap(() => this.subject$.next(true)),
+				// Automatically unsubscribe when the component is destroyed
+				untilDestroyed(this)
+			)
+			.subscribe();
 	}
 
-	async loadSmartTable() {
+	/**
+	 *
+	 */
+	async _loadSmartTableSettings() {
+		const pagination: IPaginationBase = this.getPagination();
 		this.settingsSmartTable = {
 			actions: false,
+			selectedRowIndex: -1,
+			pager: {
+				perPage: pagination ? pagination : this.minItemPerPage
+			},
 			columns: {
-				tags: {
-					title: this.getTranslation('ORGANIZATIONS_PAGE.NAME'),
+				logo: {
+					title: this.getTranslation('ORGANIZATIONS_PAGE.IMAGE'),
 					type: 'custom',
-					class: 'align-row',
-					renderComponent: NotesWithTagsComponent
+					renderComponent: CompanyLogoComponent,
+					componentInitFunction: (instance: CompanyLogoComponent, cell: Cell) => {
+						instance.rowData = cell.getRow().getData();
+						instance.value = cell.getValue();
+					}
+				},
+				name: {
+					title: this.getTranslation('ORGANIZATIONS_PAGE.NAME'),
+					type: 'string'
 				},
 				phone: {
 					title: this.getTranslation('ORGANIZATIONS_PAGE.PHONE'),
@@ -118,35 +214,58 @@ export class VendorsComponent
 				},
 				email: {
 					title: this.getTranslation('ORGANIZATIONS_PAGE.EMAIL'),
-					type: 'string'
+					type: 'custom',
+					renderComponent: EmailComponent,
+					componentInitFunction: (instance: EmailComponent, cell: Cell) => {
+						instance.rowData = cell.getRow().getData();
+						instance.value = cell.getValue();
+					}
 				},
 				website: {
 					title: this.getTranslation('ORGANIZATIONS_PAGE.WEBSITE'),
-					type: 'string'
+					type: 'custom',
+					class: 'align-row',
+					renderComponent: ExternalLinkComponent,
+					componentInitFunction: (instance: ExternalLinkComponent, cell: Cell) => {
+						instance.rowData = cell.getRow().getData();
+						instance.value = cell.getValue();
+					}
+				},
+				tags: {
+					title: this.getTranslation('SM_TABLE.TAGS'),
+					type: 'custom',
+					class: 'align-row',
+					renderComponent: TagsOnlyComponent,
+					componentInitFunction: (instance: TagsOnlyComponent, cell: Cell) => {
+						instance.rowData = cell.getRow().getData();
+						instance.value = cell.getValue();
+					}
 				}
 			}
 		};
 	}
 
-	add() {
-		this.showAddCard = true;
-	}
-
 	edit(vendor: IOrganizationVendor) {
-		this.showAddCard = true;
 		this.tags = vendor.tags;
 		this.selectedVendor = vendor;
 		this.form.patchValue(vendor);
 	}
 
 	cancel() {
+		this.addEditDialogRef?.close();
 		this.form.reset();
 		this.selectedVendor = null;
 		this.tags = [];
-		this.showAddCard = false;
+		this.selected = {
+			vendor: null,
+			state: false
+		};
+		this.disabled = true;
+		this.saveDisabled = false;
 	}
 
 	save() {
+		this.saveDisabled = true;
 		if (this.selectedVendor) {
 			this.updateVendor(this.selectedVendor);
 		} else {
@@ -154,14 +273,21 @@ export class VendorsComponent
 		}
 	}
 
-	async createVendor() {
-		if (!this.form.invalid) {
-			const { name, phone, email, website } = this.form.value;
-			const { tenantId } = this.store.user;
-			const { id: organizationId } = this.organization;
+	/**
+	 * Creates a new vendor using the provided form data.
+	 * Creates the vendor using the organizationVendorsService and triggers a refresh.
+	 */
+	async createVendor(): Promise<void> {
+		try {
+			// Check if the form is not invalid
+			if (!this.form.invalid) {
+				// Extract necessary information from the current state
+				const { name, phone, email, website } = this.form.value;
+				const { tenantId } = this.store.user;
+				const { id: organizationId } = this.organization;
 
-			this.organizationVendorsService
-				.create({
+				// Create the vendor using the organizationVendorsService
+				await this.organizationVendorsService.create({
 					name,
 					phone,
 					email,
@@ -169,57 +295,81 @@ export class VendorsComponent
 					organizationId,
 					tenantId,
 					tags: this.tags
-				})
-				.then(() => {
-					this.toastrService.success(
-						'NOTES.ORGANIZATIONS.EDIT_ORGANIZATIONS_VENDOR.ADD_VENDOR',
-						{ name }
-					);
-				}).finally(() => {
-					this.loadVendors();
-					this.cancel();
 				});
-		} else {
-			// TODO translate
-			this.toastrService.danger(
-				'NOTES.ORGANIZATIONS.EDIT_ORGANIZATIONS_VENDOR.INVALID_VENDOR_NAME',
-				this.getTranslation(
-					'TOASTR.MESSAGE.NEW_ORGANIZATION_VENDOR_INVALID_NAME'
-				)
-			);
+
+				// Display a success toast message
+				this.toastrService.success('NOTES.ORGANIZATIONS.EDIT_ORGANIZATIONS_VENDOR.ADD_VENDOR', { name });
+			} else {
+				const toastrTitle = this.getTranslation('TOASTR.MESSAGE.NEW_ORGANIZATION_VENDOR_INVALID_NAME');
+
+				// Display an error toast message for an invalid form
+				this.toastrService.danger(
+					'NOTES.ORGANIZATIONS.EDIT_ORGANIZATIONS_VENDOR.INVALID_VENDOR_NAME',
+					toastrTitle
+				);
+			}
+		} catch (error) {
+			// Handle errors using the errorHandlingService
+			this.errorHandlingService.handleError(error);
+		} finally {
+			// Trigger refresh of data, notify observers, and perform cleanup
+			this._refresh$.next(true);
+			this.subject$.next(true);
+			this.cancel();
 		}
 	}
 
-	async removeVendor(id: string, name: string) {
-		const result = await firstValueFrom(this.dialogService
-			.open(DeleteConfirmationComponent, {
+	/**
+	 * Removes a vendor based on the provided id and name.
+	 * Opens a confirmation dialog before performing the removal.
+	 * If the user confirms, deletes the vendor and triggers a refresh.
+	 *
+	 * @param id - The identifier of the vendor to be removed.
+	 * @param name - The name of the vendor to be displayed in the confirmation dialog.
+	 */
+	async removeVendor(id: string, name: string): Promise<void> {
+		// Open a confirmation dialog using the DeleteConfirmationComponent
+		const result = await firstValueFrom(
+			this.dialogService.open(DeleteConfirmationComponent, {
 				context: {
 					recordType: this.getTranslation('ORGANIZATIONS_PAGE.VENDOR')
 				}
-			})
-			.onClose);
+			}).onClose
+		);
 
+		// If the user confirms the deletion
 		if (result) {
 			try {
+				// Delete the vendor using the organizationVendorsService
 				await this.organizationVendorsService.delete(id);
-				this.toastrService.success(
-					'NOTES.ORGANIZATIONS.EDIT_ORGANIZATIONS_VENDOR.REMOVE_VENDOR',
-					{ name }
-				);
-				this.loadVendors();
+
+				// Display a success toast message
+				this.toastrService.success('NOTES.ORGANIZATIONS.EDIT_ORGANIZATIONS_VENDOR.REMOVE_VENDOR', { name });
 			} catch (error) {
+				// Handle errors using the errorHandlingService
 				this.errorHandlingService.handleError(error);
+			} finally {
+				// Trigger refresh of data
+				this._refresh$.next(true);
+				this.subject$.next(true);
 			}
 		}
 	}
 
-	async updateVendor(vendor: IOrganizationVendor) {
-		const { tenantId } = this.store.user;
-		const { id: organizationId } = this.organization;
-		const { name, phone, email, website } = this.form.value;
+	/**
+	 * Updates a vendor with the provided data.
+	 * Updates the vendor using the organizationVendorsService and triggers a refresh.
+	 *
+	 * @param vendor - The vendor object to be updated.
+	 */
+	async updateVendor(vendor: IOrganizationVendor): Promise<void> {
+		try {
+			// Extract necessary information from the current state
+			const { id: organizationId, tenantId } = this.organization;
+			const { name, phone, email, website } = this.form.value;
 
-		this.organizationVendorsService
-			.update(vendor.id, {
+			// Update the vendor using the organizationVendorsService
+			await this.organizationVendorsService.update(vendor.id, {
 				name,
 				phone,
 				email,
@@ -227,48 +377,99 @@ export class VendorsComponent
 				tags: this.tags,
 				organizationId,
 				tenantId
-			})
-			.then(() => {
-				this.toastrService.success(
-					'NOTES.ORGANIZATIONS.EDIT_ORGANIZATIONS_VENDOR.UPDATE_VENDOR',
-					{ name }
-				);
-			})
-			.finally(() => {
-				this.loadVendors();
-				this.cancel();
 			});
+
+			// Display a success toast message
+			this.toastrService.success('NOTES.ORGANIZATIONS.EDIT_ORGANIZATIONS_VENDOR.UPDATE_VENDOR', {
+				name
+			});
+		} catch (error) {
+			// Handle errors using the errorHandlingService
+			this.errorHandlingService.handleError(error);
+		} finally {
+			// Trigger refresh of data, notify observers, and perform cleanup
+			this._refresh$.next(true);
+			this.subject$.next(true);
+			this.cancel();
+		}
 	}
 
-	private loadVendors() {
+	/**
+	 * Get vendors based on pagination settings and organization availability.
+	 * Uses smartTableSource for data retrieval and updates pagination information.
+	 */
+	private async getVendors(): Promise<void> {
+		// Check if the organization is not available
 		if (!this.organization) {
 			return;
 		}
+
+		try {
+			// Retrieve activePage and itemsPerPage from pagination settings
+			const { activePage, itemsPerPage } = this.getPagination();
+
+			// Set loading indicator to true
+			this.loading = true;
+
+			// Set up smartTableSource
+			this.setSmartTableSource();
+
+			// Set paging in smartTableSource
+			this.smartTableSource.setPaging(activePage, itemsPerPage, false);
+
+			// Asynchronously retrieve elements using smartTableSource
+			await this.smartTableSource.getElements();
+
+			// Update pagination information with totalItems from smartTableSource
+			this.setPagination({
+				...this.getPagination(),
+				totalItems: this.smartTableSource.count()
+			});
+		} catch (error) {
+			// Handle errors using the errorHandlingService
+			this.errorHandlingService.handleError(error);
+		} finally {
+			// Always drop the spinner, otherwise a failed request leaves the card covered forever
+			this.loading = false;
+		}
+	}
+
+	setSmartTableSource() {
 		const { tenantId } = this.store.user;
 		const { id: organizationId } = this.organization;
-
-		this.organizationVendorsService
-			.getAll(
-				{ organizationId, tenantId },
-				['tags'],
-				{ createdAt: 'DESC' }
-			)
-			.then(({ items }) => {
-				this.vendors = items;
-				this.smartTableSource.load(this.vendors);
-			});
+		this.smartTableSource = new ServerDataSource(this.httpClient, {
+			endPoint: `${API_PREFIX}/organization-vendors/pagination`,
+			relations: ['tags'],
+			where: {
+				organizationId,
+				tenantId
+			},
+			resultMap: (item: IOrganizationVendor) => {
+				return Object.assign({}, item, {
+					logo: item.name
+				});
+			},
+			finalize: () => {
+				this.vendors.push(...this.smartTableSource.getData());
+			}
+		});
 	}
 
 	selectedTagsEvent(ev) {
 		this.tags = ev;
 	}
 
-	_applyTranslationOnSmartTable() {
+	/**
+	 * Listens for language changes and triggers the loading of Smart Table settings.
+	 * Unsubscribes when the component is destroyed.
+	 */
+	private _applyTranslationOnSmartTable(): void {
 		this.translateService.onLangChange
-			.pipe(untilDestroyed(this))
-			.subscribe(() => {
-				this.loadSmartTable();
-			});
+			.pipe(
+				tap(() => this._loadSmartTableSettings()),
+				untilDestroyed(this)
+			)
+			.subscribe();
 	}
 
 	isInvalidControl(control: string) {
@@ -277,4 +478,50 @@ export class VendorsComponent
 		}
 		return this.form.get(control).touched && this.form.get(control).invalid;
 	}
+
+	openDialog(template: TemplateRef<any>, isEditTemplate: boolean) {
+		try {
+			isEditTemplate ? this.edit(this.selectedVendor) : this.cancel();
+			this.addEditDialogRef = this.dialogService.open(template);
+		} catch (error) {
+			console.log('An error occurred on open dialog: ' + error);
+		}
+	}
+
+	selectVendor(vendor: any) {
+		if (vendor.data) vendor = vendor.data;
+		const res =
+			this.selected.vendor && vendor.id === this.selected.vendor.id
+				? { state: !this.selected.state }
+				: { state: true };
+		this.disabled = !res.state;
+		this.selected.state = res.state;
+		this.selected.vendor = vendor;
+		this.selectedVendor = this.selected.vendor;
+	}
+
+	/**
+	 * Loads the list of favorite vendors for the current user or all for admin using the generic service.
+	 */
+	async loadFavoriteVendors() {
+		try {
+			this.favoriteVendors = await this.genericFavoriteService.loadFavorites(
+				BaseEntityEnum.OrganizationVendor,
+				this.organization
+			);
+		} catch (error) {
+			console.error('Error loading favorite vendors:', error);
+			this.errorHandlingService.handleError(error);
+		}
+	}
+
+	/**
+	 * Handle vendor favorite toggle event from the new component
+	 */
+	onVendorFavoriteToggled(_event: { isFavorite: boolean; favorite?: IFavorite }): void {
+		// Reload favorites to keep the list in sync
+		this.loadFavoriteVendors();
+	}
+
+	ngOnDestroy(): void {}
 }

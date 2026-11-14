@@ -1,68 +1,48 @@
+@use '@shared/_pg-card' as *;
+@use 'gauzy/_gauzy-table-hub' as ga-hub;
 
-
-/* Card grid */
-
-.flex-container {
-  display: flex;
-  flex-flow: row wrap;
-  justify-content: space-around;
-  padding: 0;
-  margin: 0;
-  list-style: none;
-}
-
-.flex-item {
-  border: 0.0625rem solid #e4e9f2;
-  border-radius: 0.25rem;
-  width: 386px;
-  margin-top: 10px;
-}
-
-.fullName {
-  display: flex;
-  flex-direction: row;
-  justify-content: space-between;
-  padding: 1rem 1.5rem;
-  line-height: 40px;
-  font-size: 1.5em;
-}
-
-.avatar {
-  width: 60px;
-  height: 60px;
-  border-radius: 50%;
-}
-
-.email {
-  text-align: right;
-  padding-right: 1.5rem;
-  bottom: 36px;
-  position: relative;
-}
-
-.info-line {
-  display: flex;
-  flex-direction: row;
-  justify-content: space-between;
-  font-size: 0.8em;
-  color: darkgray;
-  line-height: 0px;
-  padding: 1rem 1.5rem;
-
-  .info-meta {
-    margin-right: 10px;
-  }
-
-  .info-value {
+:host {
+  nb-card-body {
     display: flex;
-    justify-content: flex-end;
-    text-align: end;
-    color: black;
-    font-size: 1em;
+    flex-direction: column;
+    gap: 1rem;
+    height: calc($card-height - 0.5rem) !important;
+  }
+  .grid {
+    flex-grow: 10;
+    height: 100%;
+    overflow: auto;
   }
 }
 
-.card-footer {
-  justify-content: space-around;
-  display: flex;
+.edit-user-mutation {
+  width: 50%;
+}
+
+@media only screen and (max-width: 1200px) {
+  .edit-user-mutation {
+    width: 100%;
+  }
+}
+
+// ── The canonical list-page block ────────────────────────────────────────────
+// Density tokens, the table surface, row hover/selection, the tag-chip stack,
+// the status pills, the pager's `<nav><ul><li>` and the toolbar scale — the same
+// block Invoices carries. The toolbar is `ngx-gauzy-button-action` in
+// `nb-card-header`, which the default `$actions` selector covers.
+@include ga-hub.list-page();
+
+// The one renderer `list-page()` does not reach: the People column renders
+// `PictureNameTagsComponent`, i.e. `<ngx-avatar class="report-table">`, whose own
+// sheet pins a 20px image inside a pill padded 3px — 26px of chip, 2px short of
+// the 28px `ngx-contact-links` costs the Invoices Contact column, and so 2px
+// short of the Invoices row. `avatar-chip()` restates only that inset; the image
+// and the name stay the renderer's own. Every other people table in the app
+// (Employees, Candidates, Approvals, Time Off, Recurring Expenses) carries this
+// include — Users was the table left 2px shorter than the contract it shares.
+//
+// Table-scoped: `ga-card-grid` instantiates the same `renderComponent` for the
+// card layout, which is not paying for a table row.
+:host .table-scroll-container ::ng-deep angular2-smart-table {
+  @include ga-hub.avatar-chip();
 }

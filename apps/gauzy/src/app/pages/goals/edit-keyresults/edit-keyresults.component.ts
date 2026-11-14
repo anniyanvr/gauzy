@@ -1,12 +1,14 @@
-import { Component, OnInit, OnDestroy } from '@angular/core';
+import { Component, OnInit, OnDestroy, ChangeDetectionStrategy } from '@angular/core';
 import { NbDialogRef } from '@nebular/theme';
+import { UntypedFormGroup, UntypedFormBuilder, Validators, FormControl } from '@angular/forms';
 import {
-	FormGroup,
-	FormBuilder,
-	Validators,
-	FormControl
-} from '@angular/forms';
-import { EmployeesService } from '../../../@core/services';
+	EmployeesService,
+	GoalService,
+	GoalSettingsService,
+	KeyResultUpdateService,
+	OrganizationTeamsService,
+	TasksService
+} from '@gauzy/ui-core/core';
 import { takeUntil } from 'rxjs/operators';
 import { Subject } from 'rxjs';
 import {
@@ -24,22 +26,19 @@ import {
 	KeyResultNumberUnitsEnum,
 	IOrganization
 } from '@gauzy/contracts';
-import { TasksService } from '../../../@core/services/tasks.service';
-import { OrganizationTeamsService } from '../../../@core/services/organization-teams.service';
-import { Store } from '../../../@core/services/store.service';
-import { GoalService } from '../../../@core/services/goal.service';
-import { GoalSettingsService } from '../../../@core/services/goal-settings.service';
-import { KeyResultUpdateService } from '../../../@core/services/keyresult-update.service';
+import { Store } from '@gauzy/ui-core/core';
 import { endOfTomorrow } from 'date-fns';
 
 @Component({
-	selector: 'ga-edit-keyresults',
-	templateUrl: './edit-keyresults.component.html',
-	styleUrls: ['./edit-keyresults.component.scss']
+    selector: 'ga-edit-keyresults',
+    templateUrl: './edit-keyresults.component.html',
+    styleUrls: ['./edit-keyresults.component.scss'],
+    changeDetection: ChangeDetectionStrategy.Eager,
+    standalone: false
 })
 export class EditKeyResultsComponent implements OnInit, OnDestroy {
 	employees: IEmployee[];
-	keyResultsForm: FormGroup;
+	keyResultsForm: UntypedFormGroup;
 	data: IKeyResult;
 	showAllEmployees = false;
 	settings: IGoalGeneralSetting;
@@ -47,6 +46,14 @@ export class EditKeyResultsComponent implements OnInit, OnDestroy {
 	orgName: string;
 	numberUnitsEnum: string[] = Object.values(KeyResultNumberUnitsEnum);
 	helperText = '';
+	/**
+	 * The field the pointer is over, the field holding keyboard focus, and the field the level picker reports
+	 * (it resolves its own hover and focus before emitting). Tracked apart: held in one value, ending any one
+	 * interaction cleared the help while another was still on a field.
+	 */
+	private hoveredField = '';
+	private focusedField = '';
+	private levelField = '';
 	teams: IOrganizationTeam[] = [];
 	hideOrg = false;
 	hideTeam = false;
@@ -62,7 +69,7 @@ export class EditKeyResultsComponent implements OnInit, OnDestroy {
 	organization: IOrganization;
 	constructor(
 		private dialogRef: NbDialogRef<EditKeyResultsComponent>,
-		public fb: FormBuilder,
+		public fb: UntypedFormBuilder,
 		private employeeService: EmployeesService,
 		private taskService: TasksService,
 		private organizationTeamsService: OrganizationTeamsService,
@@ -83,10 +90,7 @@ export class EditKeyResultsComponent implements OnInit, OnDestroy {
 			initialValue: [0],
 			ownerId: [null, Validators.required],
 			leadId: [null],
-			deadline: [
-				this.keyResultDeadlineEnum.NO_CUSTOM_DEADLINE,
-				Validators.required
-			],
+			deadline: [this.keyResultDeadlineEnum.NO_CUSTOM_DEADLINE, Validators.required],
 			projectId: [null],
 			taskId: [null],
 			softDeadline: [null],
@@ -104,12 +108,8 @@ export class EditKeyResultsComponent implements OnInit, OnDestroy {
 			await this.getKPI();
 			this.keyResultsForm.patchValue(this.data);
 			this.keyResultsForm.patchValue({
-				softDeadline: this.data.softDeadline
-					? new Date(this.data.softDeadline)
-					: null,
-				hardDeadline: this.data.hardDeadline
-					? new Date(this.data.hardDeadline)
-					: null,
+				softDeadline: this.data.softDeadline ? new Date(this.data.softDeadline) : null,
+				hardDeadline: this.data.hardDeadline ? new Date(this.data.hardDeadline) : null,
 				leadId: !!this.data.lead ? this.data.lead.id : null,
 				ownerId: this.data.owner.id
 			});
@@ -135,71 +135,67 @@ export class EditKeyResultsComponent implements OnInit, OnDestroy {
 
 	async getKPI() {
 		const { id: organizationId, tenantId } = this.organization;
-		await this.goalSettingsService
-			.getAllKPI({ organization: { id: organizationId }, tenantId })
-			.then((kpi) => {
-				const { items } = kpi;
-				this.KPIs = items;
-			});
+		await this.goalSettingsService.getAllKPI({ organization: { id: organizationId }, tenantId }).then((kpi) => {
+			const { items } = kpi;
+			this.KPIs = items;
+		});
 	}
 
 	async getTeams() {
 		const { id: organizationId, tenantId } = this.organization;
-		await this.organizationTeamsService
-			.getAll(['members'], { organizationId, tenantId })
-			.then((res) => {
-				const { items } = res;
-				this.teams = items;
-			});
+		await this.organizationTeamsService.getAll(['members'], { organizationId, tenantId }).then((res) => {
+			const { items } = res;
+			this.teams = items;
+		});
 	}
 
 	deadlineValidators() {
-		if (
-			this.keyResultsForm.get('deadline').value ===
-			this.keyResultDeadlineEnum.NO_CUSTOM_DEADLINE
-		) {
+		if (this.keyResultsForm.get('deadline').value === this.keyResultDeadlineEnum.NO_CUSTOM_DEADLINE) {
 			this.keyResultsForm.controls['softDeadline'].clearValidators();
 			this.keyResultsForm.patchValue({ softDeadline: undefined });
-			this.keyResultsForm.controls[
-				'softDeadline'
-			].updateValueAndValidity();
+			this.keyResultsForm.controls['softDeadline'].updateValueAndValidity();
 			this.keyResultsForm.controls['hardDeadline'].clearValidators();
 			this.keyResultsForm.patchValue({ hardDeadline: undefined });
-			this.keyResultsForm.controls[
-				'hardDeadline'
-			].updateValueAndValidity();
-		} else if (
-			this.keyResultsForm.get('deadline').value ===
-			this.keyResultDeadlineEnum.HARD_DEADLINE
-		) {
+			this.keyResultsForm.controls['hardDeadline'].updateValueAndValidity();
+		} else if (this.keyResultsForm.get('deadline').value === this.keyResultDeadlineEnum.HARD_DEADLINE) {
 			this.keyResultsForm.controls['softDeadline'].clearValidators();
 			this.keyResultsForm.patchValue({ softDeadline: undefined });
-			this.keyResultsForm.controls[
-				'softDeadline'
-			].updateValueAndValidity();
-			this.keyResultsForm.controls['hardDeadline'].setValidators([
-				Validators.required
-			]);
-			this.keyResultsForm.controls[
-				'hardDeadline'
-			].updateValueAndValidity();
-		} else if (
-			this.keyResultsForm.get('deadline').value ===
-			this.keyResultDeadlineEnum.HARD_AND_SOFT_DEADLINE
-		) {
-			this.keyResultsForm.controls['softDeadline'].setValidators([
-				Validators.required
-			]);
-			this.keyResultsForm.controls[
-				'softDeadline'
-			].updateValueAndValidity();
-			this.keyResultsForm.controls['hardDeadline'].setValidators([
-				Validators.required
-			]);
-			this.keyResultsForm.controls[
-				'hardDeadline'
-			].updateValueAndValidity();
+			this.keyResultsForm.controls['softDeadline'].updateValueAndValidity();
+			this.keyResultsForm.controls['hardDeadline'].setValidators([Validators.required]);
+			this.keyResultsForm.controls['hardDeadline'].updateValueAndValidity();
+		} else if (this.keyResultsForm.get('deadline').value === this.keyResultDeadlineEnum.HARD_AND_SOFT_DEADLINE) {
+			this.keyResultsForm.controls['softDeadline'].setValidators([Validators.required]);
+			this.keyResultsForm.controls['softDeadline'].updateValueAndValidity();
+			this.keyResultsForm.controls['hardDeadline'].setValidators([Validators.required]);
+			this.keyResultsForm.controls['hardDeadline'].updateValueAndValidity();
 		}
+	}
+
+	/** Records the field the pointer moved onto, or `''` when it left one. */
+	hoverHelper(field: string) {
+		this.hoveredField = field;
+		this.showHelper();
+	}
+
+	/** Records the field that took keyboard focus, or `''` when it lost it. */
+	focusHelper(field: string) {
+		this.focusedField = field;
+		this.showHelper();
+	}
+
+	/** Records whichever of Level or Owner the aligned-objective picker is reporting, or `''` for none. */
+	levelHelper(field: string) {
+		this.levelField = field;
+		this.showHelper();
+	}
+
+	/**
+	 * Picks the help the aside shows. The pointer wins while it is over a field, so hovering one field while
+	 * another holds focus still reads as before; the help falls back to whatever is left and only clears once
+	 * every interaction has ended.
+	 */
+	private showHelper() {
+		this.helperText = this.hoveredField || this.levelField || this.focusedField;
 	}
 
 	selectEmployee(event, control) {
@@ -214,9 +210,7 @@ export class EditKeyResultsComponent implements OnInit, OnDestroy {
 
 	async saveKeyResult() {
 		if (this.keyResultsForm.value.type === KeyResultTypeEnum.KPI) {
-			const selectedKPI = this.KPIs.find(
-				(kpi) => kpi.id === this.keyResultsForm.value.kpiId
-			);
+			const selectedKPI = this.KPIs.find((kpi) => kpi.id === this.keyResultsForm.value.kpiId);
 			this.keyResultsForm.patchValue({
 				initialValue: selectedKPI.currentValue,
 				targetValue: selectedKPI.targetValue
@@ -247,16 +241,14 @@ export class EditKeyResultsComponent implements OnInit, OnDestroy {
 		}
 		// Assign Task dueDate as keyResult's hard Deadline.
 		if (this.keyResultsForm.value.type === this.keyResultTypeEnum.TASK) {
-			await this.taskService
-				.getById(this.keyResultsForm.value.taskId)
-				.then((task) => {
-					if (!!task.dueDate) {
-						this.keyResultsForm.patchValue({
-							deadline: KeyResultDeadlineEnum.HARD_DEADLINE,
-							hardDeadline: task.dueDate
-						});
-					}
-				});
+			await this.taskService.getById(this.keyResultsForm.value.taskId).then((task) => {
+				if (!!task.dueDate) {
+					this.keyResultsForm.patchValue({
+						deadline: KeyResultDeadlineEnum.HARD_DEADLINE,
+						hardDeadline: task.dueDate
+					});
+				}
+			});
 		}
 
 		const { tenantId } = this.store.user;
@@ -268,28 +260,22 @@ export class EditKeyResultsComponent implements OnInit, OnDestroy {
 				this.data.progress = 0;
 				this.data.update = this.keyResultsForm.value.initialValue;
 				try {
-					this.keyResultUpdateService.deleteBulkByKeyResultId(
-						this.data.id
-					);
+					this.keyResultUpdateService.deleteBulkByKeyResultId(this.data.id);
 				} catch (error) {
 					console.log(error);
 				}
 			}
 			this.keyResultsForm.patchValue({
 				targetValue:
-					this.keyResultsForm.value.type ===
-					this.keyResultTypeEnum.TRUE_OR_FALSE
+					this.keyResultsForm.value.type === this.keyResultTypeEnum.TRUE_OR_FALSE
 						? 1
-						: this.keyResultsForm.value.type ===
-						  this.keyResultTypeEnum.TASK
+						: this.keyResultsForm.value.type === this.keyResultTypeEnum.TASK
 						? 1
 						: this.keyResultsForm.value.targetValue
 			});
 			this.closeDialog({
 				...this.keyResultsForm.value,
-				update: this.data.update
-					? this.data.update
-					: this.keyResultsForm.value.initialValue,
+				update: this.data.update ? this.data.update : this.keyResultsForm.value.initialValue,
 				status: this.data.status ? this.data.status : 'none',
 				progress: this.data.progress ? this.data.progress : 0,
 				organizationId,

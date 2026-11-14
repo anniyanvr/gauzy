@@ -1,37 +1,38 @@
-import { Component, OnInit, OnDestroy } from '@angular/core';
+import { Component, OnInit, OnDestroy, ChangeDetectionStrategy } from '@angular/core';
 import { IOrganization, IOrganizationProject } from '@gauzy/contracts';
-import { Store } from '../../../@core/services/store.service';
 import { filter, tap } from 'rxjs/operators';
-import { OrganizationProjectsService } from '../../../@core/services/organization-projects.service';
-import { DefaultEditor } from 'ng2-smart-table';
+import { DefaultEditor } from 'angular2-smart-table';
 import { UntilDestroy, untilDestroyed } from '@ngneat/until-destroy';
+import { OrganizationProjectsService, Store } from '@gauzy/ui-core/core';
 
 @UntilDestroy({ checkProperties: true })
 @Component({
-	template: `
+    template: `
 		<nb-select
-			fullWidth
-			placeholder="{{ 'INVOICES_PAGE.SELECT_PROJECT' | translate }}"
-			[(ngModel)]="project"
-			(selectedChange)="selectProject($event)"
-		>
-			<nb-option *ngFor="let project of projects" [value]="project">
-				{{ project.name }}
-			</nb-option>
+		  fullWidth
+		  [placeholder]="'INVOICES_PAGE.SELECT_PROJECT' | translate"
+		  [(ngModel)]="project"
+		  (selectedChange)="selectProject($event)"
+		  >
+		  @for (project of projects; track project) {
+		    <nb-option [value]="project">
+		      {{ project.name }}
+		    </nb-option>
+		  }
 		</nb-select>
-	`,
-	styles: []
+		`,
+    styles: [],
+    changeDetection: ChangeDetectionStrategy.Eager,
+    standalone: false
 })
-export class InvoiceProjectsSelectorComponent
-	extends DefaultEditor
-	implements OnInit, OnDestroy {
-	project: IOrganizationProject;
-	projects: IOrganizationProject[];
-	organization: IOrganization;
+export class InvoiceProjectsSelectorComponent extends DefaultEditor implements OnInit, OnDestroy {
+	public project: IOrganizationProject;
+	public projects: IOrganizationProject[];
+	public organization: IOrganization;
 
 	constructor(
-		private store: Store,
-		private organizationProjectsService: OrganizationProjectsService
+		private readonly store: Store,
+		private readonly organizationProjectsService: OrganizationProjectsService
 	) {
 		super();
 	}
@@ -39,8 +40,8 @@ export class InvoiceProjectsSelectorComponent
 	ngOnInit() {
 		this.store.selectedOrganization$
 			.pipe(
-				filter((organization) => !!organization),
-				tap((organization) => (this.organization = organization)),
+				filter((organization: IOrganization) => !!organization),
+				tap((organization: IOrganization) => (this.organization = organization)),
 				tap(() => this._loadProjects()),
 				untilDestroyed(this)
 			)
@@ -50,18 +51,21 @@ export class InvoiceProjectsSelectorComponent
 	private _loadProjects() {
 		const tenantId = this.store.user.tenantId;
 		const { id: organizationId } = this.organization;
-		this.organizationProjectsService
-			.getAll([], { organizationId, tenantId })
-			.then(({ items }) => {
-				this.projects = items;
-				this.project = this.projects.find(
-					(p) => p.id === this.cell.newValue.id
-				);
-			});
+		this.organizationProjectsService.getAll([], { organizationId, tenantId }).then(({ items }) => {
+			this.projects = items;
+			//
+			const project: any = this.cell.getValue();
+			//
+			this.project = this.projects.find((p) => p.id === project['id']);
+		});
 	}
 
+	/**
+	 *
+	 * @param $event
+	 */
 	selectProject($event) {
-		this.cell.newValue = $event;
+		this.cell.setValue($event);
 	}
 
 	ngOnDestroy() {}

@@ -1,4 +1,4 @@
-import { Component, OnInit, HostListener, ElementRef } from '@angular/core';
+import { Component, OnInit, HostListener, ElementRef, ChangeDetectionStrategy } from '@angular/core';
 import {
 	IProductOption,
 	IProductOptionGroupTranslatable,
@@ -6,14 +6,13 @@ import {
 	IProductOptionTranslatable
 } from '@gauzy/contracts';
 import { UntilDestroy, untilDestroyed } from '@ngneat/until-destroy';
-import { InventoryStore } from 'apps/gauzy/src/app/@core/services/inventory-store.service';
-import { FormGroup, FormBuilder } from '@angular/forms';
+import { InventoryStore, Store } from '@gauzy/ui-core/core';
+import { UntypedFormGroup, UntypedFormBuilder } from '@angular/forms';
 import { debounceTime, distinctUntilChanged } from 'rxjs/operators';
 import { firstValueFrom } from 'rxjs';
-import { Store } from 'apps/gauzy/src/app/@core/services/store.service';
 import { TranslateService } from '@ngx-translate/core';
 import { NbDialogService } from '@nebular/theme';
-import { ProductOptionGroupTranslationsComponent } from 'apps/gauzy/src/app/@shared/product-mutation/product-option-group-translation/product-option-group-translation.component';
+import { ProductOptionGroupTranslationsComponent } from '@gauzy/ui-core/shared';
 
 export interface OptionCreateInput {
 	name: string;
@@ -45,7 +44,9 @@ export interface IProductOptionUI extends IProductOptionTranslatable {
 @Component({
 	selector: 'ngx-options-form',
 	templateUrl: './options-form.component.html',
-	styleUrls: ['./options-form.component.scss']
+	styleUrls: ['./options-form.component.scss'],
+	changeDetection: ChangeDetectionStrategy.Eager,
+	standalone: false
 })
 export class OptionsFormComponent implements OnInit {
 	editOption: IProductOption;
@@ -59,12 +60,12 @@ export class OptionsFormComponent implements OnInit {
 
 	activeLanguageCode: string = LanguagesEnum.ENGLISH;
 
-	form: FormGroup;
+	form: UntypedFormGroup;
 
 	optionGroups: any[] = [];
 
 	@HostListener('document:click', ['$event'])
-	clickout(event) {
+	onClick(event: MouseEvent) {
 		if (!this.eRef.nativeElement.contains(event.target)) {
 			this.activeOptionGroup = this.getEmptyOptionGroup();
 			this.activeOption = this.getEmptyOption();
@@ -72,9 +73,9 @@ export class OptionsFormComponent implements OnInit {
 	}
 
 	constructor(
-		private dialogService: NbDialogService,
+		private readonly dialogService: NbDialogService,
 		private inventoryStore: InventoryStore,
-		private fb: FormBuilder,
+		private fb: UntypedFormBuilder,
 		private store: Store,
 		private translateService: TranslateService,
 		private eRef: ElementRef
@@ -84,90 +85,63 @@ export class OptionsFormComponent implements OnInit {
 		this.initForm();
 
 		this.form.controls['activeOptionGroupName'].valueChanges
-			.pipe(
-				untilDestroyed(this),
-				debounceTime(500),
-				distinctUntilChanged()
-			)
+			.pipe(untilDestroyed(this), debounceTime(500), distinctUntilChanged())
 			.subscribe((value) => {
 				this.updateActiveOptionGroupName(value);
 			});
 
 		this.form.controls['activeOptionName'].valueChanges
-			.pipe(
-				untilDestroyed(this),
-				debounceTime(500),
-				distinctUntilChanged()
-			)
+			.pipe(untilDestroyed(this), debounceTime(500), distinctUntilChanged())
 			.subscribe((value) => {
 				this.updateActiveOptionName(value);
 			});
 
 		this.form.controls['activeOptionCode'].valueChanges
-			.pipe(
-				untilDestroyed(this),
-				debounceTime(500),
-				distinctUntilChanged()
-			)
+			.pipe(untilDestroyed(this), debounceTime(500), distinctUntilChanged())
 			.subscribe((value) => {
 				this.updateActiveOptionCode(value);
 			});
 
-		this.inventoryStore.activeProduct$
-			.pipe(untilDestroyed(this), debounceTime(500))
-			.subscribe((activeProduct) => {
-				this.optionGroups = activeProduct.optionGroups || [];
+		this.inventoryStore.activeProduct$.pipe(untilDestroyed(this), debounceTime(500)).subscribe((activeProduct) => {
+			this.optionGroups = activeProduct.optionGroups || [];
 
-				if (activeProduct.optionGroups) {
-					this.optionGroups = activeProduct.optionGroups.map(
-						(optionGroup, i) => {
+			if (activeProduct.optionGroups) {
+				this.optionGroups = activeProduct.optionGroups.map((optionGroup, i) => {
+					return {
+						...optionGroup,
+						formOptionGroupId: this.generateUniqueId(),
+						options: optionGroup.options.map((option, k) => {
 							return {
-								...optionGroup,
-								formOptionGroupId: this.generateUniqueId(),
-								options: optionGroup.options.map(
-									(option, k) => {
-										return {
-											...option,
-											formOptionId:
-												option.code +
-												this.generateUniqueId()
-										};
-									}
-								)
+								...option,
+								formOptionId: option.code + this.generateUniqueId()
 							};
-						}
-					);
-				} else {
-					this.optionGroups = [];
-				}
+						})
+					};
+				});
+			} else {
+				this.optionGroups = [];
+			}
 
-				this.inventoryStore.optionGroups = this.optionGroups;
-			});
+			this.inventoryStore.optionGroups = this.optionGroups;
+		});
 
-		this.translateService.onLangChange
-			.pipe(untilDestroyed(this))
-			.subscribe((language) => {
-				this.activeLanguageCode = language.lang;
-				this.resetActiveTranslations();
-				this.activeOptionGroup = null;
-				this.activeOption = this.getEmptyOption();
-				this.resetActiveTranslations();
-			});
+		this.translateService.onLangChange.pipe(untilDestroyed(this)).subscribe((language) => {
+			this.activeLanguageCode = language.lang;
+			this.resetActiveTranslations();
+			this.activeOptionGroup = null;
+			this.activeOption = this.getEmptyOption();
+			this.resetActiveTranslations();
+		});
 	}
 
 	onSaveOption() {}
 
-	async onTranslateOptionClick(
-		optionGroupData: IProductOptionGroupTranslatable
-	) {
-		const dialog = this.dialogService.open(
-			ProductOptionGroupTranslationsComponent,
-			{
-				context: {
-					productOptionGroup: optionGroupData
-				}
+	async onTranslateOptionClick(optionGroupData: IProductOptionGroupTranslatable) {
+		const dialog = this.dialogService.open(ProductOptionGroupTranslationsComponent, {
+			context: {
+				productOptionGroup: optionGroupData
 			}
-		);
+		});
 
 		let result = await firstValueFrom(dialog.onClose);
 
@@ -185,15 +159,13 @@ export class OptionsFormComponent implements OnInit {
 		this.optionGroups.splice(0, 0, newOptionGroup);
 	}
 
-	onDeleteOptinGroupClick(optionGroupDeleted: IProductOptionGroupUI) {
+	onDeleteOptionGroupClick(optionGroupDeleted: IProductOptionGroupUI) {
 		optionGroupDeleted.options.forEach((option) => {
 			this.onDeleteOption(option);
 		});
 
 		this.optionGroups = this.optionGroups.filter(
-			(optinGroup) =>
-				optinGroup.formOptionGroupId !==
-				optionGroupDeleted.formOptionGroupId
+			(optionGroup) => optionGroup.formOptionGroupId !== optionGroupDeleted.formOptionGroupId
 		);
 
 		this.inventoryStore.addDeletedOptionGroup(optionGroupDeleted);
@@ -201,6 +173,9 @@ export class OptionsFormComponent implements OnInit {
 	}
 
 	onCreateOptionClick() {
+		const { tenantId } = this.store.user;
+		const { id: organizationId } = this.store.selectedOrganization;
+
 		if (!this.activeOptionGroup) return;
 
 		let formValue = this.form.value;
@@ -211,11 +186,12 @@ export class OptionsFormComponent implements OnInit {
 			formOptionId: this.generateUniqueId(),
 			name: formValue['activeOptionName'],
 			code: formValue['activeOptionCode'],
+			organizationId,
+			tenantId,
 			translations: [
 				{
 					name: formValue['activeOptionName'],
-					languageCode:
-						this.activeLanguageCode || LanguagesEnum.ENGLISH,
+					languageCode: this.activeLanguageCode || LanguagesEnum.ENGLISH,
 					description: ''
 				}
 			]
@@ -234,11 +210,9 @@ export class OptionsFormComponent implements OnInit {
 	}
 
 	updateActiveOptionGroupName(value: string) {
-		if (
-			this.optionGroups.find((optionGroup) => optionGroup.name == value)
-		) {
+		if (this.optionGroups.find((optionGroup) => optionGroup.name == value)) {
 			this.form.controls['activeOptionGroupName'].setErrors({
-				error: 'alredy group'
+				error: 'already group'
 			});
 
 			return;
@@ -247,57 +221,38 @@ export class OptionsFormComponent implements OnInit {
 		}
 
 		this.activeOptionGroup.name = value;
-		this.updateTranslationProperty(
-			this.activeOptionGroup,
-			'name',
-			OptionLevel.GROUP,
-			value
-		);
+		this.updateTranslationProperty(this.activeOptionGroup, 'name', OptionLevel.GROUP, value);
 		this.updateOptionGroupInStore();
 	}
 
 	updateActiveOptionName(value: string) {
-		let checkDublicateOption = this.activeOptionGroup.options.find(
-			(option) => option.name == value
-		);
+		let checkDuplicateOption = this.activeOptionGroup.options.find((option) => option.name == value);
 
-		if (checkDublicateOption) {
+		if (checkDuplicateOption) {
 			this.form.controls['activeOptionName'].setErrors({
-				error: 'dublicate option'
+				error: 'duplicate option'
 			});
 		} else {
 			this.form.controls['activeOptionName'].setErrors(null);
 		}
 
 		this.activeOption.name = value;
-		this.updateTranslationProperty(
-			this.activeOption,
-			'name',
-			OptionLevel.SINGLE,
-			value
-		);
+		this.updateTranslationProperty(this.activeOption, 'name', OptionLevel.SINGLE, value);
 	}
 
 	updateActiveOptionCode(value: string) {
-		let checkDublicateCode = this.activeOptionGroup.options.find(
-			(option) => option.code == value
-		);
+		let checkDuplicateCode = this.activeOptionGroup.options.find((option) => option.code == value);
 
-		if (checkDublicateCode) {
+		if (checkDuplicateCode) {
 			this.form.controls['activeOptionCode'].setErrors({
-				error: 'dublicate code'
+				error: 'duplicate code'
 			});
 		} else {
 			this.form.controls['activeOptionCode'].setErrors(null);
 		}
 
 		this.activeOption.code = value;
-		this.updateTranslationProperty(
-			this.activeOption,
-			'code',
-			OptionLevel.SINGLE,
-			value
-		);
+		this.updateTranslationProperty(this.activeOption, 'code', OptionLevel.SINGLE, value);
 	}
 
 	updateTranslationProperty(
@@ -341,18 +296,10 @@ export class OptionsFormComponent implements OnInit {
 	resetActiveTranslations() {
 		this.optionGroups.forEach((group: IProductOptionGroupTranslatable) => {
 			this.updateTranslationProperty(group, 'name', OptionLevel.GROUP);
-			this.updateTranslationProperty(
-				group,
-				'description',
-				OptionLevel.GROUP
-			);
+			this.updateTranslationProperty(group, 'description', OptionLevel.GROUP);
 
 			group.options.forEach((option: IProductOptionTranslatable) => {
-				this.updateTranslationProperty(
-					option,
-					'name',
-					OptionLevel.SINGLE
-				);
+				this.updateTranslationProperty(option, 'name', OptionLevel.SINGLE);
 			});
 		});
 	}
@@ -360,16 +307,10 @@ export class OptionsFormComponent implements OnInit {
 	isActive(productOptionGroupInput: IProductOptionGroupTranslatable | any) {
 		if (!productOptionGroupInput || !this.activeOptionGroup) return false;
 
-		return (
-			productOptionGroupInput.formOptionGroupId ==
-			this.activeOptionGroup.formOptionGroupId
-		);
+		return productOptionGroupInput.formOptionGroupId == this.activeOptionGroup.formOptionGroupId;
 	}
 
-	setActiveOptionGroup(
-		$event,
-		productOptionGroupInput: IProductOptionGroupTranslatable
-	) {
+	setActiveOptionGroup($event, productOptionGroupInput: IProductOptionGroupTranslatable) {
 		$event.stopPropagation();
 		this.activeOptionGroup = productOptionGroupInput;
 		this.activeOption = this.getEmptyOption();
@@ -418,9 +359,7 @@ export class OptionsFormComponent implements OnInit {
 		this.inventoryStore.optionGroups = this.optionGroups;
 	}
 
-	private resetFormValue(
-		formFields: OptionFormFields = OptionFormFields.All
-	) {
+	private resetFormValue(formFields: OptionFormFields = OptionFormFields.All) {
 		switch (formFields) {
 			case OptionFormFields.All:
 				this.form.patchValue({
@@ -470,24 +409,9 @@ export class OptionsFormComponent implements OnInit {
 
 	private generateUniqueId() {
 		let S4 = () => {
-			return (((1 + Math.random()) * 0x10000) | 0)
-				.toString(16)
-				.substring(1);
+			return (((1 + Math.random()) * 0x10000) | 0).toString(16).substring(1);
 		};
-		return (
-			S4() +
-			S4() +
-			'-' +
-			S4() +
-			'-' +
-			S4() +
-			'-' +
-			S4() +
-			'-' +
-			S4() +
-			S4() +
-			S4()
-		);
+		return S4() + S4() + '-' + S4() + '-' + S4() + '-' + S4() + '-' + S4() + S4() + S4();
 	}
 
 	/**
@@ -496,10 +420,7 @@ export class OptionsFormComponent implements OnInit {
 	private generateOptionGroupFormId(optionGroups = this.optionGroups) {
 		if (!optionGroups) return 1;
 
-		const lastEl = optionGroups.sort(
-			(group1, group2) =>
-				group2.formOptionGroupId - group1.formOptionGroupId
-		)[0];
+		const lastEl = optionGroups.sort((group1, group2) => group2.formOptionGroupId - group1.formOptionGroupId)[0];
 
 		return lastEl ? lastEl.formOptionGroupId + 1 : 1;
 	}
@@ -507,23 +428,15 @@ export class OptionsFormComponent implements OnInit {
 	/**
 	 * unique id for generated/stored options
 	 */
-	private generateOptionId(
-		optionGroup: IProductOptionGroupUI = this.activeOptionGroup
-	) {
+	private generateOptionId(optionGroup: IProductOptionGroupUI = this.activeOptionGroup) {
 		if (!optionGroup.options) return 1;
 
-		const lastEl = optionGroup.options.sort(
-			(option1, option2) => option2.formOptionId - option1.formOptionId
-		)[0];
+		const lastEl = optionGroup.options.sort((option1, option2) => option2.formOptionId - option1.formOptionId)[0];
 
-		return lastEl
-			? optionGroup.name.toString() + lastEl.formOptionId + 1
-			: optionGroup.name.toString() + 1;
+		return lastEl ? optionGroup.name.toString() + lastEl.formOptionId + 1 : optionGroup.name.toString() + 1;
 	}
 
-	private generateOptionIdsForGroup(
-		optionGroup: IProductOptionGroupTranslatable = this.activeOptionGroup
-	) {
+	private generateOptionIdsForGroup(optionGroup: IProductOptionGroupTranslatable = this.activeOptionGroup) {
 		optionGroup.options = optionGroup.options.map((option) => {
 			return {
 				...option,

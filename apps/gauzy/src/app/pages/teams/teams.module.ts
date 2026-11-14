@@ -1,6 +1,4 @@
-import { SharedModule } from 'apps/gauzy/src/app/@shared/shared.module';
 import { NgModule } from '@angular/core';
-import { ThemeModule } from '../../@theme/theme.module';
 import {
 	NbCardModule,
 	NbButtonModule,
@@ -11,27 +9,35 @@ import {
 	NbSpinnerModule,
 	NbSelectModule,
 	NbBadgeModule,
-	NbTooltipModule
+	NbTooltipModule,
+	NbPopoverModule,
+	NbToggleModule
 } from '@nebular/theme';
-import { FormsModule, ReactiveFormsModule } from '@angular/forms';
-import { TableComponentsModule } from '../../@shared/table-components/table-components.module';
-import { OrganizationTeamsService } from '../../@core/services/organization-teams.service';
+import { NgxPermissionsModule } from 'ngx-permissions';
+import { TranslatePipe } from '@ngx-translate/core';
+import { OrganizationTeamsService } from '@gauzy/ui-core/core';
+import {
+	SmartDataViewLayoutModule,
+	CardGridModule,
+	EmployeeMultiSelectModule,
+	FavoriteToggleModule,
+	ImageUploaderModule,
+	ProjectSelectModule,
+	SharedModule,
+	TableComponentsModule,
+	TagsColorInputModule,
+	RecordViewModule
+} from '@gauzy/ui-core/shared';
 import { TeamsRoutingModule } from './teams-routing.module';
 import { TeamsComponent } from './teams.component';
 import { TeamsMutationComponent } from './teams-mutation/teams-mutation.component';
-import { TagsColorInputModule } from '../../@shared/tags/tags-color-input/tags-color-input.module';
-import { CardGridModule } from '../../@shared/card-grid/card-grid.module';
-import { Ng2SmartTableModule } from 'ng2-smart-table';
-import { TranslateModule } from '../../@shared/translate/translate.module';
-import { HeaderTitleModule } from '../../@shared/components/header-title/header-title.module';
-import { EmployeeMultiSelectModule } from '../../@shared/employee/employee-multi-select/employee-multi-select.module';
+import { ViewTeamComponent } from './view-team/view-team.component';
+import { TaskViewHeaderComponent } from '../tasks/components/task-view/task-view-header.component';
+import { EmployeeHoursChartComponent } from '../employees/view-employee/employee-hours-chart/employee-hours-chart.component';
 
 @NgModule({
 	imports: [
-		ThemeModule,
 		NbCardModule,
-		FormsModule,
-		ReactiveFormsModule,
 		NbButtonModule,
 		NbInputModule,
 		NbIconModule,
@@ -43,15 +49,23 @@ import { EmployeeMultiSelectModule } from '../../@shared/employee/employee-multi
 		NbBadgeModule,
 		SharedModule,
 		CardGridModule,
+		FavoriteToggleModule,
 		NbTooltipModule,
-		Ng2SmartTableModule,
+		NbPopoverModule,
+		NbToggleModule,
 		TeamsRoutingModule,
 		NbDialogModule.forChild(),
-		TranslateModule,
-		HeaderTitleModule,
-		EmployeeMultiSelectModule
+		TranslatePipe,
+		NgxPermissionsModule.forChild(),
+		EmployeeMultiSelectModule,
+		ProjectSelectModule,
+		SmartDataViewLayoutModule,
+		ImageUploaderModule,
+		RecordViewModule,
+		EmployeeHoursChartComponent,
+		TaskViewHeaderComponent
 	],
-	declarations: [TeamsComponent, TeamsMutationComponent],
+	declarations: [TeamsComponent, TeamsMutationComponent, ViewTeamComponent],
 	providers: [OrganizationTeamsService]
 })
 export class TeamsModule {}

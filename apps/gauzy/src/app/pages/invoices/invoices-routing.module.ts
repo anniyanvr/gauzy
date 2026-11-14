@@ -1,5 +1,8 @@
 import { NgModule } from '@angular/core';
 import { Routes, RouterModule } from '@angular/router';
+import { PermissionsGuard } from '@gauzy/ui-core/core';
+import { PermissionsEnum } from '@gauzy/contracts';
+import { DateRangePickerResolver } from '@gauzy/ui-core/shared';
 import { InvoicesComponent } from './invoices.component';
 import { InvoiceAddComponent } from './invoice-add/invoice-add.component';
 import { InvoiceEditComponent } from './invoice-edit/invoice-edit.component';
@@ -11,115 +14,176 @@ import { EstimateEditComponent } from './invoice-estimates/estimate-edit/estimat
 import { EstimatesReceivedComponent } from './invoice-estimates/estimates-received/estimates-received.component';
 import { EstimateViewComponent } from './invoice-estimates/estimate-view/estimate-view.component';
 import { InvoicePaymentsComponent } from './invoice-payments/payments.component';
-import { NgxPermissionsGuard } from 'ngx-permissions';
-import { PermissionsEnum } from '@gauzy/contracts';
 
 export function redirectTo() {
 	return '/pages/dashboard';
 }
 
-const INVOICES_VIEW_PERMISSION = {
-	permissions: {
-		only: [PermissionsEnum.ALL_ORG_VIEW, PermissionsEnum.INVOICES_VIEW],
-		redirectTo
-	}
-};
-
-const INVOICES_EDIT_PERMISSION = {
-	permissions: {
-		only: [PermissionsEnum.ALL_ORG_VIEW, PermissionsEnum.INVOICES_EDIT],
-		redirectTo
-	}
-};
-
-const ESTIMATES_VIEW_PERMISSION = {
-	permissions: {
-		only: [PermissionsEnum.ALL_ORG_VIEW, PermissionsEnum.ESTIMATES_VIEW],
-		redirectTo
-	}
-};
-
-const ESTIMATES_EDIT_PERMISSION = {
-	permissions: {
-		only: [PermissionsEnum.ALL_ORG_VIEW, PermissionsEnum.ESTIMATES_EDIT],
-		redirectTo
-	}
-};
-
 const routes: Routes = [
 	{
 		path: '',
 		component: InvoicesComponent,
-		canActivate: [NgxPermissionsGuard],
-		data: INVOICES_VIEW_PERMISSION
+		canActivate: [PermissionsGuard],
+		data: {
+			permissions: {
+				only: [PermissionsEnum.ALL_ORG_VIEW, PermissionsEnum.INVOICES_VIEW],
+				redirectTo
+			}
+		},
+		resolve: {
+			dates: DateRangePickerResolver
+		}
 	},
 	{
 		path: 'add',
 		component: InvoiceAddComponent,
-		canActivate: [NgxPermissionsGuard],
-		data: INVOICES_EDIT_PERMISSION
+		canActivate: [PermissionsGuard],
+		data: {
+			permissions: {
+				only: [PermissionsEnum.ALL_ORG_VIEW, PermissionsEnum.INVOICES_EDIT],
+				redirectTo
+			}
+		}
 	},
 	{
 		path: 'edit/:id',
 		component: InvoiceEditComponent,
-		canActivate: [NgxPermissionsGuard],
-		data: INVOICES_EDIT_PERMISSION
+		canActivate: [PermissionsGuard],
+		data: {
+			permissions: {
+				only: [PermissionsEnum.ALL_ORG_VIEW, PermissionsEnum.INVOICES_EDIT],
+				redirectTo
+			}
+		}
 	},
 	{
 		path: 'received-invoices',
 		component: InvoicesReceivedComponent,
-		canActivate: [NgxPermissionsGuard],
-		data: INVOICES_VIEW_PERMISSION
+		canActivate: [PermissionsGuard],
+		data: {
+			permissions: {
+				only: [PermissionsEnum.ALL_ORG_VIEW, PermissionsEnum.INVOICES_VIEW],
+				redirectTo
+			}
+		},
+		resolve: {
+			dates: DateRangePickerResolver
+		}
 	},
 	{
 		path: 'view/:id',
 		component: InvoiceViewComponent,
-		canActivate: [NgxPermissionsGuard],
-		data: INVOICES_VIEW_PERMISSION
+		canActivate: [PermissionsGuard],
+		data: {
+			permissions: {
+				only: [PermissionsEnum.ALL_ORG_VIEW, PermissionsEnum.INVOICES_VIEW],
+				redirectTo
+			},
+			selectors: {
+				organization: false,
+				date: false,
+				employee: false,
+				project: false,
+				team: false
+			}
+		}
 	},
 	{
 		path: 'estimates',
-		canActivateChild: [NgxPermissionsGuard],
+		canActivateChild: [PermissionsGuard],
 		children: [
 			{
 				path: '',
 				component: EstimatesComponent,
-				data: ESTIMATES_VIEW_PERMISSION
+				data: {
+					permissions: {
+						only: [PermissionsEnum.ALL_ORG_VIEW, PermissionsEnum.ESTIMATES_VIEW],
+						redirectTo
+					}
+				},
+				resolve: {
+					dates: DateRangePickerResolver
+				}
 			},
 			{
 				path: 'add',
 				component: EstimateAddComponent,
-				data: ESTIMATES_EDIT_PERMISSION
+				data: {
+					permissions: {
+						only: [PermissionsEnum.ALL_ORG_VIEW, PermissionsEnum.ESTIMATES_EDIT],
+						redirectTo
+					},
+					datePicker: {
+						unitOfTime: 'month'
+					}
+				},
+				resolve: {
+					dates: DateRangePickerResolver
+				}
 			},
 			{
 				path: 'edit/:id',
 				component: EstimateEditComponent,
-				data: ESTIMATES_EDIT_PERMISSION
+				data: {
+					permissions: {
+						only: [PermissionsEnum.ALL_ORG_VIEW, PermissionsEnum.ESTIMATES_EDIT],
+						redirectTo
+					}
+				}
 			},
 			{
 				path: 'view/:id',
 				component: EstimateViewComponent,
-				data: ESTIMATES_VIEW_PERMISSION
+				data: {
+					permissions: {
+						only: [PermissionsEnum.ALL_ORG_VIEW, PermissionsEnum.ESTIMATES_VIEW],
+						redirectTo
+					},
+					selectors: {
+						organization: false,
+						date: false,
+						employee: false,
+						project: false,
+						team: false
+					}
+				}
 			}
 		]
 	},
 	{
 		path: 'received-estimates',
 		component: EstimatesReceivedComponent,
-		canActivate: [NgxPermissionsGuard],
-		data: ESTIMATES_VIEW_PERMISSION
+		canActivate: [PermissionsGuard],
+		data: {
+			permissions: {
+				only: [PermissionsEnum.ALL_ORG_VIEW, PermissionsEnum.ESTIMATES_VIEW],
+				redirectTo
+			}
+		},
+		resolve: {
+			dates: DateRangePickerResolver
+		}
 	},
 	{
 		path: 'payments/:id',
 		component: InvoicePaymentsComponent,
-		data: INVOICES_VIEW_PERMISSION
+		data: {
+			permissions: {
+				only: [PermissionsEnum.ALL_ORG_VIEW, PermissionsEnum.INVOICES_VIEW],
+				redirectTo
+			},
+			selectors: {
+				organization: false,
+				date: false,
+				employee: false,
+				project: false,
+				team: false
+			}
+		}
 	},
 	{
 		path: 'recurring',
-		loadChildren: () =>
-			import('./../work-in-progress/work-in-progress.module').then(
-				(m) => m.WorkInProgressModule
-			)
+		loadChildren: () => import('@gauzy/ui-core/shared').then((m) => m.WorkInProgressModule)
 	}
 ];
 

@@ -1,43 +1,63 @@
 import { ICandidateInterview, IOrganization } from '@gauzy/contracts';
-import { Component, OnInit, OnDestroy, AfterViewInit } from '@angular/core';
+import { Component, OnInit, OnDestroy, AfterViewInit, ChangeDetectionStrategy } from '@angular/core';
 import { TranslateService } from '@ngx-translate/core';
 import { filter, tap } from 'rxjs/operators';
 import { Subject, firstValueFrom } from 'rxjs';
 import { NbDialogService } from '@nebular/theme';
 import { UntilDestroy, untilDestroyed } from '@ngneat/until-destroy';
-import { TranslationBaseComponent } from '../../../@shared/language-base';
-import { CandidateInterviewMutationComponent } from '../../../@shared/candidate/candidate-interview-mutation/candidate-interview-mutation.component';
-import { CandidateInterviewService, Store, ToastrService } from '../../../@core/services';
+import { TranslationBaseComponent } from '@gauzy/ui-core/i18n';
+import { ActivatedRoute, IsActiveMatchOptions } from '@angular/router';
+import { Store } from '@gauzy/ui-core/core';
+import { CandidateInterviewService, ToastrService } from '@gauzy/ui-core/core';
+import { CandidateInterviewMutationComponent } from '@gauzy/ui-core/shared';
 
 @UntilDestroy({ checkProperties: true })
 @Component({
-	selector: 'ga-manage-candidate-interviews',
-	templateUrl: './manage-candidate-interviews.component.html',
-	styleUrls: ['./manage-candidate-interviews.component.scss']
+    selector: 'ga-manage-candidate-interviews',
+    templateUrl: './manage-candidate-interviews.component.html',
+    styleUrls: ['./manage-candidate-interviews.component.scss'],
+    changeDetection: ChangeDetectionStrategy.Eager,
+    standalone: false
 })
 export class ManageCandidateInterviewsComponent
 	extends TranslationBaseComponent
-	implements AfterViewInit, OnInit, OnDestroy {
-
+	implements AfterViewInit, OnInit, OnDestroy
+{
 	interviews$: Subject<any> = new Subject();
 	loading: boolean;
 	tabs: any[];
+
+	/**
+	 * Tab matching for the route tabset. Nebular defaults to `exact: true`, which also
+	 * compares query params, and the app appends `?organizationId=…` after load, so on a
+	 * fresh page no tab matched and the active tab lost its style until clicked.
+	 */
+	readonly tabLinkOptions: IsActiveMatchOptions = {
+		paths: 'exact',
+		queryParams: 'ignored',
+		matrixParams: 'ignored',
+		fragment: 'ignored'
+	};
 	interviews: ICandidateInterview[] = [];
 	organization: IOrganization;
+	currentTab: string;
+	TAB_ID = 'ga-ak-97';
 
 	constructor(
 		public readonly translateService: TranslateService,
 		private readonly dialogService: NbDialogService,
 		private readonly toastrService: ToastrService,
 		public readonly candidateInterviewService: CandidateInterviewService,
-		private readonly store: Store
+		private readonly store: Store,
+		private readonly route: ActivatedRoute
 	) {
 		super(translateService);
 	}
-	
+
 	ngOnInit() {
 		this._loadTabs();
 		this._applyTranslationOnTabs();
+		this._currentTabName();
 	}
 
 	ngAfterViewInit() {
@@ -50,7 +70,7 @@ export class ManageCandidateInterviewsComponent
 		this.store.selectedOrganization$
 			.pipe(
 				filter((organization: IOrganization) => !!organization),
-				tap((organization: IOrganization) => this.organization = organization),
+				tap((organization: IOrganization) => (this.organization = organization)),
 				tap(() => this.interviews$.next(true)),
 				untilDestroyed(this)
 			)
@@ -64,64 +84,61 @@ export class ManageCandidateInterviewsComponent
 	private _loadTabs() {
 		this.tabs = [
 			{
-				title: this.getTranslation(
-					'CANDIDATES_PAGE.MANAGE_INTERVIEWS.CALENDAR'
-				),
+				title: this.getTranslation('CANDIDATES_PAGE.MANAGE_INTERVIEWS.CALENDAR'),
 				responsive: true,
 				route: this.getRoute('calendar')
 			},
 			{
-				title: this.getTranslation(
-					'CANDIDATES_PAGE.MANAGE_INTERVIEWS.INTERVIEWS'
-				),
+				title: this.getTranslation('CANDIDATES_PAGE.MANAGE_INTERVIEWS.INTERVIEWS'),
 				responsive: true,
+				tabId: this.TAB_ID,
 				route: this.getRoute('interview_panel')
 			},
 			{
-				title: this.getTranslation(
-					'CANDIDATES_PAGE.MANAGE_INTERVIEWS.CRITERIONS'
-				),
+				title: this.getTranslation('CANDIDATES_PAGE.MANAGE_INTERVIEWS.CRITERIONS'),
 				responsive: true,
 				route: this.getRoute('criterion')
 			}
 		];
 	}
 
+	_currentTabName() {
+		const arr = this.route.children[0].snapshot.url;
+		const last = arr.at(-1);
+		this.currentTab = last.path === 'interview_panel' ? this.TAB_ID : null;
+	}
+
 	async addInterview() {
-		const dialog = this.dialogService.open(
-			CandidateInterviewMutationComponent,
-			{
-				context: {
-					headerTitle: this.getTranslation('CANDIDATES_PAGE.EDIT_CANDIDATE.INTERVIEW.SCHEDULE_INTERVIEW'),
-					isCalendar: true,
-					interviews: this.interviews
-				}
+		const dialog = this.dialogService.open(CandidateInterviewMutationComponent, {
+			context: {
+				headerTitle: this.getTranslation('CANDIDATES_PAGE.EDIT_CANDIDATE.INTERVIEW.SCHEDULE_INTERVIEW'),
+				isCalendar: true,
+				interviews: this.interviews
 			}
-		);
+		});
 		const data = await firstValueFrom(dialog.onClose);
 		if (data) {
-			this.toastrService.success( `TOASTR.MESSAGE.CANDIDATE_EDIT_CREATED`, {
+			this.toastrService.success(`TOASTR.MESSAGE.CANDIDATE_EDIT_CREATED`, {
 				name: data.title
 			});
 		}
 		this.interviews$.next(true);
 	}
-	
+
 	private async _getInterviews() {
 		const { tenantId } = this.store.user;
 		const { id: organizationId } = this.organization;
 
 		this.interviews = (
-			await this.candidateInterviewService.getAll([
-				'feedbacks',
-				'interviewers',
-				'technologies',
-				'personalQualities',
-				'candidate'
-			], {
-				organizationId,
-				tenantId
-			})
+			await firstValueFrom(
+				this.candidateInterviewService.getAll(
+					['feedbacks', 'interviewers', 'technologies', 'personalQualities', 'candidate'],
+					{
+						organizationId,
+						tenantId
+					}
+				)
+			)
 		).items;
 	}
 
@@ -134,5 +151,8 @@ export class ManageCandidateInterviewsComponent
 			.subscribe();
 	}
 
+	public onChangeTab(event: any) {
+		if (event) this.currentTab = event.tabId;
+	}
 	ngOnDestroy() {}
 }

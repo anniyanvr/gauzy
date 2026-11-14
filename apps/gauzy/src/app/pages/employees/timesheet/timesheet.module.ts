@@ -1,24 +1,24 @@
-// tslint:disable: nx-enforce-module-boundaries
 import { NgModule } from '@angular/core';
-import { CommonModule } from '@angular/common';
-import { TimesheetRoutingModule } from './timesheet-routing.module';
-import { SharedModule } from 'apps/gauzy/src/app/@shared/shared.module';
-import { NbRouteTabsetModule, NbCardModule } from '@nebular/theme';
-import { LayoutComponent } from './layout/layout.component';
-import { TranslateModule } from '@ngx-translate/core';
-import { HeaderTitleModule } from '../../../@shared/components/header-title/header-title.module';
+import { ROUTES, RouterModule } from '@angular/router';
+import { NbCardModule } from '@nebular/theme';
+import { TranslatePipe } from '@ngx-translate/core';
+import { PageRouteRegistryService } from '@gauzy/ui-core/core';
+import { DynamicTabsModule, SharedModule } from '@gauzy/ui-core/shared';
+import { TimesheetLayoutComponent } from './layout/layout.component';
+import { getTimesheetRoutes } from './timesheet.routes';
 
 @NgModule({
-	declarations: [LayoutComponent],
-	exports: [],
-	imports: [
-		CommonModule,
-		TimesheetRoutingModule,
-		SharedModule,
-		NbRouteTabsetModule,
-		NbCardModule,
-		TranslateModule,
-		HeaderTitleModule
+	imports: [RouterModule.forChild([]), NbCardModule, TranslatePipe, SharedModule, DynamicTabsModule],
+	exports: [RouterModule],
+	declarations: [TimesheetLayoutComponent],
+	providers: [
+		{
+			provide: ROUTES,
+			useFactory: (pageRouteRegistryService: PageRouteRegistryService) =>
+				getTimesheetRoutes(pageRouteRegistryService),
+			deps: [PageRouteRegistryService],
+			multi: true
+		}
 	]
 })
 export class TimesheetModule {}

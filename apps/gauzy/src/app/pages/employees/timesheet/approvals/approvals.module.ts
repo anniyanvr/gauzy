@@ -1,7 +1,5 @@
 // tslint:disable: nx-enforce-module-boundaries
 import { NgModule } from '@angular/core';
-import { CommonModule } from '@angular/common';
-import { FormsModule } from '@angular/forms';
 import {
 	NbCardModule,
 	NbButtonModule,
@@ -12,20 +10,18 @@ import {
 	NbDialogModule,
 	NbPopoverModule,
 	NbSpinnerModule,
-	NbCheckboxModule
+	NbCheckboxModule,
+	NbTooltipModule
 } from '@nebular/theme';
 import { MomentModule } from 'ngx-moment';
-import { SharedModule } from './../../../../@shared/shared.module';
-import { FiltersModule } from './../../../../@shared/timesheet/filters/filters.module';
-import { TranslateModule } from './../../../../@shared/translate/translate.module';
+import { SmartDataViewLayoutModule, SharedModule } from '@gauzy/ui-core/shared';
+import { TranslatePipe } from '@ngx-translate/core';
 import { ApprovalsRoutingModule } from './approvals-routing.module';
 import { ApprovalsComponent } from './approvals/approvals.component';
 
 @NgModule({
 	declarations: [ApprovalsComponent],
 	imports: [
-		CommonModule,
-		FormsModule,
 		NbButtonModule,
 		NbCardModule,
 		NbCheckboxModule,
@@ -36,11 +32,12 @@ import { ApprovalsComponent } from './approvals/approvals.component';
 		NbPopoverModule,
 		NbSelectModule,
 		NbSpinnerModule,
-		TranslateModule,
+		NbTooltipModule,
+		TranslatePipe,
 		MomentModule,
 		SharedModule,
-		FiltersModule,
-		ApprovalsRoutingModule
+		ApprovalsRoutingModule,
+		SmartDataViewLayoutModule
 	]
 })
 export class ApprovalsModule {}

@@ -1,13 +1,12 @@
-import { Component, Input } from '@angular/core';
-import { ViewCell } from 'ng2-smart-table';
+import { Component, Input, ChangeDetectionStrategy } from '@angular/core';
 
 @Component({
-	templateUrl: './request-approval-icon.html',
-	styleUrls: ['./request-approval-icon.scss']
+    templateUrl: './request-approval-icon.html',
+    styleUrls: ['./request-approval-icon.scss'],
+    changeDetection: ChangeDetectionStrategy.Eager,
+    standalone: false
 })
-export class RequestApprovalIcon implements ViewCell {
-	@Input()
-	rowData: any;
-
-	value: string | number;
+export class RequestApprovalIcon {
+	@Input() rowData: any;
+	@Input() value: string | number;
 }

@@ -1,44 +1,27 @@
 // tslint:disable: nx-enforce-module-boundaries
 import { NgModule } from '@angular/core';
-import { CommonModule } from '@angular/common';
-import { FormsModule } from '@angular/forms';
+import { NbButtonModule, NbCardModule, NbDialogModule, NbIconModule, NbTooltipModule } from '@nebular/theme';
 import { FullCalendarModule } from '@fullcalendar/angular';
-import { TranslateModule } from '@ngx-translate/core';
+import { TranslatePipe } from '@ngx-translate/core';
 import { NgxPermissionsModule } from 'ngx-permissions';
+import { SharedModule, TimerPickerModule } from '@gauzy/ui-core/shared';
 import { AvailabilitySlotsRouteModule } from './availability-slots.routing.module';
 import { AvailabilitySlotsComponent } from './availability-slots.component';
-import { ShareModule } from './../../../../share/share.module';
-import { EmployeeSelectorsModule } from './../../../../@theme/components/header/selectors/employee/employee.module';
-import {
-	NbDialogModule,
-	NbCardModule,
-	NbButtonModule,
-	NbIconModule,
-	NbTooltipModule
-} from '@nebular/theme';
-import { SharedModule } from './../../../../@shared/shared.module';
-import { ThemeModule } from './../../../../@theme/theme.module';
-import { TimerPickerModule } from './../../../../@shared/timer-picker/timer-picker.module';
 
 @NgModule({
 	declarations: [AvailabilitySlotsComponent],
 	imports: [
-		CommonModule,
-		AvailabilitySlotsRouteModule,
-		ShareModule,
+		NbButtonModule,
+		NbCardModule,
+		NbDialogModule,
 		NbIconModule,
 		NbTooltipModule,
-		ThemeModule,
-		TranslateModule,
 		FullCalendarModule,
-		EmployeeSelectorsModule,
-		NbDialogModule,
+		TranslatePipe,
+		NgxPermissionsModule.forChild(),
+		AvailabilitySlotsRouteModule,
 		SharedModule,
-		NbCardModule,
-		NbButtonModule,
-		TimerPickerModule,
-		FormsModule,
-		NgxPermissionsModule.forChild()
+		TimerPickerModule
 	]
 })
 export class AvailabilitySlotsModule {}

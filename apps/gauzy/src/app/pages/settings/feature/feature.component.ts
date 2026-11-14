@@ -1,39 +1,43 @@
-import { Component, OnInit } from '@angular/core';
+import { Component, OnInit, ChangeDetectionStrategy } from '@angular/core';
 import { IOrganization } from '@gauzy/contracts';
+import { NbRouteTab } from '@nebular/theme';
 import { UntilDestroy, untilDestroyed } from '@ngneat/until-destroy';
 import { TranslateService } from '@ngx-translate/core';
-import { TranslationBaseComponent } from '../../../@shared/language-base/translation-base.component';
+import { tap } from 'rxjs/operators';
+import { TranslationBaseComponent } from '@gauzy/ui-core/i18n';
 
 @UntilDestroy({ checkProperties: true })
 @Component({
-	selector: 'ngx-feature',
-	templateUrl: './feature.component.html',
-	styleUrls: ['./feature.component.scss']
+    selector: 'ngx-feature',
+    templateUrl: './feature.component.html',
+    styleUrls: ['./feature.component.scss'],
+    changeDetection: ChangeDetectionStrategy.Eager,
+    standalone: false
 })
-export class FeatureComponent
-	extends TranslationBaseComponent
-	implements OnInit {
-	tabs: any[];
-	organization: IOrganization;
+export class FeatureComponent extends TranslationBaseComponent implements OnInit {
+	public tabs: NbRouteTab[] = [];
+	public organization: IOrganization;
 
-	constructor(readonly translateService: TranslateService) {
+	constructor(public readonly translateService: TranslateService) {
 		super(translateService);
 	}
 
 	ngOnInit(): void {
-		this.loadTabs();
+		this._loadTabs();
 		this._applyTranslationOnTabs();
 	}
 
-	loadTabs() {
+	private _loadTabs() {
 		this.tabs = [
 			{
 				title: this.getTranslation('MENU.TENANT'),
-				route: this.getRoute('tenant')
+				route: this.getRoute('tenant'),
+				queryParamsHandling: 'merge'
 			},
 			{
 				title: this.getTranslation('MENU.ORGANIZATION'),
-				route: this.getRoute('organization')
+				route: this.getRoute('organization'),
+				queryParamsHandling: 'merge'
 			}
 		];
 	}
@@ -44,9 +48,10 @@ export class FeatureComponent
 
 	private _applyTranslationOnTabs() {
 		this.translateService.onLangChange
-			.pipe(untilDestroyed(this))
-			.subscribe(() => {
-				this.loadTabs();
-			});
+			.pipe(
+				tap(() => this._loadTabs()),
+				untilDestroyed(this)
+			)
+			.subscribe();
 	}
 }

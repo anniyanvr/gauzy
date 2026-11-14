@@ -1,29 +1,34 @@
-import { Component, OnInit, ViewChild } from '@angular/core';
-import { TranslationBaseComponent } from '../../../../../@shared/language-base/translation-base.component';
-import { IProductTranslated, IOrganization, LanguagesEnum } from '@gauzy/contracts';
-import { UntilDestroy, untilDestroyed } from '@ngneat/until-destroy';
-import { Store, ProductService, API_PREFIX } from 'apps/gauzy/src/app/@core';
-import { TranslateService } from '@ngx-translate/core';
-import { Ng2SmartTableComponent, ServerDataSource } from 'ng2-smart-table';
-import { ImageRowComponent } from '../../table-components/image-row.component';
-import { NbDialogRef } from '@nebular/theme';
-import { SelectedRowComponent } from '../../table-components/selected-row.component';
+import { Component, OnInit, ChangeDetectionStrategy } from '@angular/core';
 import { HttpClient } from '@angular/common/http';
+import { IOrganization, IProductTranslated, LanguagesEnum } from '@gauzy/contracts';
+import { UntilDestroy, untilDestroyed } from '@ngneat/until-destroy';
+import { API_PREFIX } from '@gauzy/ui-core/common';
+import { TranslateService } from '@ngx-translate/core';
+import { Angular2SmartTableComponent, Cell, ServerDataSource } from 'angular2-smart-table';
+import { distinctUntilChange } from '@gauzy/ui-core/common';
+import { ImageRowComponent } from '../../inventory-table-components/image-row.component';
+import { NbDialogRef } from '@nebular/theme';
+import { SelectedRowComponent } from '../../inventory-table-components/selected-row.component';
+import { tap } from 'rxjs/operators';
+import { debounceTime } from 'rxjs';
+import { IPaginationBase, PaginationFilterBaseComponent } from '@gauzy/ui-core/shared';
+import { Store, ToastrService } from '@gauzy/ui-core/core';
 
 export interface SelectedRowEvent {
-	data: IProductTranslated,
-	isSelected: boolean,
-	selected: IProductTranslated[]
+	data: IProductTranslated;
+	isSelected: boolean;
+	selected: IProductTranslated[];
 }
 
 @UntilDestroy()
 @Component({
-	selector: 'ngx-select-product',
-	templateUrl: './select-product-form.component.html',
-	styleUrls: ['./select-product-form.component.scss']
+    selector: 'ngx-select-product',
+    templateUrl: './select-product-form.component.html',
+    styleUrls: ['./select-product-form.component.scss'],
+    changeDetection: ChangeDetectionStrategy.Eager,
+    standalone: false
 })
-export class SelectProductComponent
-	extends TranslationBaseComponent implements OnInit {
+export class SelectProductComponent extends PaginationFilterBaseComponent implements OnInit {
 	products: IProductTranslated[] = [];
 	settingsSmartTable: object;
 	organization: IOrganization;
@@ -31,26 +36,18 @@ export class SelectProductComponent
 	smartTableSource: ServerDataSource;
 	selectedLanguage: string = LanguagesEnum.ENGLISH;
 
-
 	selectedRows: any[] = [];
 	tableData: any[] = [];
 
-	productsTable: Ng2SmartTableComponent;
-
-	@ViewChild('productsTable') set content(content: Ng2SmartTableComponent) {
-		if (content) {
-			this.productsTable = content;
-		}
-	}
+	productsTable: Angular2SmartTableComponent;
 	PRODUCTS_URL = `${API_PREFIX}/products/local/${this.selectedLanguage}?`;
-
 
 	constructor(
 		public dialogRef: NbDialogRef<any>,
 		private store: Store,
 		readonly translateService: TranslateService,
-		private productService: ProductService,
-		private http: HttpClient
+		private http: HttpClient,
+		private readonly toastrService: ToastrService
 	) {
 		super(translateService);
 	}
@@ -60,15 +57,22 @@ export class SelectProductComponent
 		this.loadSmartTable();
 		this.selectedLanguage = this.store.preferredLanguage;
 
-
 		this.store.selectedOrganization$
-			.pipe(untilDestroyed(this))
+			.pipe(debounceTime(100), distinctUntilChange(), untilDestroyed(this))
 			.subscribe((organization: IOrganization) => {
 				if (organization) {
 					this.organization = organization;
 					this.loadSettings();
 				}
 			});
+		this.pagination$
+			.pipe(
+				debounceTime(100),
+				distinctUntilChange(),
+				tap(() => this.loadSettings()),
+				untilDestroyed(this)
+			)
+			.subscribe();
 	}
 
 	translateProp(elem, prop) {
@@ -76,52 +80,73 @@ export class SelectProductComponent
 
 		if (!translations) return '-';
 
-		return translations.find(
-			(tr) => tr.languageCode == this.store.preferredLanguage
-		)[prop];
+		return translations.find((tr) => tr.languageCode == this.store.preferredLanguage)[prop];
 	}
 
 	async loadSettings() {
 		this.loading = true;
-		const { tenantId } = this.store.user;
-		const { id: organizationId } = this.organization || { id: '' };
+		try {
+			const { tenantId } = this.store.user;
+			const { id: organizationId } = this.organization || { id: '' };
 
-		const data = "data=" + JSON.stringify({
-			relations: ['productType', 'productCategory', 'featuredImage', 'variants'],
-			findInput: { organizationId, tenantId },
-		});
-
-
-		this.smartTableSource = new ServerDataSource(this.http, {
-			endPoint: this.PRODUCTS_URL + data,
-			dataKey: 'items',
-			totalKey: 'total',
-			perPage: 'per_page',
-			pagerPageKey: 'page'
-		});
-
-		this.loading = false;
+			const data =
+				'data=' +
+				JSON.stringify({
+					relations: ['productType', 'productCategory', 'featuredImage', 'variants'],
+					findInput: { organizationId, tenantId }
+				});
+			const { activePage, itemsPerPage } = this.getPagination();
+			this.smartTableSource = new ServerDataSource(this.http, {
+				endPoint: this.PRODUCTS_URL + data,
+				dataKey: 'items',
+				totalKey: 'total',
+				perPage: 'per_page',
+				pagerPageKey: 'page'
+			});
+			this.smartTableSource.setPaging(activePage, itemsPerPage, false);
+			await this.smartTableSource.getElements();
+			this.setPagination({ ...this.getPagination(), totalItems: this.smartTableSource.count() });
+		} catch (error) {
+			console.error('Error while retrieving products', error);
+			this.toastrService.danger(error);
+		} finally {
+			this.loading = false;
+		}
 	}
 
 	async loadSmartTable() {
+		const pagination: IPaginationBase = this.getPagination();
 		this.settingsSmartTable = {
-			pager: {
-				perPage: 5
-			},
 			actions: false,
+			selectedRowIndex: -1,
+			pager: {
+				display: false,
+				perPage: pagination ? pagination.itemsPerPage : this.minItemPerPage
+			},
 			columns: {
 				selected: {
 					title: this.getTranslation('INVENTORY_PAGE.SELECTED'),
 					type: 'custom',
-					valuePrepareFunction: (cell, row) => {
-						row.selected = !!this.selectedRows.find(p => p.id == row.id);
-					}, 
-					renderComponent: SelectedRowComponent
+					isFilterable: false,
+					valuePrepareFunction: (_: any, cell: Cell) => {
+						// ToDo - We need to uncomment below and fix issue.
+						// row.selected = !!this.selectedRows.find(p => p.id == row.id);
+					},
+					renderComponent: SelectedRowComponent,
+					componentInitFunction: (instance: SelectedRowComponent, cell: Cell) => {
+						instance.rowData = cell.getRow().getData();
+						instance.value = cell.getValue();
+					}
 				},
 				image: {
 					title: this.getTranslation('INVENTORY_PAGE.IMAGE'),
 					type: 'custom',
-					renderComponent: ImageRowComponent
+					isFilterable: false,
+					renderComponent: ImageRowComponent,
+					componentInitFunction: (instance: ImageRowComponent, cell: Cell) => {
+						instance.rowData = cell.getRow().getData();
+						instance.value = cell.getValue();
+					}
 				},
 				name: {
 					title: this.getTranslation('INVENTORY_PAGE.NAME'),
@@ -140,8 +165,8 @@ export class SelectProductComponent
 	}
 
 	onUserRowSelect(event: SelectedRowEvent) {
-		if(event.isSelected && !this.selectedRows.find(p => p.id == event.data.id)) {
-			this.selectedRows.push(event.data)
+		if (event.isSelected && !this.selectedRows.find((p) => p.id == event.data.id)) {
+			this.selectedRows.push(event.data);
 		}
 	}
 }

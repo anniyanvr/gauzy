@@ -1,18 +1,18 @@
-import { Component, OnInit } from '@angular/core';
-import { ElectronService } from 'ngx-electron';
+import { Component, OnInit, ChangeDetectionStrategy } from '@angular/core';
+import { RouterOutlet } from '@angular/router';
+import { LanguageElectronService } from '@gauzy/desktop-ui-lib';
 
 @Component({
 	selector: 'gauzy-root',
-	template: '<router-outlet></router-outlet>'
+	template: '<router-outlet></router-outlet>',
+	changeDetection: ChangeDetectionStrategy.Eager,
+	imports: [RouterOutlet]
 })
 export class AppComponent implements OnInit {
-	constructor(
-		private electronService: ElectronService
-	) {
-		
-	}
+	constructor(private readonly languageElectronService: LanguageElectronService) {}
 
 	ngOnInit(): void {
+		this.languageElectronService.initialize<void>();
 		console.log('on init');
 	}
 }

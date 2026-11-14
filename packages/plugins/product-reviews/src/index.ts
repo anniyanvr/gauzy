@@ -1,3 +1,6 @@
-export * from './reviews-plugin';
-export * from './entities';
-export * from './graphql/schema-extensions';
+/**
+ * Public API Surface of @gauzy/plugin-product-reviews
+ */
+export * from './lib/product-reviews.plugin';
+export * from './lib/entities';
+export * from './lib/graphql/schema-extensions';

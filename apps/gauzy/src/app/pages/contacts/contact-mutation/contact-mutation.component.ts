@@ -1,97 +1,91 @@
-import {
-	Component,
-	EventEmitter,
-	Input,
-	OnInit,
-	Output,
-	ViewChild
-} from '@angular/core';
-import { FormBuilder, FormGroup, Validators } from '@angular/forms';
+import { Component, EventEmitter, inject, Input, OnInit, Output, ViewChild, ChangeDetectionStrategy } from '@angular/core';
+import { UntypedFormBuilder, UntypedFormGroup, Validators } from '@angular/forms';
 import {
 	IEmployee,
 	IOrganizationProject,
 	ITag,
 	ContactType,
 	IOrganization,
-	OrganizationContactBudgetTypeEnum
+	OrganizationContactBudgetTypeEnum,
+	IOrganizationContact,
+	IImageAsset,
+	IOrganizationProjectEmployee
 } from '@gauzy/contracts';
-import { NbStepperComponent } from '@nebular/theme';
-import { debounceTime, filter, first, tap } from 'rxjs/operators';
+import { NbStepChangeEvent, NbStepperComponent } from '@nebular/theme';
+import { firstValueFrom } from 'rxjs';
+import { debounceTime, filter, tap } from 'rxjs/operators';
 import { TranslateService } from '@ngx-translate/core';
 import { LatLng } from 'leaflet';
 import { UntilDestroy, untilDestroyed } from '@ngneat/until-destroy';
-import { TranslationBaseComponent } from '../../../@shared/language-base/translation-base.component';
-import { LocationFormComponent } from '../../../@shared/forms/location';
-import { FilterArrayPipe } from '../../../@shared/pipes/filter-array.pipe';
-import { LeafletMapComponent } from '../../../@shared/forms/maps/leaflet/leaflet.component';
-import { EmployeesService, ErrorHandlingService, OrganizationProjectsService, Store, ToastrService } from '../../../@core/services';
-import { DUMMY_PROFILE_IMAGE } from '../../../@core/constants';
+import { distinctUntilChange } from '@gauzy/ui-core/common';
+import { TranslationBaseComponent } from '@gauzy/ui-core/i18n';
+import { FilterArrayPipe, FormHelpers, LeafletMapComponent, LocationFormComponent } from '@gauzy/ui-core/shared';
+import {
+	EmployeesService,
+	ErrorHandlingService,
+	OrganizationProjectsService,
+	Store,
+	ToastrService,
+	projectsLinkableToNewContact
+} from '@gauzy/ui-core/core';
 
 @UntilDestroy({ checkProperties: true })
 @Component({
-	selector: 'ga-contact-mutation',
-	templateUrl: './contact-mutation.component.html',
-	styleUrls: ['./contact-mutation.component.scss']
+    selector: 'ga-contact-mutation',
+    templateUrl: './contact-mutation.component.html',
+    styleUrls: ['./contact-mutation.component.scss'],
+    changeDetection: ChangeDetectionStrategy.Eager,
+    standalone: false
 })
-export class ContactMutationComponent
-	extends TranslationBaseComponent
-	implements OnInit {
+export class ContactMutationComponent extends TranslationBaseComponent implements OnInit {
+	FormHelpers: typeof FormHelpers = FormHelpers;
 
-	/*
-	* Getter & Setter for organizationContact element
-	*/
-	private _organizationContact: any;
-	get organizationContact(): any {
+	/**
+	 * Getter and Setter for organizationContact.
+	 * When a new organizationContact is set, synchronizes organization contact members.
+	 */
+	private _organizationContact: IOrganizationContact;
+	get organizationContact(): IOrganizationContact {
 		return this._organizationContact;
 	}
-	@Input() set organizationContact(value: any) {
+	@Input() set organizationContact(value: IOrganizationContact) {
 		this._organizationContact = value;
+		if (value) {
+			this.syncOrganizationContactMembers();
+		}
 	}
 
 	/*
-	* Getter & Setter for projectsWithoutOrganizationContact element
-	*/
-	private _projectsWithoutOrganizationContact: IOrganizationProject[];
-	get projectsWithoutOrganizationContact(): IOrganizationProject[] {
-		return this._projectsWithoutOrganizationContact;
+	 * Getter & Setter for projectsWithoutOrganizationContacts element
+	 */
+	private _projectsWithoutOrganizationContacts: IOrganizationProject[];
+	get projectsWithoutOrganizationContacts(): IOrganizationProject[] {
+		return this._projectsWithoutOrganizationContacts;
 	}
-	@Input() set projectsWithoutOrganizationContact(value: IOrganizationProject[]) {
-		this._projectsWithoutOrganizationContact = value;
-	}
-
-	/*
-	* Getter & Setter for isGridEdit element
-	*/
-	private _isGridEdit: boolean;
-	get isGridEdit(): boolean {
-		return this._isGridEdit;
-	}
-	@Input() set isGridEdit(value: boolean) {
-		this._isGridEdit = value;
+	@Input() set projectsWithoutOrganizationContacts(value: IOrganizationProject[]) {
+		this._projectsWithoutOrganizationContacts = value;
 	}
 
 	/*
-	* Getter & Setter for contactType element
-	*/
-	private _contactType: string;
-	get contactType(): string {
+	 * Getter & Setter for contactType element
+	 */
+	private _contactType: ContactType;
+	get contactType(): ContactType {
 		return this._contactType;
 	}
-	@Input() set contactType(value: string) {
+	@Input() set contactType(value: ContactType) {
 		this._contactType = value;
 	}
 
 	/*
-	* Output event emitter for cancel process event
-	*/
-	@Output()
-	canceled = new EventEmitter();
+	 * Output event emitter for cancel process event
+	 */
+	@Output() canceled = new EventEmitter();
 
 	/*
-	* Output event emitter for add/edit organization contact event 
-	*/
-	@Output()
-	addOrEditOrganizationContact = new EventEmitter();
+	 * Output event emitter for add/edit organization contact event
+	 */
+	@Output() addOrEditOrganizationContact = new EventEmitter();
 
 	// leaflet map template
 	@ViewChild('leafletTemplate', { static: false }) leafletTemplate: LeafletMapComponent;
@@ -102,49 +96,50 @@ export class ContactMutationComponent
 	// form stepper
 	@ViewChild('stepper') stepper: NbStepperComponent;
 
-
-	members: string[];
-	selectedMembers: IEmployee[];
+	members: string[] = [];
+	selectedMembers: IEmployee[] = [];
 	selectedEmployeeIds: string[];
-	contactTypes: ContactType[] = Object.values(ContactType);
+	contactTypes: string[] = Object.values(ContactType);
 	hoverState: boolean;
 	country: string;
 	projects: IOrganizationProject[] = [];
 	employees: IEmployee[] = [];
 	organization: IOrganization;
-
 	organizationContactBudgetTypeEnum = OrganizationContactBudgetTypeEnum;
 
+	private readonly employeesService = inject(EmployeesService);
+
 	/**
-	* Main Content Stepper Form Group 
-	*/
-	public contMainForm: FormGroup = ContactMutationComponent.buildMainForm(this.fb);
-	static buildMainForm(formBuilder: FormBuilder): FormGroup {
+	 * Main Content Stepper Form Group
+	 */
+	public contMainForm: UntypedFormGroup = ContactMutationComponent.buildMainForm(this.fb);
+	static buildMainForm(formBuilder: UntypedFormBuilder): UntypedFormGroup {
 		const form = formBuilder.group({
-			imageUrl: [],
+			imageId: [null],
+			imageUrl: [null],
 			tags: [],
 			name: ['', [Validators.required]],
-			primaryEmail: ['', [Validators.email]],
-			primaryPhone: [],
+			primaryEmail: [null, [Validators.email]],
+			primaryPhone: [null],
 			projects: [],
 			contactType: [],
-			fax: [],
-			website: [],
-			fiscalInformation: []
+			fax: [null],
+			website: [null],
+			fiscalInformation: [null]
 		});
 		return form;
 	}
 
 	/**
-	* Location Stepper Form Group 
-	*/
-	readonly locationForm: FormGroup = LocationFormComponent.buildForm(this.fb);
+	 * Location Stepper Form Group
+	 */
+	readonly locationForm: UntypedFormGroup = LocationFormComponent.buildForm(this.fb);
 
 	/**
-	* Budget Stepper Form Group 
-	*/
-	readonly budgetForm: FormGroup = ContactMutationComponent.buildBudgetForm(this.fb);
-	static buildBudgetForm(formBuilder: FormBuilder): FormGroup {
+	 * Budget Stepper Form Group
+	 */
+	readonly budgetForm: UntypedFormGroup = ContactMutationComponent.buildBudgetForm(this.fb);
+	static buildBudgetForm(formBuilder: UntypedFormBuilder): UntypedFormGroup {
 		const form = formBuilder.group({
 			budget: [],
 			budgetType: []
@@ -153,28 +148,27 @@ export class ContactMutationComponent
 	}
 
 	/*
-	* Getter form control value for budgetType
-	*/
-	get budgetType (): string {
+	 * Getter form control value for budgetType
+	 */
+	get budgetType(): string {
 		return this.budgetForm.get('budgetType').value;
 	}
 
 	/*
-	* Getter form control value for budgetType
-	*/
-	get tags (): ITag[] {
+	 * Getter form control value for budgetType
+	 */
+	get tags(): ITag[] {
 		return this.contMainForm.get('tags').value;
 	}
 
 	constructor(
-		private readonly fb: FormBuilder,
+		private readonly fb: UntypedFormBuilder,
 		private readonly store: Store,
 		private readonly organizationProjectsService: OrganizationProjectsService,
 		private readonly toastrService: ToastrService,
 		public readonly translateService: TranslateService,
 		private readonly errorHandler: ErrorHandlingService,
-		private readonly filterArrayPipe: FilterArrayPipe,
-		private readonly employeesService: EmployeesService
+		private readonly filterArrayPipe: FilterArrayPipe
 	) {
 		super(translateService);
 	}
@@ -184,109 +178,125 @@ export class ContactMutationComponent
 		storeOrganization$
 			.pipe(
 				debounceTime(200),
+				distinctUntilChange(),
 				filter((organization: IOrganization) => !!organization),
-				tap((organization: IOrganization) => this.organization = organization),
+				tap((organization: IOrganization) => (this.organization = organization)),
 				tap(() => this._patchForm()),
 				tap(() => this._getProjects()),
 				tap(() => this._getEmployees()),
 				untilDestroyed(this)
 			)
 			.subscribe();
-		if (this.organizationContact) {
-			this.selectedEmployeeIds = this.organizationContact.members.map(
-				(member) => member.id
+	}
+
+	/**
+	 * Sync organization contact members.
+	 * Updates `selectedEmployeeIds` based on the members of the organization contact.
+	 */
+	syncOrganizationContactMembers() {
+		this.selectedEmployeeIds = this.organizationContact?.members?.map((member: IEmployee) => member.id) ?? [];
+	}
+
+	/**
+	 * Load employees from multiple selected employees
+	 *
+	 * @param employees
+	 */
+	public onLoadEmployees(employees: IEmployee[]) {
+		this.employees = employees;
+		this.selectedMembers = this.filterArrayPipe.transform(this.employees, this.selectedEmployeeIds);
+	}
+
+	/**
+	 * Loads the organization's employees for the members step.
+	 *
+	 * The step used to take them from `ga-employee-multi-select`, which fetched
+	 * them itself and handed them back through `onLoadEmployees`. The step now
+	 * uses a searchable `ng-select`, so it loads the list on its own.
+	 */
+	private async _getEmployees() {
+		if (!this.organization) {
+			return;
+		}
+		try {
+			const { tenantId } = this.store.user;
+			const organizationId = this.organization.id;
+			const { items } = await firstValueFrom(
+				this.employeesService.getAll(['user'], { organizationId, tenantId })
 			);
+			// The organization may have changed while this request was pending.
+			if (this.organization?.id !== organizationId) {
+				return;
+			}
+			this.onLoadEmployees(items ?? []);
+		} catch (error) {
+			this.errorHandler.handleError(error);
 		}
 	}
 
-	private async _getEmployees() {
-		const { tenantId } = this.store.user;
-		const { id: organizationId } = this.organization;
-		const { items } = await this.employeesService
-			.getAll(['user'], {
+	/**
+	 * Matches an employee in the members picker by name or email.
+	 */
+	searchEmployee = (term: string, employee: IEmployee): boolean => {
+		const needle = term.trim().toLowerCase();
+		return [employee.user?.name, employee.user?.email].some((value) => value?.toLowerCase().includes(needle));
+	};
+
+	/**
+	 * Fetches all projects associated with the current organization and user tenant, and updates the 'projects' property.
+	 */
+	private async _getProjects() {
+		try {
+			const { tenantId } = this.store.user;
+			const { id: organizationId } = this.organization;
+
+			const { items } = await this.organizationProjectsService.getAll([], {
 				organizationId,
 				tenantId
-			})
-			.pipe(first())
-			.toPromise();
-		this.employees = items;
-		if (organizationId) {
-			this.selectedMembers = this.filterArrayPipe.transform(
-				this.employees,
-				this.selectedEmployeeIds
-			);
-		}
-	}
+			});
 
-	private async _getProjects() {
-		const { tenantId } = this.store.user;
-		const { id: organizationId } = this.organization;
-		const { items } = await this.organizationProjectsService.getAll([], {
-			organizationId,
-			tenantId
-		});
-		this.projects = items;
+			// A new contact created without ORG_CONTACT_EDIT links only projects that have no contact yet.
+			this.projects = this.organizationContact?.id ? items : projectsLinkableToNewContact(this.store, items);
+		} catch (error) {
+			console.error('Error fetching projects:', error);
+		}
 	}
 
 	private _patchForm() {
 		if (!this.organization) {
 			return;
 		}
+		const orgContact = this.organizationContact;
+		//
 		this.contMainForm.patchValue({
-			imageUrl: this.organizationContact
-						? this.organizationContact.imageUrl
-						: DUMMY_PROFILE_IMAGE,
-			tags: this.organizationContact
-					? (this.organizationContact.tags)
-					: [],
-			name: this.organizationContact
-						? this.isGridEdit
-							? this.organizationContact.contact_name
-							: this.organizationContact.name
-						: '',
-			primaryEmail: this.organizationContact
-								? this.organizationContact.primaryEmail
-								: '',
-			primaryPhone: this.organizationContact
-								? this.organizationContact.primaryPhone
-								: '',
-			projects: this.organizationContact
-							? this.organizationContact.projects || []
-							: [],
-			contactType: this.organizationContact
-							? this.organizationContact.contactType
-							: this.contactType,
-			fax: this.organizationContact
-					? this.organizationContact.contact
-						? this.organizationContact.contact.fax
-						: ''
-					: '',
-			website: this.organizationContact
-						? this.organizationContact.contact
-							? this.organizationContact.contact.website
-							: ''
-						: '',
-			fiscalInformation: this.organizationContact
-									? this.organizationContact.contact
-										? this.organizationContact.contact.fiscalInformation
-										: ''
-									: ''
+			imageId: orgContact?.imageId ?? null,
+			imageUrl: orgContact?.imageUrl ?? null,
+			tags: orgContact?.tags ?? [],
+			name: orgContact?.name ?? null,
+			primaryEmail: orgContact?.primaryEmail ?? null,
+			primaryPhone: orgContact?.primaryPhone ?? null,
+			projects: orgContact?.projects ?? [],
+			contactType: orgContact?.contactType ?? this.contactType,
+			fax: orgContact?.contact?.fax ?? null,
+			website: orgContact?.contact?.website ?? null,
+			fiscalInformation: orgContact?.contact?.fiscalInformation ?? null
 		});
 		this.contMainForm.updateValueAndValidity();
 
+		//
 		this.budgetForm.patchValue({
-			budgetType: this.organizationContact
-							? this.organizationContact.budgetType
-							: OrganizationContactBudgetTypeEnum.HOURS,
-			budget: this.organizationContact 
-						? this.organizationContact.budget
-						: null
+			budgetType: orgContact?.budgetType ?? OrganizationContactBudgetTypeEnum.HOURS,
+			budget: orgContact?.budget ?? null
 		});
 		this.budgetForm.updateValueAndValidity();
 
 		this._setLocationForm();
 	}
 
+	/**
+	 *
+	 * @returns
+	 */
 	private _setLocationForm() {
 		if (!this.organizationContact) {
 			return;
@@ -311,25 +321,42 @@ export class ContactMutationComponent
 	}
 
 	handleImageUploadError(error) {
-		this.toastrService.danger(error);
+		this.errorHandler.handleError(error);
+	}
+	/**
+	 * Upload employee image/avatar
+	 *
+	 * @param image
+	 */
+	async updateImageAsset(image: IImageAsset) {
+		if (image) {
+			this.contMainForm.get('imageId').setValue(image.id);
+			this.contMainForm.get('imageUrl').setValue(image.fullUrl);
+		}
+		this.contMainForm.updateValueAndValidity();
 	}
 
-	addNewProject = (name: string): Promise<IOrganizationProject> => {
+	/**
+	 * Add a new project.
+	 *
+	 * @param name Name of the project
+	 * @returns A Promise resolving to the newly created IOrganizationProject
+	 */
+	addNewProject = async (name: string): Promise<IOrganizationProject> => {
 		try {
 			const { tenantId } = this.store.user;
 			const { id: organizationId } = this.organization;
-			return this.organizationProjectsService
-				.create({
-					name,
-					organizationId,
-					tenantId
-				})
-				.then((project) => {
-					this.toastrService.success('NOTES.ORGANIZATIONS.EDIT_ORGANIZATIONS_PROJECTS.ADD_PROJECT', {
-						name 
-					});
-					return project;
-				});
+
+			const project = await this.organizationProjectsService.create({
+				name,
+				organizationId,
+				tenantId,
+				members: []
+			});
+
+			this.toastrService.success('NOTES.ORGANIZATIONS.EDIT_ORGANIZATIONS_PROJECTS.ADD_PROJECT', { name });
+
+			return project;
 		} catch (error) {
 			this.errorHandler.handleError(error);
 		}
@@ -337,93 +364,196 @@ export class ContactMutationComponent
 
 	onMembersSelected(members: string[]) {
 		this.members = members;
-		this.selectedMembers = this.filterArrayPipe.transform(
-			this.employees,
-			this.members
-		);
+		// The picker binds to `selectedEmployeeIds`; keep it in step so clearing
+		// the last member does not fall back to the contact's original members.
+		this.selectedEmployeeIds = members;
+		this.selectedMembers = this.filterArrayPipe.transform(this.employees, this.members);
+	}
+
+	/**
+	 * Removes one member from the list below the picker, and feeds the new
+	 * selection back into the picker so the two never disagree.
+	 *
+	 * @param member
+	 */
+	removeMember(member: IEmployee) {
+		const ids = (this.selectedEmployeeIds ?? []).filter((id: string) => id !== member.id);
+		this.onMembersSelected(ids);
 	}
 
 	cancel() {
 		this.canceled.emit();
 	}
 
+	/**
+	 * Submits and processes form data for organizational contacts.
+	 * Validates main form, consolidates data from multiple forms, processes members and project info,
+	 * and emits the combined data for further action.
+	 */
 	async submitForm() {
 		if (this.contMainForm.invalid) {
 			return;
 		}
-		const { fiscalInformation, website, contactType } = this.contMainForm.getRawValue();
 
-		const { tenantId } = this.store.user;
-		const { id: organizationId } = this.organization;
+		const { id: organizationId, tenantId } = this.organization;
+		const data = this.contMainForm.value;
+		const budget = this.budgetForm.value;
+		const locationData = this.locationFormDirective.getValue();
+		const { fax, fiscalInformation, website } = this.contMainForm.value;
 
-		const { budget, budgetType } = this.budgetForm.getRawValue();
-		const { name, primaryEmail, primaryPhone, projects = [], fax, tags = [] } = this.contMainForm.getRawValue();
-
-		let { imageUrl } = this.contMainForm.getRawValue();
-		if (imageUrl === DUMMY_PROFILE_IMAGE) {
-			imageUrl = null;
-		}
-
-		const location = this.locationFormDirective.getValue();
-		const { coordinates } = location['loc'];
-		delete location['loc'];
-
+		// Extract and destructure coordinates
+		const { coordinates, ...location } = locationData.loc;
 		const [latitude, longitude] = coordinates;
+
+		// Construct the contact object
 		const contact = {
-			...{ organizationId, tenantId },
-			...location,
-			...{ latitude, longitude }
-		};
-
-		const members = (this.members || this.selectedEmployeeIds || [])
-						.map((id) => this.employees.find((e) => e.id === id))
-						.filter((e) => !!e);
-
-		this.addOrEditOrganizationContact.emit({
-			id: this.organizationContact
-				? this.organizationContact.id
-				: undefined,
-			organizationId,
-			tenantId,
-			budgetType,
-			budget,
-			name,
-			primaryEmail,
-			primaryPhone,
-			projects,
-			contactType,
-			imageUrl,
-			members,
-			tags,
-			fax,
+			latitude,
+			longitude,
 			fiscalInformation,
 			website,
-			...contact
+			fax,
+			...location,
+			organizationId,
+			organization: { id: organizationId },
+			tenantId,
+			tenant: { id: tenantId },
+			...(this.organizationContact?.contact?.id && { id: this.organizationContact.contact.id })
+		};
+
+		// Consolidate member IDs and retrieve corresponding employees
+		const members = this.getSelectedMembers();
+
+		// Retrieve and process projects with assigned members
+		const projects = this.assignMembersToProjects(data.projects ?? [], members);
+
+		// Step 5: Emit the consolidated data
+		this.emitConsolidatedData({ budget, data, projects, members, contact });
+	}
+
+	/**
+	 * Retrieves selected members based on member IDs or selected employees.
+	 * @returns An array of IEmployee objects.
+	 */
+	private getSelectedMembers(): IEmployee[] {
+		// Step 1: Get the list of member IDs
+		const memberIds = this.members || this.selectedEmployeeIds || [];
+
+		// Step 2: Find corresponding IEmployee objects and filter out any falsy values
+		const members = memberIds.map((id) => this.employees.find((e) => e.id === id)).filter(Boolean);
+
+		// Fallback to selectedMembers if no members found
+		return members.length ? members : this.selectedMembers;
+	}
+
+	/**
+	 * Assigns selected members to each project by transforming them into IOrganizationProjectEmployee objects.
+	 * @param projects The array of projects to which members will be assigned.
+	 * @param members The array of selected IEmployee objects.
+	 * @returns The updated array of projects with assigned members.
+	 */
+	private assignMembersToProjects(projects: IOrganizationProject[], members: IEmployee[]): IOrganizationProject[] {
+		return projects.map((project: IOrganizationProject) => {
+			// Get the project members and transform them into IOrganizationProjectEmployee objects
+			const projectMembers: IOrganizationProjectEmployee[] = members.map((employee: IEmployee) =>
+				this.transformToProjectEmployee(employee, project, this.organization)
+			);
+			const combinedMembers = [
+				...(Array.isArray(projectMembers) ? projectMembers : []),
+				...(Array.isArray(project.members) ? project.members : [])
+			];
+
+			const uniqueMembers = Array.from(new Map(combinedMembers.map((member) => [member.id, member])).values());
+
+			return {
+				...project,
+				managerIds: uniqueMembers.filter((member) => member.isManager).map((member) => member.employeeId),
+				memberIds: uniqueMembers.filter((member) => !member.isManager).map((member) => member.employeeId)
+			};
 		});
 	}
 
+	/**
+	 * Emits the consolidated data for further processing.
+	 *
+	 * @param payload The data to be emitted.
+	 */
+	private emitConsolidatedData(payload: {
+		budget: any;
+		data: any;
+		projects: IOrganizationProject[];
+		members: IEmployee[];
+		contact: any;
+	}) {
+		const { budget, data, projects, members, contact } = payload;
+		const { id: organizationId, tenantId } = this.organization;
+
+		// Emit the consolidated data
+		this.addOrEditOrganizationContact.emit({
+			...budget,
+			...data,
+			projects,
+			members,
+			contact,
+			organizationId,
+			organization: { id: organizationId },
+			tenantId,
+			tenant: { id: tenantId },
+			...(this.organizationContact?.id && { id: this.organizationContact.id })
+		});
+	}
+
+	/**
+	 * Transforms an IEmployee into an IOrganizationProjectEmployee.
+	 *
+	 * @param employee The employee to transform.
+	 * @param project The project to associate with the employee.
+	 * @param organization The organization context.
+	 * @returns The transformed IOrganizationProjectEmployee object.
+	 */
+	private transformToProjectEmployee = (
+		employee: IEmployee,
+		project: IOrganizationProject,
+		organization: IOrganization
+	): IOrganizationProjectEmployee => ({
+		...employee,
+		employeeId: employee.id,
+		organizationProject: project, // Assign the current project
+		organizationProjectId: project.id, // Assign the project's ID
+		organizationId: organization.id, // Assign the organization's ID
+		tenantId: organization.tenantId // Assign the organization's tenant ID
+	});
+
+	/**
+	 * Updates the 'tags' field in 'contMainForm' with the selected tags and validate the form.
+	 * @param tags An array of selected tag objects.
+	 */
 	selectedTagsEvent(tags: ITag[]) {
 		this.contMainForm.patchValue({ tags });
 		this.contMainForm.updateValueAndValidity();
 	}
 
-	isInvalidControl(control: string) {
-		if (!this.contMainForm.contains(control)) {
-			return true;
-		}
-		return (
-			this.contMainForm.get(control).touched &&
-			this.contMainForm.get(control).invalid
-		);
-	}
-
+	/**
+	 * Progresses the stepper. The map marker is placed by `onStepChange`.
+	 */
 	nextStep() {
 		this.stepper.next();
-		if (this.stepper.selectedIndex === 1) {
+	}
+
+	/**
+	 * Adds the map marker whenever the Address step opens, whether through the
+	 * Next button or a header click (header navigation is on in edit mode).
+	 */
+	onStepChange({ index }: NbStepChangeEvent) {
+		// The second step is the Address step with the map.
+		if (index === 1) {
+			// Directly destructure 'coordinates' from the location form value.
 			const {
-				loc: { coordinates }
+				loc: {
+					coordinates: [lat, lng]
+				}
 			} = this.locationFormDirective.getValue();
-			const [lat, lng] = coordinates;
+
+			// Delay marker addition to ensure the map is ready. Adjust delay as needed.
 			setTimeout(() => {
 				this.leafletTemplate.addMarker(new LatLng(lat, lng));
 			}, 200);
@@ -433,9 +563,7 @@ export class ContactMutationComponent
 	/*
 	 * Google Place and Leaflet Map Coordinates Changed Event Emitter
 	 */
-	onCoordinatesChanges(
-		$event: google.maps.LatLng | google.maps.LatLngLiteral
-	) {
+	onCoordinatesChanges($event: google.maps.LatLng | google.maps.LatLngLiteral) {
 		const {
 			loc: { coordinates }
 		} = this.locationFormDirective.getValue();
@@ -446,20 +574,24 @@ export class ContactMutationComponent
 		}
 	}
 
-	/*
-	 * Leaflet Map Click Event Emitter
+	/**
+	 * Handles click events on the Leaflet map. Updates the location form with the clicked coordinates
+	 * and resets some location-related fields. It also triggers a recalculation of dependent form values.
+	 *
+	 * @param latlng The latitude and longitude object from the map click event.
 	 */
 	onMapClicked(latlng: LatLng) {
-		const { lat, lng }: LatLng = latlng;
 		const location = this.locationFormDirective.getValue();
+
 		this.locationFormDirective.setValue({
 			...location,
 			country: '',
 			loc: {
 				type: 'Point',
-				coordinates: [lat, lng]
+				coordinates: [latlng.lat, latlng.lng]
 			}
 		});
+
 		this.locationFormDirective.onCoordinatesChanged();
 	}
 

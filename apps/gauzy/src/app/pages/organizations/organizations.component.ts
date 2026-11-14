@@ -1,58 +1,70 @@
-import { Component, OnDestroy, OnInit, ViewChild } from '@angular/core';
-import { Router, RouterEvent, NavigationEnd } from '@angular/router';
-import {
-	IOrganization,
-	ComponentLayoutStyleEnum,
-	IUser,
-	CrudActionEnum
-} from '@gauzy/contracts';
+import { AfterViewInit, Component, OnDestroy, OnInit, ChangeDetectionStrategy } from '@angular/core';
+import { Router, ActivatedRoute, ParamMap } from '@angular/router';
+import { IOrganization, ComponentLayoutStyleEnum, IUser, CrudActionEnum, PermissionsEnum } from '@gauzy/contracts';
 import { NbDialogService } from '@nebular/theme';
 import { TranslateService } from '@ngx-translate/core';
-import { LocalDataSource, Ng2SmartTableComponent } from 'ng2-smart-table';
+import { LocalDataSource, Cell } from 'angular2-smart-table';
+import { debounceTime, firstValueFrom, Subject } from 'rxjs';
 import { filter, tap } from 'rxjs/operators';
 import { UntilDestroy, untilDestroyed } from '@ngneat/until-destroy';
-import { ErrorHandlingService, OrganizationsService, OrganizationEditStore, Store, ToastrService, UsersOrganizationsService } from '../../@core/services';
-import { OrganizationsMutationComponent } from '../../@shared/organizations/organizations-mutation/organizations-mutation.component';
-import { DeleteConfirmationComponent } from '../../@shared/user/forms/delete-confirmation/delete-confirmation.component';
-import { OrganizationsCurrencyComponent, OrganizationsEmployeesComponent, OrganizationsStatusComponent } from './table-components';
-import { TranslationBaseComponent } from '../../@shared/language-base/translation-base.component';
-import { PictureNameTagsComponent } from '../../@shared/table-components';
-import { ComponentEnum } from '../../@core/constants';
-import { firstValueFrom } from 'rxjs';
+import { ComponentEnum, distinctUntilChange } from '@gauzy/ui-core/common';
+import {
+	ErrorHandlingService,
+	OrganizationEditStore,
+	OrganizationsService,
+	Store,
+	ToastrService,
+	UsersOrganizationsService
+} from '@gauzy/ui-core/core';
+import {
+	IPaginationBase,
+	IRecordViewSection,
+	OrganizationWithTagsComponent,
+	OrganizationsMutationComponent,
+	PaginationFilterBaseComponent
+} from '@gauzy/ui-core/shared';
+import {
+	OrganizationsCurrencyComponent,
+	OrganizationTotalEmployeesCountComponent,
+	OrganizationsStatusComponent
+} from './table-components';
+import { OrganizationDeleteConfirmationComponent } from './organization-delete-confirmation/organization-delete-confirmation.component';
 
 @UntilDestroy({ checkProperties: true })
 @Component({
-	templateUrl: './organizations.component.html',
-	styleUrls: ['./organizations.component.scss']
+    templateUrl: './organizations.component.html',
+    styleUrls: ['./organizations.component.scss'],
+    changeDetection: ChangeDetectionStrategy.Eager,
+    standalone: false
 })
-export class OrganizationsComponent
-	extends TranslationBaseComponent
-	implements OnInit, OnDestroy {
-	
+export class OrganizationsComponent extends PaginationFilterBaseComponent implements AfterViewInit, OnInit, OnDestroy {
 	settingsSmartTable: object;
 	selectedOrganization: IOrganization;
+
+	/*
+	 * Read-only View: a summary of the grid columns plus the identity fields
+	 * opens in the right-side drawer — full management already lives on the
+	 * edit page, so the record does not warrant a page of its own.
+	 */
+	viewedOrganization: IOrganization;
+	viewSections: IRecordViewSection[] = [];
+
 	smartTableSource = new LocalDataSource();
 	organizations: IOrganization[] = [];
 	viewComponentName: ComponentEnum;
-	disableButton = true;
+	disableButton: boolean = true;
 	dataLayoutStyle = ComponentLayoutStyleEnum.TABLE;
 	componentLayoutStyleEnum = ComponentLayoutStyleEnum;
-	loading = true;
+	loading: boolean = true;
 	user: IUser;
+	private _refresh$: Subject<any> = new Subject();
 
-	organizationsTable: Ng2SmartTableComponent;
-	@ViewChild('organizationsTable') set content(content: Ng2SmartTableComponent) {
-		if (content) {
-			this.organizationsTable = content;
-			this.onChangedSource();
-		}
-	}
-		
 	constructor(
 		private readonly organizationsService: OrganizationsService,
 		private readonly toastrService: ToastrService,
 		private readonly dialogService: NbDialogService,
 		private readonly router: Router,
+		private readonly activatedRoute: ActivatedRoute,
 		public readonly translateService: TranslateService,
 		private readonly errorHandler: ErrorHandlingService,
 		private readonly store: Store,
@@ -63,120 +75,253 @@ export class OrganizationsComponent
 		this.setView();
 	}
 
-	loadSettingsSmartTable() {
-		this.settingsSmartTable = {
-			actions: false,
-			columns: {
-				name: {
-					title: this.getTranslation('SM_TABLE.CLIENT_NAME'),
-					type: 'custom',
-					renderComponent: PictureNameTagsComponent
-				},
-				totalEmployees: {
-					title: this.getTranslation('SM_TABLE.EMPLOYEES'),
-					type: 'custom',
-					width: '200px',
-					class: 'text-center',
-					filter: false,
-					renderComponent: OrganizationsEmployeesComponent
-				},
-				currency: {
-					title: this.getTranslation('SM_TABLE.CURRENCY'),
-					type: 'custom',
-					class: 'text-center',
-					width: '200px',
-					renderComponent: OrganizationsCurrencyComponent
-				},
-				status: {
-					title: this.getTranslation('SM_TABLE.STATUS'),
-					type: 'custom',
-					class: 'text-center',
-					width: '200px',
-					filter: false,
-					renderComponent: OrganizationsStatusComponent
-				}
-			},
-			pager: {
-				display: true,
-				perPage: 8
-			}
-		};
+	/**
+	 * The drawer's "expand to full width" icon leads to the organization's edit page, which requires
+	 * ALL_ORG_EDIT; a view-only viewer (the drawer needs ALL_ORG_VIEW) gets no icon rather than a redirect.
+	 */
+	get canOpenOrganizationPage(): boolean {
+		return this.store.hasPermission(PermissionsEnum.ALL_ORG_EDIT);
 	}
+
 	ngOnInit() {
-		this.loadSettingsSmartTable();
+		this._loadSmartTableSettings();
 		this._applyTranslationOnSmartTable();
-		this.store.user$
+	}
+
+	ngAfterViewInit() {
+		this.subject$
 			.pipe(
-				filter((user) => !!user),
-				tap((user: IUser) => this.user = user),
+				debounceTime(300),
+				tap(() => this._loadSmartTable()),
 				untilDestroyed(this)
 			)
-			.subscribe(() => {
-				this._loadSmartTable();
-			});
-		this.router.events
-			.pipe(untilDestroyed(this))
-			.subscribe((event: RouterEvent) => {
-				if (event instanceof NavigationEnd) {
-					this.setView();
-				}
-			});
+			.subscribe();
+		this.store.user$
+			.pipe(
+				filter((user: IUser) => !!user),
+				tap((user: IUser) => (this.user = user)),
+				untilDestroyed(this)
+			)
+			.subscribe();
+		this.activatedRoute.queryParamMap
+			.pipe(
+				debounceTime(1000),
+				filter((params: ParamMap) => !!params),
+				filter((params: ParamMap) => params.get('openAddDialog') === 'true'),
+				tap(() => this.addOrganization()),
+				untilDestroyed(this)
+			)
+			.subscribe();
+		this.pagination$
+			.pipe(
+				debounceTime(300),
+				distinctUntilChange(),
+				tap(() => this.subject$.next(true)),
+				untilDestroyed(this)
+			)
+			.subscribe();
+		this._refresh$
+			.pipe(
+				filter(() => this._isGridLayout),
+				tap(() => this.refreshPagination()),
+				tap(() => (this.organizations = [])),
+				untilDestroyed(this)
+			)
+			.subscribe();
 	}
 
 	setView() {
 		this.viewComponentName = ComponentEnum.ORGANIZATION;
 		this.store
 			.componentLayout$(this.viewComponentName)
-			.pipe(untilDestroyed(this))
-			.subscribe((componentLayout) => {
-				this.dataLayoutStyle = componentLayout;
-			});
+			.pipe(
+				distinctUntilChange(),
+				tap((componentLayout) => (this.dataLayoutStyle = componentLayout)),
+				tap(() => this.refreshPagination()),
+				filter(() => this._isGridLayout),
+				tap(() => (this.organizations = [])),
+				tap(() => this.subject$.next(true)),
+				untilDestroyed(this)
+			)
+			.subscribe();
 	}
 
 	selectOrganization({ isSelected, data }) {
+		// Whatever the drawer is showing no longer matches the selection.
+		this.closeView();
 		this.disableButton = !isSelected;
 		this.selectedOrganization = isSelected ? data : null;
 	}
 
-	_applyTranslationOnSmartTable() {
-		this.translateService.onLangChange
-			.pipe(untilDestroyed(this))
-			.subscribe(() => {
-				this.loadSettingsSmartTable();
-			});
+	/**
+	 * Opens the read-only View of an organization in the right-side drawer.
+	 *
+	 * @param selectedItem - Row the action was invoked from, when it came from the grid.
+	 */
+	viewOrganization(selectedItem?: IOrganization): void {
+		if (selectedItem) {
+			this.selectOrganization({ isSelected: true, data: selectedItem });
+		}
+
+		const organization = selectedItem ?? this.selectedOrganization;
+		if (!organization) {
+			return;
+		}
+
+		this.viewSections = this.buildViewSections(organization);
+		this.viewedOrganization = organization;
 	}
 
-	async addOrganization() {
-		const result = await firstValueFrom(this.dialogService
-			.open(OrganizationsMutationComponent)
-			.onClose);
-		if (result) {
-			try {
-				this.organizationsService
-					.create(result)
-					.then((organization: IOrganization) => {
-						if (organization) {
-							this._organizationEditStore.organizationAction = {
-								organization,
-								action: CrudActionEnum.CREATED
-							};
-							this.toastrService.success(
-								'NOTES.ORGANIZATIONS.ADD_NEW_ORGANIZATION',
-								{
-									name: result.name
-								}
-							);
+	closeView(): void {
+		this.viewedOrganization = null;
+	}
+
+	/**
+	 * Field descriptor for the drawer — the grid columns read vertically, then
+	 * the identity fields the grid has no room for. Takes the record because
+	 * some values are derived (employee count, mapped status, translated enums)
+	 * rather than read off a dot path.
+	 */
+	private buildViewSections(organization: IOrganization): IRecordViewSection[] {
+		return [
+			{
+				fields: [
+					{ label: 'FORM.LABELS.ORGANIZATION_NAME', key: 'name' },
+					// Computed in _loadSmartTable (active employees only), not a persisted field.
+					{ label: 'SM_TABLE.EMPLOYEES', value: organization.totalEmployees },
+					{ label: 'SM_TABLE.CURRENCY', key: 'currency' },
+					{
+						label: 'SM_TABLE.STATUS',
+						type: 'badge',
+						value: {
+							text: this.getTranslation(
+								organization.isActive ? 'ORGANIZATIONS_PAGE.ACTIVE' : 'ORGANIZATIONS_PAGE.ARCHIVED'
+							),
+							class: organization.isActive ? 'success' : 'danger'
 						}
-					})
-					.catch((error) => {
-						this.errorHandler.handleError(error);
-					})
-					.finally(() => {
-						this._loadSmartTable();
-					});
-			} catch (error) {
-				this.errorHandler.handleError(error);
+					}
+				]
+			},
+			{
+				fields: [
+					{ label: 'FORM.LABELS.OFFICIAL_NAME', key: 'officialName' },
+					{ label: 'FORM.LABELS.WEBSITE', key: 'website', type: 'link' },
+					{ label: 'FORM.LABELS.TAX_ID', key: 'taxId' },
+					{ label: 'FORM.LABELS.REGISTRATION_DATE', key: 'registrationDate', type: 'date' },
+					// Enum values go through the same SM_TABLE.<VALUE> keys the org forms use.
+					{
+						label: 'FORM.LABELS.START_WEEK_ON',
+						value: organization.startWeekOn
+							? this.getTranslation(`SM_TABLE.${organization.startWeekOn}`)
+							: null
+					},
+					{
+						label: 'FORM.LABELS.DATE_TYPE',
+						value: organization.defaultValueDateType
+							? this.getTranslation(`SM_TABLE.${organization.defaultValueDateType}`)
+							: null
+					},
+					{ label: 'TIMESHEET.TIME_ZONE', key: 'timeZone' },
+					{ label: 'SM_TABLE.TAGS', key: 'tags', type: 'tags', wide: true }
+				]
 			}
+		];
+	}
+
+	private _loadSmartTableSettings() {
+		const pagination: IPaginationBase = this.getPagination();
+		this.settingsSmartTable = {
+			actions: false,
+			selectedRowIndex: -1,
+			pager: {
+				display: false,
+				perPage: pagination ? pagination.itemsPerPage : this.minItemPerPage
+			},
+			columns: {
+				name: {
+					title: this.getTranslation('SM_TABLE.CLIENT_NAME'),
+					type: 'custom',
+					renderComponent: OrganizationWithTagsComponent,
+					componentInitFunction: (instance: OrganizationWithTagsComponent, cell: Cell) => {
+						instance.rowData = cell.getRow().getData();
+						instance.value = cell.getRawValue();
+					}
+				},
+				totalEmployees: {
+					title: this.getTranslation('SM_TABLE.EMPLOYEES'),
+					type: 'custom',
+					width: '200px',
+					isFilterable: false,
+					renderComponent: OrganizationTotalEmployeesCountComponent,
+					componentInitFunction: (instance: OrganizationTotalEmployeesCountComponent, cell: Cell) => {
+						instance.value = cell.getValue();
+					}
+				},
+				currency: {
+					title: this.getTranslation('SM_TABLE.CURRENCY'),
+					type: 'custom',
+					width: '200px',
+					renderComponent: OrganizationsCurrencyComponent,
+					componentInitFunction: (instance: OrganizationsCurrencyComponent, cell: Cell) => {
+						instance.value = cell.getValue();
+					}
+				},
+				status: {
+					title: this.getTranslation('SM_TABLE.STATUS'),
+					type: 'custom',
+					width: '5%',
+					isFilterable: false,
+					renderComponent: OrganizationsStatusComponent,
+					componentInitFunction: (instance: OrganizationsStatusComponent, cell: Cell) => {
+						instance.rowData = cell.getRow().getData();
+					}
+				}
+			}
+		};
+	}
+
+	private _applyTranslationOnSmartTable() {
+		this.translateService.onLangChange
+			.pipe(
+				tap(() => this._loadSmartTableSettings()),
+				untilDestroyed(this)
+			)
+			.subscribe();
+	}
+
+	/**
+	 * Opens a dialog to add a new organization and handles the result.
+	 */
+	async addOrganization() {
+		try {
+			// Opens the dialog for adding a new organization and returns the result.
+			const dialog = this.dialogService.open(OrganizationsMutationComponent);
+			const data = await firstValueFrom(dialog.onClose);
+
+			if (data) {
+				this.loading = true; // Indicate loading state
+
+				// Organization service to create a new organization
+				const organization = await this.organizationsService.create(data);
+
+				// Handles operations after successfully creating an organization
+				if (organization) {
+					this._organizationEditStore.organizationAction = {
+						organization,
+						action: CrudActionEnum.CREATED
+					};
+					this.toastrService.success('NOTES.ORGANIZATIONS.ADD_NEW_ORGANIZATION', { name: organization.name });
+				}
+
+				// Finalizes operations after adding an organization, such as updating subjects.
+				this._refresh$.next(true);
+				this.subject$.next(true);
+			}
+		} catch (error) {
+			// Handles errors occurred during the operation
+			this.errorHandler.handleError(error);
+		} finally {
+			this.loading = false; // Update loading state
 		}
 	}
 
@@ -187,9 +332,7 @@ export class OrganizationsComponent
 				data: selectedItem
 			});
 		}
-		this.router.navigate([
-			'/pages/organizations/edit/' + this.selectedOrganization.id
-		]);
+		this.router.navigate(['/pages/organizations/edit/' + this.selectedOrganization.id]);
 	}
 
 	async deleteOrganization(selectedItem?: IOrganization) {
@@ -199,13 +342,13 @@ export class OrganizationsComponent
 				data: selectedItem
 			});
 		}
-		const result = await firstValueFrom(this.dialogService
-			.open(DeleteConfirmationComponent, {
+		const result = await firstValueFrom(
+			this.dialogService.open(OrganizationDeleteConfirmationComponent, {
 				context: {
-					recordType: 'ORGANIZATIONS_PAGE.ORGANIZATION'
+					organization: this.selectedOrganization
 				}
-			})
-			.onClose);
+			}).onClose
+		);
 
 		if (result) {
 			try {
@@ -216,19 +359,17 @@ export class OrganizationsComponent
 							organization: this.selectedOrganization,
 							action: CrudActionEnum.DELETED
 						};
-						this.toastrService.success(
-							'NOTES.ORGANIZATIONS.DELETE_ORGANIZATION',
-							{
-								name: this.selectedOrganization.name
-							}
-						);
+						this.toastrService.success('NOTES.ORGANIZATIONS.DELETE_ORGANIZATION', {
+							name: this.selectedOrganization.name
+						});
 					})
 					.catch((error) => {
 						this.errorHandler.handleError(error);
 					})
 					.finally(() => {
 						this.clearItem();
-						this._loadSmartTable();
+						this._refresh$.next(true);
+						this.subject$.next(true);
 					});
 			} catch (error) {
 				this.errorHandler.handleError(error);
@@ -243,17 +384,22 @@ export class OrganizationsComponent
 				{ userId: this.store.userId, tenantId: this.user.tenantId }
 			);
 
-			this.organizations = items.map(
-				(userOrganization) => userOrganization.organization
-			);
+			const { itemsPerPage, activePage } = this.getPagination();
 
-			for (const org of this.organizations) {
+			const organizations = items.map((userOrganization) => userOrganization.organization);
+
+			for (const org of organizations) {
 				const activeEmployees = org.employees.filter((i) => i.isActive);
 				org.totalEmployees = activeEmployees.length;
 				delete org['employees'];
 			}
-
-			this.smartTableSource.load(this.organizations);
+			this.smartTableSource.setPaging(activePage, itemsPerPage, false);
+			this.smartTableSource.load(organizations);
+			this._loadDataGridLayout();
+			this.setPagination({
+				...this.getPagination(),
+				totalItems: this.smartTableSource.count()
+			});
 		} catch (error) {
 			this.errorHandler.handleError(error);
 		}
@@ -261,36 +407,27 @@ export class OrganizationsComponent
 		this.loading = false;
 	}
 
-	/*
-	 * Table on changed source event
-	 */
-	onChangedSource() {
-		this.organizationsTable.source.onChangedSource
-			.pipe(
-				untilDestroyed(this),
-				tap(() => this.clearItem())
-			)
-			.subscribe();
+	private async _loadDataGridLayout() {
+		if (this._isGridLayout) {
+			this.organizations.push(...(await this.smartTableSource.getElements()));
+		}
+	}
+
+	private get _isGridLayout(): boolean {
+		return this.dataLayoutStyle === this.componentLayoutStyleEnum.CARDS_GRID;
 	}
 
 	/*
 	 * Clear selected item
 	 */
 	clearItem() {
+		// The record the drawer is showing follows the selection — a delete or
+		// reload must not leave a detached record open.
+		this.closeView();
 		this.selectOrganization({
 			isSelected: false,
 			data: null
 		});
-		this.deselectAll();
-	}
-	/*
-	 * Deselect all table rows
-	 */
-	deselectAll() {
-		if (this.organizationsTable && this.organizationsTable.grid) {
-			this.organizationsTable.grid.dataSet['willSelect'] = 'false';
-			this.organizationsTable.grid.dataSet.deselectAll();
-		}
 	}
 
 	ngOnDestroy() {}

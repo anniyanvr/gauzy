@@ -1,74 +1,98 @@
 import {
-	Component,
-	OnInit,
-	ViewChild,
-	ElementRef,
+	AfterViewInit,
+	ChangeDetectionStrategy,
 	ChangeDetectorRef,
-	ChangeDetectionStrategy
+	Component,
+	ElementRef,
+	Inject,
+	NgZone,
+	OnInit,
+	ViewChild
 } from '@angular/core';
-import { ElectronServices } from '../electron/services';
+import { DomSanitizer, SafeResourceUrl } from '@angular/platform-browser';
+import { UntilDestroy } from '@ngneat/until-destroy';
+import { GAUZY_ENV } from '../constants';
+import { ElectronService } from '../electron/services';
+import { LanguageElectronService } from '../language/language-electron.service';
+import { LanguageSelectorService } from '../language/language-selector.service';
+import { NbLayoutModule, NbCardModule, NbAccordionModule, NbButtonModule, NbIconModule } from '@nebular/theme';
+import { SpinnerButtonDirective } from '../directives/spinner-button.directive';
+import { UpperCasePipe } from '@angular/common';
+import { TranslatePipe } from '@ngx-translate/core';
 
+export enum ServerStatus {
+	START = 'BUTTONS.START',
+	STOP = 'BUTTONS.STOP'
+}
+
+@UntilDestroy({ checkProperties: true })
 @Component({
-	selector: 'ngx-server-dashboard',
-	templateUrl: './server-dashboard.component.html',
-	styleUrls: ['./server-dashboard.component.scss'],
-	changeDetection: ChangeDetectionStrategy.OnPush
+    selector: 'ngx-server-dashboard',
+    templateUrl: './server-dashboard.component.html',
+    styleUrls: ['./server-dashboard.component.scss'],
+    changeDetection: ChangeDetectionStrategy.OnPush,
+    imports: [NbLayoutModule, NbCardModule, NbAccordionModule, NbButtonModule, SpinnerButtonDirective, NbIconModule, UpperCasePipe, TranslatePipe]
 })
-export class ServerDashboardComponent implements OnInit {
-	@ViewChild('logbox') logbox: ElementRef;
+export class ServerDashboardComponent implements OnInit, AfterViewInit {
+	@ViewChild('logBox') logBox: ElementRef;
 	@ViewChild('logServer') logAccordion;
 	active_index: any;
-    gauzyIcon = './assets/images/logos/logo_Gauzy.svg';
-	running=false;
+	gauzyIcon: SafeResourceUrl = './assets/images/logos/logo_Gauzy.svg';
+	running = false;
 	loading = false;
-	btn:any = {
-		name: 'Start',
-		icon: 'play-circle-outline'
-	}
-	logContents:any = [];
+	restart = false;
+	btn: any = {
+		name: ServerStatus.START,
+		icon: 'arrow-right-outline'
+	};
+	logContents: any = [];
 	isExpandWindow = false;
-	logIsOpen:boolean = false;
+	logIsOpen = false;
 	styles = {
 		btnStart: 'button-small',
 		icon: 'margin-icon-small'
-	}
+	};
 
-    constructor(
-		private electronService: ElectronServices,
-		private _cdr: ChangeDetectorRef
+	constructor(
+		private electronService: ElectronService,
+		private _cdr: ChangeDetectorRef,
+		private _languageSelectorService: LanguageSelectorService,
+		private languageElectronService: LanguageElectronService,
+		private _ngZone: NgZone,
+		@Inject(GAUZY_ENV)
+		private readonly _environment: any,
+		private readonly _domSanitizer: DomSanitizer
 	) {
-		this.electronService.ipcRenderer.on(
-			'running_state',
-			(event, arg) => {
-				this.loading = false;
-				this.btn = {
-					name: arg ? 'Stop' : 'Start',
-					icon: arg ? 'stop-circle-outline' : 'play-circle-outline'
-				};
-				this.running = arg
-				event.sender.send('running_state', arg);
-				this._cdr.detectChanges();
+		this.electronService.ipcRenderer.on('running_state', (event, arg) => {
+			this.loading = false;
+			this.btn = {
+				name: arg ? ServerStatus.STOP : ServerStatus.START,
+				icon: arg ? 'stop-circle-outline' : 'arrow-right-outline'
+			};
+			this.running = arg;
+			event.sender.send('running_state', arg);
+			if (this.running) {
+				this.restart = false;
 			}
-		);
+			this._cdr.detectChanges();
+		});
 
-		this.electronService.ipcRenderer.on(
-			'log_state',
-			(event, arg) => {
-				if (this.logContents.length < 20) {
-					this.logContents.push(arg.msg);
-				} else {
-					this.logContents.shift();
-					this.logContents.push(arg.msg);
-				}
-				this._cdr.detectChanges();
-				this.scrollToBottom();
-				console.log(arg);
+		this.electronService.ipcRenderer.on('log_state', (event, arg) => {
+			if (this.logContents.length < 20) {
+				this.logContents.push(arg.msg);
+			} else {
+				this.logContents.shift();
+				this.logContents.push(arg.msg);
 			}
-		)
+			this._cdr.detectChanges();
+			this.scrollToBottom();
+		});
 
 		this.electronService.ipcRenderer.on('resp_msg', (event, arg) => {
+			this.restart = arg?.type === 'restart';
 			event.sender.send('resp_msg_server', arg);
-		})
+			this._cdr.detectChanges();
+		});
 
 		this.electronService.ipcRenderer.on('loading_state', (event, arg) => {
 			this.loading = arg;
@@ -79,38 +103,49 @@ export class ServerDashboardComponent implements OnInit {
 			this.styles.icon = 'margin-icon';
 			this.logIsOpen = true;
 			this._cdr.detectChanges();
-		})
+		});
+
+		this.gauzyIcon = this._domSanitizer.bypassSecurityTrustResourceUrl(this._environment.PLATFORM_LOGO);
+	}
+	ngAfterViewInit(): void {
+		this.electronService.ipcRenderer.on('dashboard_ready', (event, arg) => {
+			this._ngZone.run(() => {
+				if (arg.setting?.autoStart ?? true) {
+					this.runServer();
+				}
+			});
+		});
+		this.languageElectronService.initialize<void>();
 	}
 
-	
 	ngOnInit(): void {
 		this.active_index = 0;
 	}
 
 	private scrollToBottom() {
-        this.logbox.nativeElement.scrollTop = this.logbox.nativeElement.scrollHeight;
-    }
+		this.logBox.nativeElement.scrollTop = this.logBox.nativeElement.scrollHeight;
+	}
 
-    runServer() {
+	runServer() {
 		this.logContents = [];
 		this.loading = true;
 		this.btn = {
-			name: '',
+			name: ServerStatus.START,
 			icon: ''
 		};
 		this.logIsOpen = true;
-        this.electronService.ipcRenderer.send('run_gauzy_server');
+		this.electronService.ipcRenderer.send('run_gauzy_server');
 		this.electronService.ipcRenderer.send('expand_window');
 		this.isExpandWindow = true;
 		this.styles.btnStart = 'button-big';
-		this.styles.icon = 'margin-icon'
+		this.styles.icon = 'margin-icon';
 		this._cdr.detectChanges();
-    }
+	}
 
 	stopServer() {
 		this.loading = true;
 		this.btn = {
-			name: '',
+			name: ServerStatus.STOP,
 			icon: ''
 		};
 		this.logIsOpen = true;
@@ -124,5 +159,13 @@ export class ServerDashboardComponent implements OnInit {
 		} else {
 			this.logIsOpen = true;
 		}
+	}
+
+	public get isServerApi(): boolean {
+		return this._environment.IS_SERVER_API;
+	}
+
+	public get isAgent(): boolean {
+		return this._environment.IS_AGENT;
 	}
 }

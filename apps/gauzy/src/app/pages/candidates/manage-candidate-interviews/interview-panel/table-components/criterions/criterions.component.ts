@@ -1,18 +1,37 @@
-import { Component, Input } from '@angular/core';
+import { Component, Input, ChangeDetectionStrategy } from '@angular/core';
 
 @Component({
-	selector: 'ga-interview-criterions',
-	template: `
-		<ul style="padding-left:18px; margin:0;">
-			<li *ngFor="let tech of this.rowData.technologies">
-				<span> {{ tech.name }} </span>
-			</li>
-
-			<li *ngFor="let qual of this.rowData.personalQualities">
-				<span> {{ qual.name }} </span>
-			</li>
+    selector: 'ga-interview-criterions',
+    template: `
+		<ul style="padding-left: 10px; margin:0;">
+		  @for (tech of rowData.technologies; track tech) {
+		    <li>
+		      <span> {{ tech.name }} </span>
+		    </li>
+		  }
+		
+		  @for (qual of rowData.personalQualities; track qual) {
+		    <li>
+		      <span> {{ qual.name }} </span>
+		    </li>
+		  }
 		</ul>
-	`
+		`,
+    styles: [
+        `
+			ul {
+				list-style-type: '- ';
+			}
+			ul,
+			li,
+			span {
+				font-size: 10px;
+				line-height: 0.875rem;
+			}
+		`
+    ],
+    changeDetection: ChangeDetectionStrategy.Eager,
+    standalone: false
 })
 export class InterviewCriterionsTableComponent {
 	@Input()

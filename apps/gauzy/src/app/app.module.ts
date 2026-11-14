@@ -1,18 +1,14 @@
-/**
- * @license
- * Copyright Akveo. All Rights Reserved.
- * Licensed under the MIT License. See License.txt in the project root for license information.
- */
-import { APP_BASE_HREF } from '@angular/common';
+// Some of the code is modified from https://github.com/akveo/ngx-admin/blob/master/src/app/app.module.ts,
+// that licensed under the MIT License and Copyright (c) 2017 akveo.com.
 
+import { APP_BASE_HREF } from '@angular/common';
+import { HTTP_INTERCEPTORS, provideHttpClient, withInterceptorsFromDi, withXhr } from '@angular/common/http';
+import { NgModule, ErrorHandler, VERSION, inject, provideAppInitializer } from '@angular/core';
+import { ExtraOptions, Router, RouterModule } from '@angular/router';
+import { OVERLAY_DEFAULT_CONFIG } from '@angular/cdk/overlay';
 import { BrowserModule } from '@angular/platform-browser';
 import { BrowserAnimationsModule } from '@angular/platform-browser/animations';
-import { NgModule, APP_INITIALIZER, ErrorHandler } from '@angular/core';
-import { HttpClientModule, HTTP_INTERCEPTORS } from '@angular/common/http';
-import { CoreModule } from './@core/core.module';
-import { ThemeModule } from './@theme/theme.module';
-import { AppComponent } from './app.component';
-import { AppRoutingModule } from './app-routing.module';
+import { AkitaNgDevtools } from '@datorama/akita-ngdevtools';
 import {
 	NbChatModule,
 	NbDatepickerModule,
@@ -24,236 +20,268 @@ import {
 	NbCalendarModule,
 	NbCalendarKitModule
 } from '@nebular/theme';
-import {
-	APIInterceptor,
-	HubstaffTokenInterceptor,
-	LanguageInterceptor,
-	TenantInterceptor,
-	TokenInterceptor
-} from './@core/interceptors';
-import { HttpClient } from '@angular/common/http';
-import { TranslateModule, TranslateLoader } from '@ngx-translate/core';
-import { Cloudinary as CloudinaryCore } from 'cloudinary-core';
-import { CloudinaryModule } from '@cloudinary/angular-5.x';
-import {
-	cloudinaryConfiguration,
-	environment
-} from '../environments/environment';
+import { provideCharts, withDefaultRegisterables } from 'ng2-charts';
 import { FileUploadModule } from 'ng2-file-upload';
-import { ServerConnectionService } from './@core/services/server-connection.service';
-import { Store } from './@core/services/store.service';
-import { AppModuleGuard } from './app.module.guards';
-import { DangerZoneMutationModule } from './@shared/settings/danger-zone-mutation.module';
-import {
-	init as sentryInit,
-	routingInstrumentation as sentryRoutingInstrumentation,
-	TraceService as SentryTraceService
-} from '@sentry/angular';
-import { Integrations as TrackingIntegrations } from '@sentry/tracing';
-import { SentryErrorHandler } from './@core/sentry-error.handler';
-import { TimeTrackerModule } from './@shared/time-tracker/time-tracker.module';
-import { SharedModule } from './@shared/shared.module';
-import { AkitaNgDevtools } from '@datorama/akita-ngdevtools';
-import { NgxElectronModule } from 'ngx-electron';
+import { CookieService } from 'ngx-cookie-service';
+import { FeatureToggleModule } from 'ngx-feature-toggle';
 import { NgxPermissionsModule } from 'ngx-permissions';
 import { ColorPickerService } from 'ngx-color-picker';
-import { EstimateEmailModule } from './auth/estimate-email/estimate-email.module';
+// V9 Migration: @sentry/angular-ivy was removed, use @sentry/angular instead
+// Reference: https://docs.sentry.io/platforms/javascript/migration/v8-to-v9/
+import * as Sentry from '@sentry/angular';
 import * as moment from 'moment';
-import { NgxAuthModule } from './auth/auth.module';
-import { LegalModule } from './legal/legal.module';
-import { Router } from '@angular/router';
-import { FeatureToggleModule } from 'ngx-feature-toggle';
-import { IFeatureToggle, LanguagesEnum } from '@gauzy/contracts';
-import { HttpLoaderFactory } from './@shared/translate/translate.module';
-import { FeatureService, GoogleMapsLoaderService } from './@core/services';
-import { AppInitService } from './@core/services/app-init-service';
-import { NbEvaIconsModule } from '@nebular/eva-icons';
+import { LanguagesEnum } from '@gauzy/contracts';
+import { getPluginUiConfig } from '@gauzy/plugin-ui';
+import { PostHogModule } from '@gauzy/plugin-posthog-ui';
+import { GAUZY_ENV, environment } from '@gauzy/ui-config';
+import { UiCoreModule } from '@gauzy/ui-core';
+import { CommonModule, EVER_APPS, everAppsFromPluginOptions } from '@gauzy/ui-core/common';
+import {
+	APIInterceptor,
+	AppInitService,
+	AuthRefreshInterceptor,
+	CoreModule,
+	FeatureService,
+	GoogleMapsLoaderService,
+	HubstaffTokenInterceptor,
+	LanguageInterceptor,
+	SentryErrorHandler,
+	serverConnectionFactory,
+	ServerConnectionService,
+	Store,
+	TenantInterceptor,
+	TokenInterceptor,
+	WorkspaceSyncService
+} from '@gauzy/ui-core/core';
+import { I18nModule, I18nService } from '@gauzy/ui-core/i18n';
+import { SharedModule, TimeTrackerModule, provideNgSelectPanelSizing } from '@gauzy/ui-core/shared';
+import { ThemeModule } from '@gauzy/ui-core/theme';
+import { AppComponent } from './app.component';
+import { appRoutes } from './app.routes';
+import { AppModuleGuard } from './app.module.guard';
+import { initializeSentry } from './sentry';
 
-// TODO: we should use some internal function which returns version of Gauzy;
-const version = '0.1.0';
-
-export const cloudinary = {
-	Cloudinary: CloudinaryCore
-};
-
-if (environment.SENTRY_DSN && environment.SENTRY_DSN === 'DOCKER_SENTRY_DSN') {
-	console.warn('You are running inside Docker but does not have SENTRY_DSN env set');
-} else if (environment.SENTRY_DSN && environment.SENTRY_DSN !== 'DOCKER_SENTRY_DSN') {
-
-	console.log(`Enabling Sentry with DSN: ${environment.SENTRY_DSN}`);
-
-	sentryInit({
-		dsn: environment.SENTRY_DSN,
-		environment: environment.production ? 'production' : 'development',
-		// this enables automatic instrumentation
-		integrations: [
-			new TrackingIntegrations.BrowserTracing({
-				routingInstrumentation: sentryRoutingInstrumentation
-			})
-		],
-		// TODO: we should use some internal function which returns version of Gauzy
-		release: 'gauzy@' + version,
-		// set tracesSampleRate to 1.0 to capture 100% of transactions for performance monitoring
-		tracesSampleRate: 1
-	});
-}
-
-@NgModule({
-	declarations: [AppComponent],
-	imports: [
-		LegalModule,
-		NgxAuthModule,
-		EstimateEmailModule,
-		BrowserModule,
-		BrowserAnimationsModule,
-		HttpClientModule,
-		DangerZoneMutationModule,
-		AppRoutingModule,
-		NbCalendarModule,
-		NbCalendarKitModule,		
-		NbSidebarModule.forRoot(),
-		NbMenuModule.forRoot(),
-		NbDatepickerModule.forRoot(),
-		NbDialogModule.forRoot(),
-		NbWindowModule.forRoot(),
-		NbToastrModule.forRoot(),
-		NbChatModule.forRoot({
-			messageGoogleMapKey: environment.CHAT_MESSAGE_GOOGLE_MAP
-		}),
-		NbEvaIconsModule,
-		CoreModule.forRoot(),
-		ThemeModule.forRoot(),
-		TranslateModule.forRoot({
-			loader: {
-				provide: TranslateLoader,
-				useFactory: HttpLoaderFactory,
-				deps: [HttpClient]
-			}
-		}),
-		CloudinaryModule.forRoot(cloudinary, cloudinaryConfiguration),
-		FileUploadModule,
-		TimeTrackerModule.forRoot(),
-		environment.production ? [] : AkitaNgDevtools,
-		SharedModule.forRoot(),
-		NgxElectronModule,
-		FeatureToggleModule,
-		NgxPermissionsModule.forRoot()
-	],
-	bootstrap: [AppComponent],
-	providers: [
-		{
-			provide: SentryTraceService,
-			deps: [Router]
-		},
-		{ provide: APP_BASE_HREF, useValue: '/' },
-		{
-			provide: ErrorHandler,
-			useClass: SentryErrorHandler
-		},
-		{
-			provide: HTTP_INTERCEPTORS,
-			useClass: APIInterceptor,
-			multi: true
-		},
-		{
-			provide: HTTP_INTERCEPTORS,
-			useClass: HubstaffTokenInterceptor,
-			multi: true
-		},
-		{
-			provide: HTTP_INTERCEPTORS,
-			useClass: TokenInterceptor,
-			multi: true
-		},
-		{
-			provide: HTTP_INTERCEPTORS,
-			useClass: LanguageInterceptor,
-			multi: true
-		},
-		{
-			provide: HTTP_INTERCEPTORS,
-			useClass: TenantInterceptor,
-			multi: true
-		},
-		ServerConnectionService,
-		{
-			provide: APP_INITIALIZER,
-			useFactory: serverConnectionFactory,
-			deps: [ServerConnectionService, Store, Router],
-			multi: true
-		},
-		GoogleMapsLoaderService,
-		{
-			provide: APP_INITIALIZER,
-			useFactory: googleMapsLoaderFactory,
-			deps: [GoogleMapsLoaderService],
-			multi: true
-		},
-		FeatureService,
-		{
-			provide: APP_INITIALIZER,
-			useFactory: featureToggleLoaderFactory,
-			deps: [FeatureService, Store],
-			multi: true
-		},
-		{
-			provide: APP_INITIALIZER,
-			useFactory: (appInitService: AppInitService) => () => {
-				return appInitService.init();
-			},
-			deps: [AppInitService],
-			multi: true
-		},
-		{
-			provide: ErrorHandler,
-			useClass: SentryErrorHandler
-		},
-		AppModuleGuard,
-		ColorPickerService
-	]
-})
-export class AppModule {
-	constructor() {
-		// Set Monday as start of the week
-		moment.locale(LanguagesEnum.ENGLISH, {
-			week: {
-				dow: 1
-			}
-		});
-		moment.locale(LanguagesEnum.ENGLISH);
+// Initialize Sentry
+if (environment.SENTRY_DSN) {
+	if (environment.SENTRY_DSN === 'DOCKER_SENTRY_DSN') {
+		console.warn('You are running inside Docker but does not have SENTRY_DSN env set');
+	} else {
+		console.log(`Enabling Sentry with DSN: ${environment.SENTRY_DSN}`);
+		initializeSentry();
 	}
 }
 
-export function serverConnectionFactory(
-	provider: ServerConnectionService,
-	store: Store,
-	router: Router
-) {
-	return () =>
-		provider
-			.checkServerConnection(environment.API_BASE_URL)
-			.finally(() => {
-				if (store.serverConnection !== 200) {
-					router.navigate(['server-down']);
-				}
-			})
-			.catch(() => {});
+if (environment.POSTHOG_ENABLED && environment.POSTHOG_KEY) {
+	if (environment.POSTHOG_KEY === 'DOCKER_POSTHOG_KEY') {
+		console.warn('You are running inside Docker but does not have POSTHOG_KEY env set');
+	} else {
+		console.log(`Enabling PostHog with API Key: ${environment.POSTHOG_KEY}`);
+	}
 }
 
-export function googleMapsLoaderFactory(provider: GoogleMapsLoaderService) {
-	return () => provider.load(environment.GOOGLE_MAPS_API_KEY);
-}
+// Is production mode?
+const isProd = environment.production;
 
-export function featureToggleLoaderFactory(
-	provider: FeatureService,
-	store: Store
-) {
-	return () =>
-		provider
-			.getFeatureToggleDefinition()
-			.then((features: IFeatureToggle[]) => {
+// Router config
+const config: ExtraOptions = {
+	useHash: true
+};
+
+// NB Modules
+const NB_MODULES = [
+	NbCalendarModule,
+	NbCalendarKitModule,
+	NbSidebarModule.forRoot(),
+	NbMenuModule.forRoot(),
+	NbDatepickerModule.forRoot(),
+	NbDialogModule.forRoot(),
+	NbWindowModule.forRoot(),
+	NbToastrModule.forRoot(),
+	NbChatModule.forRoot({ messageGoogleMapKey: environment.CHAT_MESSAGE_GOOGLE_MAP })
+];
+
+// Third Party Modules
+const THIRD_PARTY_MODULES = [
+	...(isProd ? [] : [AkitaNgDevtools]),
+	FeatureToggleModule,
+	FileUploadModule,
+	NgxPermissionsModule.forRoot(),
+	PostHogModule.forRoot({
+		apiKey: environment.POSTHOG_KEY || '',
+		options: {
+			api_host: environment.POSTHOG_HOST,
+			capture_pageview: environment.POSTHOG_ENABLED
+		}
+	})
+];
+
+// Feature Modules
+const FEATURE_MODULES = [
+	ThemeModule.forRoot(),
+	UiCoreModule.forRoot(),
+	CommonModule.forRoot(),
+	CoreModule.forRoot(),
+	SharedModule.forRoot(),
+	TimeTrackerModule.forRoot(),
+	I18nModule.forRoot()
+];
+@NgModule({
+	declarations: [AppComponent],
+	exports: [AppComponent],
+	imports: [
+		BrowserModule,
+		BrowserAnimationsModule,
+		RouterModule.forRoot(appRoutes, config),
+		...NB_MODULES,
+		...FEATURE_MODULES,
+		...THIRD_PARTY_MODULES
+	],
+	providers: [
+		// ─── Configuration Tokens ────────────────────────────────────────────────────
+		// Sets the base href for all router links and location strategies.
+		{ provide: APP_BASE_HREF, useValue: '/' },
+
+		// Exposes the full environment config to the DI tree via the GAUZY_ENV token.
+		{ provide: GAUZY_ENV, useValue: environment },
+
+		// The Ever apps the header's app switcher lists: the catalog the Ever Platform UI module carries in its
+		// plugin options (plugin-ui.config.ts, loaded before bootstrap). Not imported here, so taking the module
+		// out of the plugin list removes the catalog and the switcher with it.
+		{ provide: EVER_APPS, useFactory: () => everAppsFromPluginOptions(getPluginUiConfig().plugins) },
+
+		// Angular CDK 21 enables the Popover API for overlays by default (top layer), which causes
+		// Nebular dialogs to render above toasts. Disabling it restores z-index-based stacking.
+		{ provide: OVERLAY_DEFAULT_CONFIG, useValue: { usePopover: false } },
+
+		// ─── Error Handling & Tracing ─────────────────────────────────────────────────
+		// Routes unhandled errors to Sentry instead of the default console handler.
+		{ provide: ErrorHandler, useClass: SentryErrorHandler },
+
+		// Required by @sentry/angular to instrument Angular router navigation events.
+		{ provide: Sentry.TraceService, deps: [Router] },
+
+		// ─── HTTP Interceptors ────────────────────────────────────────────────────────
+		// Prepends the API base URL and common headers to every outgoing HTTP request.
+		{ provide: HTTP_INTERCEPTORS, useClass: APIInterceptor, multi: true },
+
+		// Attaches Hubstaff OAuth tokens to requests targeting the Hubstaff integration.
+		{ provide: HTTP_INTERCEPTORS, useClass: HubstaffTokenInterceptor, multi: true },
+
+		// Attaches the JWT access token to authenticated API requests.
+		{ provide: HTTP_INTERCEPTORS, useClass: TokenInterceptor, multi: true },
+
+		// Injects the active UI language into the Accept-Language request header.
+		{ provide: HTTP_INTERCEPTORS, useClass: LanguageInterceptor, multi: true },
+
+		// Injects the active tenant ID into requests that require tenant scoping.
+		{ provide: HTTP_INTERCEPTORS, useClass: TenantInterceptor, multi: true },
+
+		// Silently refreshes the JWT access token when a 401 response is received.
+		{ provide: HTTP_INTERCEPTORS, useClass: AuthRefreshInterceptor, multi: true },
+
+		// ─── App Initializers ─────────────────────────────────────────────────────────
+		// Verifies the API server is reachable before the app renders.
+		ServerConnectionService,
+		provideAppInitializer(() =>
+			serverConnectionFactory(inject(ServerConnectionService), inject(Store), inject(Router))()
+		),
+
+		// Loads the Google Maps JavaScript API during bootstrap. Maps are optional: when the script cannot
+		// be loaded (no internet access, a blocked host, an install behind a firewall) the app still
+		// starts and only the map widgets stay empty. A rejected initializer would stop the bootstrap and
+		// leave a blank page.
+		GoogleMapsLoaderService,
+		provideAppInitializer(() =>
+			inject(GoogleMapsLoaderService)
+				.load(environment.GOOGLE_MAPS_API_KEY)
+				.catch((error: unknown) => {
+					console.warn('Google Maps could not be loaded; maps stay unavailable:', error);
+				})
+		),
+
+		// Loads feature toggle definitions and stores them for the app.
+		FeatureService,
+		provideAppInitializer(async () => {
+			const featureService = inject(FeatureService);
+			const store = inject(Store);
+
+			try {
+				const features = await featureService.getFeatureToggleDefinition();
 				store.featureToggles = features || [];
-				return features;
-			})
-			.catch(() => {});
+			} catch (error) {
+				console.error('Failed to load feature toggle definitions:', error);
+			}
+		}),
+
+		// Runs core app initialization (user session, tenant, permissions, etc.).
+		AppInitService,
+		provideAppInitializer(() => inject(AppInitService).init()),
+
+		// Floors every ng-select dropdown panel at its select's width (ng-select 24 renders panels in a
+		// CDK overlay and no longer states that floor itself; see `NgSelectPanelSizingService`).
+		provideNgSelectPanelSizing(),
+
+		// Checks whether cross-tab workspace sync (BroadcastChannel) is supported.
+		WorkspaceSyncService,
+		provideAppInitializer(() => {
+			inject(WorkspaceSyncService).isSupported();
+		}),
+
+		// ─── Services ─────────────────────────────────────────────────────────────────
+		// Guards that protect app-level routes requiring authenticated/authorized access.
+		AppModuleGuard,
+
+		// Provides the ngx-color-picker singleton for use across the application.
+		ColorPickerService,
+
+		// Provides the ngx-cookie-service singleton for reading and writing browser cookies.
+		CookieService,
+
+		// ─── Framework Providers ──────────────────────────────────────────────────────
+		// Configures HttpClient to pick up class-based HTTP_INTERCEPTORS from DI.
+		provideHttpClient(withXhr(), withInterceptorsFromDi()),
+
+		// Registers all Chart.js defaults so ng2-charts charts render without manual imports.
+		provideCharts(withDefaultRegisterables())
+	]
+})
+export class AppModule {
+	private readonly _i18nService = inject(I18nService);
+
+	constructor() {
+		console.log(`Angular Version: ${VERSION.full}`);
+
+		// Initialize UI languages and Update Locale
+		this.initializeUiLanguagesAndLocale();
+	}
+
+	/**
+	 * Initialize UI languages and Update Locale using `plugin-ui.config.ts`.
+	 */
+	private initializeUiLanguagesAndLocale(): void {
+		const uiConfig = getPluginUiConfig();
+
+		const localeOptions: moment.LocaleSpecification = {};
+		const dow = uiConfig.startWeekOn;
+
+		// Validate the day of the week number (0 = Sunday, 1 = Monday, ..., 6 = Saturday)
+		if (typeof dow === 'number' && dow >= 0 && dow <= 6) {
+			localeOptions.week = { dow };
+		}
+
+		/** Update the locale with the default language. */
+		moment.updateLocale(uiConfig.defaultLanguage, localeOptions);
+
+		// Set current locale with fallback chain (moment.locale accepts string[] for fallback)
+		const fallbackLocale = uiConfig.fallbackLocale ?? uiConfig.defaultLanguage;
+		moment.locale([uiConfig.defaultLanguage, fallbackLocale]);
+
+		// Set available languages from the UI plugin configuration (validate against LanguagesEnum)
+		const validLanguages = new Set<string>(Object.values(LanguagesEnum));
+		const validatedLanguages = (uiConfig.availableLanguages ?? []).filter((lang): lang is LanguagesEnum =>
+			validLanguages.has(lang)
+		);
+
+		this._i18nService.setAvailableLanguages(validatedLanguages);
+	}
 }

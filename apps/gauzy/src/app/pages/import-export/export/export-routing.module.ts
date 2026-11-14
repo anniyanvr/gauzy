@@ -1,17 +1,17 @@
 import { NgModule } from '@angular/core';
 import { Routes, RouterModule } from '@angular/router';
 import { PermissionsEnum } from '@gauzy/contracts';
-import { NgxPermissionsGuard } from 'ngx-permissions';
+import { PermissionsGuard } from '@gauzy/ui-core/core';
 import { ExportComponent } from './export.component';
 
 const routes: Routes = [
 	{
 		path: '',
 		component: ExportComponent,
-		canActivate: [NgxPermissionsGuard],
+		canActivate: [PermissionsGuard],
 		data: {
 			permissions: {
-				only: [PermissionsEnum.IMPORT_EXPORT_VIEW],
+				only: [PermissionsEnum.EXPORT_ADD],
 				redirectTo: '/pages/settings'
 			}
 		}

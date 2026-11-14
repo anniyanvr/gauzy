@@ -49,13 +49,7 @@ export const DEFAULT_THEME = {
 		...theme,
 
 		temperature: {
-			arcFill: [
-				theme.primary,
-				theme.primary,
-				theme.primary,
-				theme.primary,
-				theme.primary
-			],
+			arcFill: [theme.primary, theme.primary, theme.primary, theme.primary, theme.primary],
 			arcEmpty: theme.bg2,
 			thumbBg: theme.bg2,
 			thumbBorder: theme.primary
@@ -175,16 +169,6 @@ export const DEFAULT_THEME = {
 			chartLineBottomShadowColor: theme.primary,
 
 			chartInnerLineColor: theme.bg2
-		},
-
-		echarts: {
-			bg: theme.bg,
-			textColor: theme.fgText,
-			axisLineColor: theme.fgText,
-			splitLineColor: theme.separator,
-			itemHoverShadowColor: 'rgba(0, 0, 0, 0.5)',
-			tooltipBackgroundColor: theme.primary,
-			areaOpacity: '0.7'
 		},
 
 		chartjs: {

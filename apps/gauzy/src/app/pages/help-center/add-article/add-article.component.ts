@@ -1,40 +1,36 @@
-import {
-	IHelpCenterArticle,
-	IEmployee,
-	IHelpCenterAuthor,
-	IOrganization
-} from '@gauzy/contracts';
-import { Component, OnDestroy, OnInit, Input } from '@angular/core';
+import { Component, OnDestroy, OnInit, Input, ChangeDetectionStrategy } from '@angular/core';
+import { AbstractControl, UntypedFormBuilder, UntypedFormGroup, Validators } from '@angular/forms';
 import { NbDialogRef } from '@nebular/theme';
-import { Subject } from 'rxjs';
 import { TranslateService } from '@ngx-translate/core';
-import { TranslationBaseComponent } from '../../../@shared/language-base/translation-base.component';
-import { FormBuilder, FormGroup, Validators } from '@angular/forms';
-import { HelpCenterArticleService } from '../../../@core/services/help-center-article.service';
-import { EmployeesService } from '../../../@core/services';
-import { takeUntil } from 'rxjs/operators';
-import { ErrorHandlingService } from '../../../@core/services/error-handling.service';
-import { HelpCenterAuthorService } from '../../../@core/services/help-center-author.service';
-import { Store } from '../../../@core/services/store.service';
-import { ckEditorConfig } from "../../../@shared/ckeditor.config";
+import { UntilDestroy, untilDestroyed } from '@ngneat/until-destroy';
+import { IHelpCenterArticle, IEmployee, IHelpCenterAuthor, IOrganization } from '@gauzy/contracts';
+import { TranslationBaseComponent } from '@gauzy/ui-core/i18n';
+import {
+	EmployeesService,
+	ErrorHandlingService,
+	HelpCenterArticleService,
+	HelpCenterAuthorService,
+	Store
+} from '@gauzy/ui-core/core';
 
+@UntilDestroy()
 @Component({
 	selector: 'ga-add-article',
 	templateUrl: 'add-article.component.html',
-	styleUrls: ['add-article.component.scss']
+	styleUrls: ['add-article.component.scss'],
+	changeDetection: ChangeDetectionStrategy.Eager,
+	standalone: false
 })
-export class AddArticleComponent
-	extends TranslationBaseComponent
-	implements OnInit, OnDestroy {
+export class AddArticleComponent extends TranslationBaseComponent implements OnInit, OnDestroy {
 	@Input() article?: IHelpCenterArticle;
 	@Input() editType: string;
 	@Input() length: number;
 	@Input() id: string;
-	private _ngDestroy$ = new Subject<void>();
+
 	constructor(
 		protected dialogRef: NbDialogRef<AddArticleComponent>,
 		readonly translateService: TranslateService,
-		private readonly fb: FormBuilder,
+		private readonly fb: UntypedFormBuilder,
 		private errorHandler: ErrorHandlingService,
 		private employeeService: EmployeesService,
 		private helpCenterAuthorService: HelpCenterAuthorService,
@@ -43,7 +39,7 @@ export class AddArticleComponent
 	) {
 		super(translateService);
 	}
-	form: FormGroup;
+	form: UntypedFormGroup;
 	public data = {
 		name: '',
 		description: '',
@@ -58,23 +54,19 @@ export class AddArticleComponent
 	selectedEmployeeIds = null;
 	employeeIds: string[] = [];
 	organization: IOrganization;
-	ckConfig : any = {
-		...ckEditorConfig,
-		height: "100"
-	};
 
 	ngOnInit() {
 		this.organization = this.store.selectedOrganization;
 		this.form = this.fb.group({
-			name: ['', Validators.required],
-			desc: ['', Validators.required],
+			name: ['', Validators.compose([Validators.required, Validators.maxLength(255)])],
+			desc: ['', Validators.compose([Validators.required, Validators.maxLength(255)])],
 			data: ['', Validators.required],
 			valid: [null, Validators.required]
 		});
 		const { id: organizationId, tenantId } = this.organization;
 		this.employeeService
 			.getAll(['user'], { organizationId, tenantId })
-			.pipe(takeUntil(this._ngDestroy$))
+			.pipe(untilDestroyed(this))
 			.subscribe((employees) => {
 				this.employees = employees.items;
 			});
@@ -99,15 +91,11 @@ export class AddArticleComponent
 
 	async loadAuthors(id) {
 		try {
-			this.authors = await this.helpCenterAuthorService.findByArticleId(
-				id
-			);
+			this.authors = await this.helpCenterAuthorService.findByArticleId(id);
 		} catch (error) {
 			this.errorHandler.handleError(error);
 		}
-		this.employeeIds = this.authors
-			? this.authors.map((item) => item.employeeId)
-			: [];
+		this.employeeIds = this.authors ? this.authors.map((item) => item.employeeId) : [];
 	}
 
 	toggleStatus(event: boolean) {
@@ -150,16 +138,13 @@ export class AddArticleComponent
 			if (this.editType === 'edit') this.deleteAuthors(this.article.id);
 			this.addAuthors(this.article.id, this.selectedEmployeeIds);
 			try {
-				this.article = await this.helpCenterArticleService.update(
-					`${this.article.id}`,
-					{
-						name: `${this.form.value.name}`,
-						description: `${this.form.value.desc}`,
-						data: `${this.form.value.data}`,
-						draft: this.selectedStatus,
-						privacy: this.selectedPrivacy
-					}
-				);
+				this.article = await this.helpCenterArticleService.update(`${this.article.id}`, {
+					name: `${this.form.value.name}`,
+					description: `${this.form.value.desc}`,
+					data: `${this.form.value.data}`,
+					draft: this.selectedStatus,
+					privacy: this.selectedPrivacy
+				});
 			} catch (error) {
 				this.errorHandler.handleError(error);
 			}
@@ -193,8 +178,13 @@ export class AddArticleComponent
 		this.dialogRef.close();
 	}
 
-	ngOnDestroy() {
-		this._ngDestroy$.next();
-		this._ngDestroy$.complete();
+	ngOnDestroy() {}
+
+	public get name(): AbstractControl {
+		return this.form.get('name');
+	}
+
+	public get desc(): AbstractControl {
+		return this.form.get('desc');
 	}
 }

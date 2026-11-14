@@ -1,63 +1,91 @@
-import { Component, OnDestroy, OnInit, ViewChild } from '@angular/core';
-import { IPipeline, ComponentLayoutStyleEnum, IOrganization } from '@gauzy/contracts';
-import { Ng2SmartTableComponent } from 'ng2-smart-table';
-import { TranslateService } from '@ngx-translate/core';
-import { NbDialogService } from '@nebular/theme';
-import { debounceTime, distinctUntilChanged, filter, tap } from 'rxjs/operators';
+import { Component, OnDestroy, OnInit, ChangeDetectionStrategy } from '@angular/core';
 import { HttpClient } from '@angular/common/http';
-import { distinctUntilChange } from '@gauzy/common-angular';
-import { PipelineFormComponent } from './pipeline-form/pipeline-form.component';
-import { DeleteConfirmationComponent } from '../../@shared/user/forms/delete-confirmation/delete-confirmation.component';
-import { API_PREFIX, ComponentEnum } from '../../@core/constants';
-import { StatusBadgeComponent } from '../../@shared/status-badge/status-badge.component';
+import { UntypedFormBuilder, UntypedFormGroup } from '@angular/forms';
+import { ActivatedRoute, Router } from '@angular/router';
+import { Cell } from 'angular2-smart-table';
+import { TranslateService } from '@ngx-translate/core';
+import { NbDialogService, NbTabComponent } from '@nebular/theme';
+import { Subject, firstValueFrom, BehaviorSubject } from 'rxjs';
+import { debounceTime, filter, tap } from 'rxjs/operators';
 import { UntilDestroy, untilDestroyed } from '@ngneat/until-destroy';
-import { ErrorHandlingService, PipelinesService, Store, ToastrService } from '../../@core/services';
-import { ServerDataSource } from '../../@core/utils/smart-table/server.data-source';
-import { Subject, firstValueFrom } from 'rxjs';
-import { InputFilterComponent } from '../../@shared/table-filters/input-filter.component';
-import { PaginationFilterBaseComponent } from '../../@shared/pagination/pagination-filter-base.component';
-import { FormControl } from '@angular/forms';
-import { Router } from '@angular/router';
+import { IPipeline, ComponentLayoutStyleEnum, IOrganization, PipelineTabsEnum } from '@gauzy/contracts';
+import {
+	AtLeastOneFieldValidator,
+	ErrorHandlingService,
+	PipelinesService,
+	ServerDataSource,
+	Store,
+	ToastrService
+} from '@gauzy/ui-core/core';
+import {
+	API_PREFIX,
+	ComponentEnum,
+	distinctUntilChange,
+	isNotEmpty,
+	isNotNullOrUndefined
+} from '@gauzy/ui-core/common';
+import {
+	DeleteConfirmationComponent,
+	IPaginationBase,
+	InputFilterComponent,
+	PaginationFilterBaseComponent,
+	StatusBadgeComponent
+} from '@gauzy/ui-core/shared';
+import { PipelineFormComponent } from './pipeline-form/pipeline-form.component';
+import { StageComponent } from './stage/stage.component';
 
 @UntilDestroy({ checkProperties: true })
 @Component({
-	templateUrl: './pipelines.component.html',
-	selector: 'ga-pipelines',
-	styleUrls: ['./pipelines.component.scss']
+    selector: 'ga-pipelines',
+    templateUrl: './pipelines.component.html',
+    styleUrls: ['./pipelines.component.scss'],
+    changeDetection: ChangeDetectionStrategy.Eager,
+    standalone: false
 })
 export class PipelinesComponent extends PaginationFilterBaseComponent implements OnInit, OnDestroy {
+	public smartTableSettings: object;
+	public dataLayoutStyle = ComponentLayoutStyleEnum.TABLE;
+	public componentLayoutStyleEnum = ComponentLayoutStyleEnum;
+	public smartTableSource: ServerDataSource;
+	public pipelines: IPipeline[] = [];
+	public viewComponentName: ComponentEnum;
+	public pipeline: IPipeline;
+	public organization: IOrganization;
+	public disableButton: boolean = true;
+	public loading: boolean = false;
+	public pipelineTabsEnum = PipelineTabsEnum;
+	public pipelines$: Subject<any> = this.subject$;
+	public nbTab$: Subject<string> = new BehaviorSubject(PipelineTabsEnum.ACTIONS);
+	private _refresh$: Subject<any> = new Subject();
 
-	smartTableSettings: object;
-	dataLayoutStyle = ComponentLayoutStyleEnum.TABLE;
-	componentLayoutStyleEnum = ComponentLayoutStyleEnum;
-	smartTableSource: ServerDataSource;
-	pipelines: IPipeline[] = [];
-	viewComponentName: ComponentEnum;
-	pipeline: IPipeline;
-	organization: IOrganization;
-	name: string;
-	disableButton = true;
-	loading: boolean;
-	subject$: Subject<any> = new Subject();
-    public inputControl = new FormControl();
-
-	pipelineTable: Ng2SmartTableComponent;
-	@ViewChild('pipelineTable') set content(content: Ng2SmartTableComponent) {
-		if (content) {
-			this.pipelineTable = content;
-			this.onChangedSource();
-		}
+	/*
+	 * Search Tab Form
+	 */
+	public searchForm: UntypedFormGroup = PipelinesComponent.searchBuildForm(this.fb);
+	static searchBuildForm(fb: UntypedFormBuilder): UntypedFormGroup {
+		return fb.group(
+			{
+				name: [],
+				stages: [],
+				status: []
+			},
+			{
+				validators: [AtLeastOneFieldValidator]
+			}
+		);
 	}
 
 	constructor(
+		public readonly translateService: TranslateService,
+		private readonly fb: UntypedFormBuilder,
 		private readonly pipelinesService: PipelinesService,
 		private readonly toastrService: ToastrService,
 		private readonly dialogService: NbDialogService,
-		readonly translateService: TranslateService,
 		private readonly store: Store,
 		private readonly httpClient: HttpClient,
 		private readonly errorHandlingService: ErrorHandlingService,
-		private readonly router: Router
+		private readonly router: Router,
+		private readonly route: ActivatedRoute
 	) {
 		super(translateService);
 		this.setView();
@@ -66,75 +94,153 @@ export class PipelinesComponent extends PaginationFilterBaseComponent implements
 	ngOnInit() {
 		this._loadSmartTableSettings();
 		this._applyTranslationOnSmartTable();
-
-		this.subject$
+		// Subscribe to changes in the pipelines$ observable stream
+		this.pipelines$
 			.pipe(
-				debounceTime(300),
-				tap(() => this.loading = true),
+				// Debounce the observable to wait for 100 milliseconds of inactivity
+				debounceTime(100),
+				// Perform the 'clearItem' action when the observable emits a value
 				tap(() => this.clearItem()),
+				// Perform the 'getPipelines' action when the observable emits a value
 				tap(() => this.getPipelines()),
+				// Unsubscribe from the observable when the component is destroyed
 				untilDestroyed(this)
 			)
 			.subscribe();
+		// Subscribe to changes in the nbTab$ observable stream
+		this.nbTab$
+			.pipe(
+				// Ensure distinct values are emitted
+				distinctUntilChange(),
+				// Debounce the observable to wait for 100 milliseconds of inactivity
+				debounceTime(100),
+				// Filter the observable based on a condition
+				filter(() => this.dataLayoutStyle === ComponentLayoutStyleEnum.CARDS_GRID),
+				// Perform the 'next' action on _refresh$ and pipelines$ observables
+				tap(() => this._refresh$.next(true)),
+				tap(() => this.pipelines$.next(true)),
+				// Unsubscribe from the observable when the component is destroyed
+				untilDestroyed(this)
+			)
+			.subscribe();
+		// Subscribe to changes in the pagination$ observable stream
+		this.pagination$
+			.pipe(
+				// Debounce the observable to wait for 100 milliseconds of inactivity
+				debounceTime(100),
+				// Ensure distinct values are emitted
+				distinctUntilChange(),
+				// Perform the 'next' action on the pipelines$ observable
+				tap(() => this.pipelines$.next(true)),
+				// Unsubscribe from the observable when the component is destroyed
+				untilDestroyed(this)
+			)
+			.subscribe();
+		// Subscribe to changes in the selectedOrganization$ observable stream
 		this.store.selectedOrganization$
 			.pipe(
-				filter((organization) => !!organization),
-				tap((organization: IOrganization) => this.organization = organization),
-				tap(() => this.subject$.next(true)),
-				untilDestroyed(this)
-			)
-			.subscribe();
-		this.inputControl.valueChanges
-            .pipe(
-                debounceTime(500),
-                distinctUntilChanged(),
-				tap((value) => this.setFilter({ field: 'name', search: value })),
-				untilDestroyed(this)
-            )
-            .subscribe();
-	}
-
-	setView() {
-		this.viewComponentName = ComponentEnum.PROPOSALS;
-		this.store
-			.componentLayout$(this.viewComponentName)
-			.pipe(untilDestroyed(this))
-			.subscribe((componentLayout) => {
-				this.dataLayoutStyle = componentLayout;
-			});
-		this.store
-			.componentLayout$(this.viewComponentName)
-			.pipe(
+				// Debounce the observable to wait for 100 milliseconds of inactivity
+				debounceTime(100),
+				// Filter out falsy values and ensure organization is truthy
+				filter((organization: IOrganization) => !!organization),
+				// Ensure distinct values are emitted
 				distinctUntilChange(),
-				tap((componentLayout) => this.dataLayoutStyle = componentLayout),
-				filter((componentLayout) => componentLayout === ComponentLayoutStyleEnum.CARDS_GRID),
+				// Perform the 'tap' action to assign the organization to the component property
+				tap((organization: IOrganization) => (this.organization = organization)),
+				// Perform additional actions: trigger _refresh$ and pipelines$ observables
+				tap(() => this._refresh$.next(true)),
+				tap(() => this.pipelines$.next(true)),
+				// Unsubscribe from the observable when the component is destroyed
+				untilDestroyed(this)
+			)
+			.subscribe();
+		// Subscribe to changes in the _refresh$ observable stream
+		this._refresh$
+			.pipe(
+				// Filter out values when dataLayoutStyle is not CARDS_GRID
+				filter(() => this.dataLayoutStyle === ComponentLayoutStyleEnum.CARDS_GRID),
+				// Perform the 'tap' action to refresh pagination
 				tap(() => this.refreshPagination()),
-				tap(() => this.subject$.next(true)),
+				// Perform the 'tap' action to clear the pipelines array
+				tap(() => (this.pipelines = [])),
+				// Unsubscribe from the observable when the component is destroyed
+				untilDestroyed(this)
+			)
+			.subscribe();
+		// Subscribe to changes in the query parameters
+		this.route.queryParamMap
+			.pipe(
+				// Only proceed if query parameters are present and 'openAddDialog' is 'true'
+				filter((params) => !!params && params.get('openAddDialog') === 'true'),
+				// Wait for 1000 milliseconds of inactivity
+				debounceTime(1000),
+				// Trigger the createPipeline method
+				tap(() => this.createPipeline()),
+				// Automatically unsubscribe when the component is destroyed
 				untilDestroyed(this)
 			)
 			.subscribe();
 	}
 
-	/*
-	 * Table on changed source event
+	/**
+	 * Sets up the initial view configuration and subscribes to changes in the component layout.
 	 */
-	onChangedSource() {
-		this.pipelineTable.source.onChangedSource
+	setView() {
+		// `PIPELINES`, not `PROPOSALS`. This page registered itself under the
+		// Proposals key, and `job-proposal-ui`'s own proposal page registers the
+		// SAME key — so the two shared one stored layout preference. Setting
+		// Proposals to the card view silently switched Pipelines to `ga-card-grid`
+		// as well, which is why this page could render as cards while every style
+		// written for its table was correct and simply never applied; toggling the
+		// layout on either page also moved the other. `ComponentEnum.PIPELINES` was
+		// declared for this page and, until now, referenced nowhere.
+		this.viewComponentName = ComponentEnum.PIPELINES;
+
+		// Subscribe to changes in the component layout
+		this.store
+			.componentLayout$(this.viewComponentName)
 			.pipe(
-				untilDestroyed(this),
-				tap(() => this.clearItem())
+				// Wait for 300 milliseconds of inactivity
+				debounceTime(300),
+				// Only emit a new value if it's distinct from the previous one
+				distinctUntilChange(),
+				// Update the dataLayoutStyle based on the component layout
+				tap((componentLayout) => (this.dataLayoutStyle = componentLayout)),
+				// Trigger pagination refresh
+				tap(() => this.refreshPagination()),
+				// Only proceed if the component layout is CARDS_GRID
+				filter((componentLayout) => componentLayout === ComponentLayoutStyleEnum.CARDS_GRID),
+				// Clear the pipelines array
+				tap(() => (this.pipelines = [])),
+				// Trigger the pipelines$ observable
+				tap(() => this.pipelines$.next(true)),
+				// Automatically unsubscribe when the component is destroyed
+				untilDestroyed(this)
 			)
 			.subscribe();
 	}
 
+	/**
+	 * Loads and configures the settings for the Smart Table used in the context of pipelines.
+	 */
 	private _loadSmartTableSettings() {
+		// Get pagination settings
+		const pagination: IPaginationBase = this.getPagination();
+
+		// Configure Smart Table settings
 		this.smartTableSettings = {
 			actions: false,
-			noDataMessage: this.getTranslation('SM_TABLE.NO_RESULT'),
+			selectedRowIndex: -1,
+			noDataMessage: this.getTranslation('SM_TABLE.NO_DATA.PIPELINE'),
+			pager: {
+				display: false,
+				perPage: pagination ? pagination.itemsPerPage : this.minItemPerPage
+			},
 			columns: {
 				name: {
 					type: 'string',
 					title: this.getTranslation('SM_TABLE.NAME'),
+					width: '30%',
 					filter: {
 						type: 'custom',
 						component: InputFilterComponent
@@ -146,93 +252,168 @@ export class PipelinesComponent extends PaginationFilterBaseComponent implements
 				description: {
 					type: 'string',
 					title: this.getTranslation('SM_TABLE.DESCRIPTION'),
+					width: '30%',
 					filter: {
 						type: 'custom',
 						component: InputFilterComponent
 					},
-					filterFunction: (value) => {
+					filterFunction: (value: string) => {
 						this.setFilter({ field: 'description', search: value });
 					}
 				},
+				stages: {
+					title: this.getTranslation('SM_TABLE.STAGE'),
+					type: 'custom',
+					width: '30%',
+					isFilterable: false,
+					renderComponent: StageComponent,
+					componentInitFunction: (instance: StatusBadgeComponent, cell: Cell) => {
+						instance.value = cell.getRawValue();
+					}
+				},
 				status: {
-					filter: false,
-					editor: false,
 					title: this.getTranslation('SM_TABLE.STATUS'),
 					type: 'custom',
-					width: '15%',
-					renderComponent: StatusBadgeComponent
+					isFilterable: false,
+					width: '10%',
+					renderComponent: StatusBadgeComponent,
+					componentInitFunction: (instance: StatusBadgeComponent, cell: Cell) => {
+						instance.value = cell.getRawValue();
+					}
 				}
 			}
 		};
 	}
 
+	/**
+	 * Applies translations to the Smart Table.
+	 */
 	private _applyTranslationOnSmartTable() {
+		// Subscribe to language change events using the translateService
 		this.translateService.onLangChange
 			.pipe(
-				tap(() => this._loadSmartTableSettings()),
+				// When a language change is detected, execute the following actions
+				tap(() => {
+					// Load or reload the Smart Table settings to reflect language changes
+					this._loadSmartTableSettings();
+				}),
+				// Automatically unsubscribe when the component is destroyed
 				untilDestroyed(this)
 			)
+			// Subscribe to the observable
 			.subscribe();
 	}
 
-	/*
-	* Register Smart Table Source Config 
-	*/
-	setSmartTableSource() {
-		const { tenantId } = this.store.user;
-		const { id: organizationId } = this.organization;
+	/**
+	 * Registers the Smart Table source configuration for pipelines.
+	 */
+	setSmartTableSource(): void {
+		// Check if the organization is defined
+		if (!this.organization) {
+			return;
+		}
 
-		const request = {};
+		// Set loading to true while fetching data
+		this.loading = true;
+
+		// Extract organization and tenant information
+		const { id: organizationId, tenantId } = this.organization;
+
+		// Create a new ServerDataSource for pipelines
 		this.smartTableSource = new ServerDataSource(this.httpClient, {
 			endPoint: `${API_PREFIX}/pipelines/pagination`,
-			relations: [ 'stages' ],
+			relations: ['stages'],
+			join: {
+				alias: 'pipeline',
+				leftJoin: { stages: 'pipeline.stages' },
+				...(this.filters.join ? this.filters.join : {})
+			},
 			where: {
-				...{ organizationId, tenantId },
-				...request,
-				...this.filters.where
+				organizationId,
+				tenantId,
+				...(this.filters.where ? this.filters.where : {})
 			},
 			resultMap: (pipeline: IPipeline) => {
+				// Map the pipeline and include the status using the statusMapper
 				return Object.assign({}, pipeline, {
 					status: this.statusMapper(pipeline.isActive)
 				});
 			},
 			finalize: () => {
+				// If the data layout style is CARDS_GRID, push data to pipelines array
+				if (this.dataLayoutStyle === ComponentLayoutStyleEnum.CARDS_GRID) {
+					this.pipelines.push(...this.smartTableSource.getData());
+				}
+
+				// Set pagination with the total count from the Smart Table source
+				this.setPagination({
+					...this.getPagination(),
+					totalItems: this.smartTableSource.count()
+				});
+
+				// Set loading to false as data fetching is complete
 				this.loading = false;
 			}
 		});
 	}
 
+	/**
+	 * Maps the status value to an object with text and class properties.
+	 * @param value - The status value to be mapped.
+	 * @returns An object with text and class properties.
+	 */
 	private statusMapper = (value: string | boolean) => {
+		// Determine the badge class based on the status value
 		const badgeClass = value ? 'success' : 'warning';
-		value = value
+
+		// Map the status value to a translated text
+		const statusText = value
 			? this.getTranslation('PIPELINES_PAGE.ACTIVE')
 			: this.getTranslation('PIPELINES_PAGE.INACTIVE');
+
+		// Return an object with text and class properties
 		return {
-			text: value,
+			text: statusText,
 			class: badgeClass
 		};
-	}
+	};
 
+	/**
+	 * Fetches and sets up the pipelines data for the Smart Table.
+	 * Handles pagination based on the current layout style.
+	 */
 	async getPipelines() {
+		// Check if organization is available
+		if (!this.organization) {
+			return;
+		}
+
 		try {
+			// Set up the Smart Table source configuration
 			this.setSmartTableSource();
+
+			// Get pagination settings
+			const { activePage, itemsPerPage } = this.getPagination();
+
+			// Set paging for the Smart Table source
+			this.smartTableSource.setPaging(activePage, itemsPerPage, false);
+
+			// If the layout style is CARDS_GRID, initiate GRID view pagination
 			if (this.dataLayoutStyle === ComponentLayoutStyleEnum.CARDS_GRID) {
-
-				// Initiate GRID view pagination
-				const { activePage, itemsPerPage } = this.pagination;
-				this.smartTableSource.setPaging(activePage, itemsPerPage, false);
-
 				await this.smartTableSource.getElements();
-				this.pipelines = this.smartTableSource.getData();
-
-				this.pagination['totalItems'] =  this.smartTableSource.count();
 			}
 		} catch (error) {
+			// Handle errors using the error handling service
 			this.errorHandlingService.handleError(error);
 		}
 	}
 
+	/**
+	 * Deletes a pipeline after user confirmation.
+	 * @param selectedItem - The pipeline item to be deleted.
+	 */
 	async deletePipeline(selectedItem?: IPipeline): Promise<void> {
+		// If a pipeline item is provided, select it
 		if (selectedItem) {
 			this.selectPipeline({
 				isSelected: true,
@@ -240,87 +421,148 @@ export class PipelinesComponent extends PaginationFilterBaseComponent implements
 			});
 		}
 
-		const canProceed: 'ok' = await firstValueFrom(this.dialogService
-			.open(DeleteConfirmationComponent, {
-				context: {
-					recordType: this.getTranslation(
-						'PIPELINES_PAGE.RECORD_TYPE',
-						this.pipeline
-					)
-				}
-			})
-			.onClose);
-
-		if ('ok' === canProceed) {
-			await this.pipelinesService.delete(this.pipeline.id);
-			this.toastrService.success('TOASTR.MESSAGE.PIPELINE_DELETED', {
-				name: this.pipeline.name
-			});
-			this.subject$.next(true);
-		}
-	}
-
-	async createPipeline(): Promise<void> {
-		const { name } = this;
-		const { tenantId } = this.store.user;
-		const { id: organizationId } = this.organization;
-
-		await this.goto({ pipeline: { name, organizationId, tenantId } });
-		delete this.name;
-	}
-
-	async editPipeline(selectedItem?: IPipeline): Promise<void> {
-		if (selectedItem) {
-			this.selectPipeline({
-				isSelected: true,
-				data: selectedItem
-			});
-		}
-
-		const { pipeline } = this;
-		await this.goto({ pipeline });
-		delete this.name;
-	}
-
-	private async goto(context: Record<any, any>): Promise<void> {
-		const dialogRef = this.dialogService.open(PipelineFormComponent, {
-			context
+		// Open a dialog to handle manual job application
+		const dialog = this.dialogService.open(DeleteConfirmationComponent, {
+			context: {
+				recordType: this.getTranslation('PIPELINES_PAGE.RECORD_TYPE', this.pipeline)
+			},
+			hasScroll: false
 		});
-		const data = await firstValueFrom(dialogRef.onClose);
-		const {
-			pipeline: { id, name }
-		} = context;
 
-		if (data) {
-			id
-				? this.toastrService.success(
-						`TOASTR.MESSAGE.PIPELINE_UPDATED`,
-						{
-							name
-						}
-				  )
-				: this.toastrService.success(
-						`TOASTR.MESSAGE.PIPELINE_CREATED`,
-						{
-							name: data.name
-						}
-				  );
-			this.subject$.next(true);
+		try {
+			// Wait for dialog result
+			const confirmationResult = await firstValueFrom(dialog.onClose);
+
+			// If the user confirms, proceed with deletion
+			if ('ok' === confirmationResult) {
+				// Delete the selected pipeline
+				await this.pipelinesService.delete(this.pipeline.id);
+
+				// Display a success message
+				this.toastrService.success('TOASTR.MESSAGE.PIPELINE_DELETED', { name: this.pipeline.name });
+			}
+		} catch (error) {
+			// Handle errors using the error handling service
+			this.errorHandlingService.handleError(error);
+		} finally {
+			// Trigger a refresh for the component and pipelines
+			this._refresh$.next(true);
+			this.pipelines$.next(true);
 		}
 	}
 
-	viewDeals(selectedItem?: IPipeline) {
+	/**
+	 * Creates a new pipeline after user input.
+	 */
+	async createPipeline(): Promise<void> {
+		// Ensure there is a selected organization
+		if (!this.organization) {
+			return;
+		}
+
+		try {
+			// Open the PipelineFormComponent with the provided context
+			const dialogRef = this.dialogService.open(PipelineFormComponent);
+
+			// Wait for the dialog to close and get the result
+			const pipeline = await firstValueFrom(dialogRef.onClose);
+
+			// If data is received, display a success message and trigger refresh
+			if (pipeline) {
+				this.toastrService.success('TOASTR.MESSAGE.PIPELINE_CREATED', { name: pipeline.name });
+			}
+		} catch (error) {
+			// Handle errors using the error handling service
+			this.errorHandlingService.handleError(error);
+		} finally {
+			this._refresh$.next(true);
+			this.pipelines$.next(true);
+		}
+	}
+
+	/**
+	 * Edits the details of a selected pipeline after user input.
+	 * @param selectedItem - The pipeline to be edited.
+	 */
+	async editPipeline(selectedItem?: IPipeline): Promise<void> {
+		// If a pipeline is selected, update the selected pipeline
 		if (selectedItem) {
 			this.selectPipeline({
 				isSelected: true,
 				data: selectedItem
 			});
 		}
-		this.router.navigate([`/pages/sales/pipelines/${this.pipeline.id}/deals`]);
+
+		try {
+			// Ensure there is a selected organization
+			if (!this.organization) {
+				return;
+			}
+
+			// If there is a selected pipeline, update its details
+			if (this.pipeline) {
+				// Open the PipelineFormComponent with the provided context
+				const dialogRef = this.dialogService.open(PipelineFormComponent, {
+					context: { pipeline: this.pipeline }
+				});
+
+				// Wait for the dialog to close and get the result
+				const pipeline = await firstValueFrom(dialogRef.onClose);
+
+				// If data is received, display a success message and trigger refresh
+				if (pipeline) {
+					this.toastrService.success('TOASTR.MESSAGE.PIPELINE_UPDATED', { name: this.pipeline.name });
+				}
+			}
+		} catch (error) {
+			// Handle errors using the error handling service
+			this.errorHandlingService.handleError(error);
+		} finally {
+			this._refresh$.next(true);
+			this.pipelines$.next(true);
+		}
 	}
 
-	selectPipeline({ isSelected, data }) {
+	/**
+	 * Navigates to the "Deals" page for the selected pipeline.
+	 * @param selectedItem - The selected pipeline.
+	 */
+	viewDeals(selectedItem?: IPipeline): void {
+		try {
+			// If a pipeline is selected, update the selected pipeline
+			if (selectedItem) {
+				this.selectPipeline({
+					isSelected: true,
+					data: selectedItem
+				});
+			}
+
+			// Ensure there is a valid pipeline before navigating
+			if (this.pipeline) {
+				// Construct the route for navigating to the "Deals" page
+				const dealsPageRoute = `/pages/sales/pipelines/${this.pipeline.id}/deals`;
+
+				// Navigate to the "Deals" page
+				this.router.navigate([dealsPageRoute]);
+			} else {
+				// Handle the case where there is no selected pipeline
+				throw new Error('No pipeline selected.');
+			}
+		} catch (error) {
+			// Handle errors using the error handling service
+			this.errorHandlingService.handleError(error);
+		}
+	}
+
+	/**
+	 * Updates the state when a pipeline is selected or deselected.
+	 * @param param0 - Object containing information about the selection (isSelected, data).
+	 */
+	selectPipeline({ isSelected, data }): void {
+		// Update the disableButton property based on the isSelected value
 		this.disableButton = !isSelected;
+
+		// Update the pipeline property based on the isSelected value
 		this.pipeline = isSelected ? data : null;
 	}
 
@@ -332,20 +574,58 @@ export class PipelinesComponent extends PaginationFilterBaseComponent implements
 			isSelected: false,
 			data: null
 		});
-		this.deselectAll();
 	}
 
-	/*
-	 * Deselect all table rows
+	/**
+	 * Handles the change event when a tab is selected.
+	 * @param tab - The selected tab.
 	 */
-	deselectAll() {
-		if (this.pipelineTable && this.pipelineTable.grid) {
-			this.pipelineTable.grid.dataSet['willSelect'] = 'false';
-			this.pipelineTable.grid.dataSet.deselectAll();
+	onChangeTab(tab: NbTabComponent): void {
+		// Update the nbTab$ observable with the ID of the currently selected tab
+		this.nbTab$.next(tab.tabId);
+	}
+
+	/**
+	 * Handles the search functionality based on the values from the search form.
+	 */
+	search(): void {
+		// Destructure values from the searchForm
+		const { status, name, stages } = this.searchForm.getRawValue();
+
+		// Set filters based on the extracted values
+		if (isNotNullOrUndefined(status)) {
+			this.setFilter({ field: 'isActive', search: status }, false);
+		}
+		if (isNotNullOrUndefined(name)) {
+			this.setFilter({ field: 'name', search: name }, false);
+		}
+		if (isNotNullOrUndefined(stages)) {
+			this.setFilter({ field: 'stages', search: stages }, false);
+		}
+
+		// Check if there are filters set
+		if (isNotEmpty(this.filters)) {
+			// Refresh pagination, update data, and trigger a refresh of the pipelines
+			this.refreshPagination();
+			this._refresh$.next(true);
+			this.pipelines$.next(true);
 		}
 	}
 
-	ngOnDestroy(): void {
-		clearTimeout();
+	/**
+	 * Resets the search form, clears filters, and triggers a refresh of the pipelines.
+	 */
+	reset(): void {
+		// Reset the search form to its initial state
+		this.searchForm.reset();
+
+		// Clear the filters
+		this._filters = {};
+
+		// Trigger a refresh of the data related to pipelines
+		this._refresh$.next(true);
+		this.pipelines$.next(true);
 	}
+
+	ngOnDestroy(): void {}
 }

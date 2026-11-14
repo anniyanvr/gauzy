@@ -1,28 +1,28 @@
-import { Component, OnInit } from '@angular/core';
-import { FormBuilder, FormGroup } from '@angular/forms';
+import { Component, OnInit, ChangeDetectionStrategy } from '@angular/core';
+import { UntypedFormBuilder, UntypedFormGroup } from '@angular/forms';
 import { IInvoice } from '@gauzy/contracts';
 import { NbDialogRef } from '@nebular/theme';
 import { TranslateService } from '@ngx-translate/core';
-import { InvoicesService } from '../../../@core/services/invoices.service';
-import { ToastrService } from '../../../@core/services/toastr.service';
-import { TranslationBaseComponent } from '../../../@shared/language-base/translation-base.component';
+import { InvoicesService } from '@gauzy/ui-core/core';
+import { TranslationBaseComponent } from '@gauzy/ui-core/i18n';
 import { InvoiceEmailMutationComponent } from '../invoice-email/invoice-email-mutation.component';
+import { ToastrService } from '@gauzy/ui-core/core';
 
 @Component({
-	selector: 'ga-add-internal-note',
-	templateUrl: './add-internal-note.component.html',
-	styleUrls: ['./add-internal-note.component.scss']
+    selector: 'ga-add-internal-note',
+    templateUrl: './add-internal-note.component.html',
+    styleUrls: ['./add-internal-note.component.scss'],
+    changeDetection: ChangeDetectionStrategy.Eager,
+    standalone: false
 })
-export class AddInternalNoteComponent
-	extends TranslationBaseComponent
-	implements OnInit {
+export class AddInternalNoteComponent extends TranslationBaseComponent implements OnInit {
 	invoice: IInvoice;
-	form: FormGroup;
+	form: UntypedFormGroup;
 
 	constructor(
 		readonly translateService: TranslateService,
 		protected dialogRef: NbDialogRef<InvoiceEmailMutationComponent>,
-		private fb: FormBuilder,
+		private fb: UntypedFormBuilder,
 		private toastrService: ToastrService,
 		private invoiceService: InvoicesService
 	) {
@@ -40,7 +40,7 @@ export class AddInternalNoteComponent
 	}
 
 	async addNote() {
-		await this.invoiceService.update(this.invoice.id, {
+		await this.invoiceService.updateAction(this.invoice.id, {
 			internalNote: this.form.value.internalNote
 		});
 		this.toastrService.success('INVOICES_PAGE.INTERNAL_NOTE.NOTE_SAVED');

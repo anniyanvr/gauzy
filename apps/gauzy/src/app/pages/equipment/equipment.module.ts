@@ -1,7 +1,4 @@
-import { CardGridModule } from './../../@shared/card-grid/card-grid.module';
 import { NgModule } from '@angular/core';
-import { EquipmentRoutingModule } from './equipment-routing.module';
-import { ThemeModule } from '../../@theme/theme.module';
 import {
 	NbCardModule,
 	NbButtonModule,
@@ -10,37 +7,40 @@ import {
 	NbDialogModule,
 	NbSpinnerModule
 } from '@nebular/theme';
-import { FormsModule } from '@angular/forms';
-import { Ng2SmartTableModule } from 'ng2-smart-table';
-import { TableComponentsModule } from '../../@shared/table-components/table-components.module';
+import { TranslatePipe } from '@ngx-translate/core';
+import {
+	SmartDataViewLayoutModule,
+	CardGridModule,
+	EquipmentMutationModule,
+	SharedModule,
+	TableComponentsModule,
+	UserFormsModule,
+	FavoriteToggleModule,
+	RecordViewModule
+} from '@gauzy/ui-core/shared';
+import { EquipmentRoutingModule } from './equipment-routing.module';
 import { EquipmentComponent } from './equipment.component';
-import { EquipmentService } from '../../@core/services/equipment.service';
-import { EquipmentMutationModule } from '../../@shared/equipment/equipment-mutation.module';
-import { UserFormsModule } from '../../@shared/user/forms/user-forms.module';
 import { AutoApproveComponent } from './auto-approve/auto-approve.component';
-import { TranslateModule } from '../../@shared/translate/translate.module';
-import { HeaderTitleModule } from '../../@shared/components/header-title/header-title.module';
 
 @NgModule({
 	imports: [
+		RecordViewModule,
+		FavoriteToggleModule,
 		EquipmentRoutingModule,
-		ThemeModule,
+		SharedModule,
 		UserFormsModule,
 		NbCardModule,
-		FormsModule,
 		NbButtonModule,
 		NbInputModule,
 		NbIconModule,
-		Ng2SmartTableModule,
 		NbDialogModule.forChild(),
 		EquipmentMutationModule,
 		TableComponentsModule,
 		CardGridModule,
-		TranslateModule,
+		TranslatePipe,
 		NbSpinnerModule,
-		HeaderTitleModule
+		SmartDataViewLayoutModule
 	],
-	providers: [EquipmentService],
 	declarations: [EquipmentComponent, AutoApproveComponent]
 })
 export class EquipmentModule {}

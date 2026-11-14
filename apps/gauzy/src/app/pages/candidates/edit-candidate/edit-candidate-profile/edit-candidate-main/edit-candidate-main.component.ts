@@ -1,81 +1,151 @@
-import { Component, OnDestroy, OnInit } from '@angular/core';
-import { FormBuilder, FormGroup, Validators } from '@angular/forms';
-import { Params } from '@angular/router';
-import { IOrganization, ICandidate } from '@gauzy/contracts';
-import { Subject, Subscription } from 'rxjs';
-import { takeUntil } from 'rxjs/operators';
-import { Store } from 'apps/gauzy/src/app/@core/services/store.service';
-import { CandidateStore } from 'apps/gauzy/src/app/@core/services/candidate-store.service';
-import { ToastrService } from 'apps/gauzy/src/app/@core/services/toastr.service';
+import { Component, OnDestroy, OnInit, ChangeDetectionStrategy } from '@angular/core';
+import { UntypedFormBuilder, UntypedFormGroup, Validators } from '@angular/forms';
+import { UntilDestroy, untilDestroyed } from '@ngneat/until-destroy';
+import { combineLatest } from 'rxjs';
+import { filter, tap } from 'rxjs/operators';
+import { IOrganization, ICandidate, IImageAsset } from '@gauzy/contracts';
+import { CandidateStore, Store, ToastrService } from '@gauzy/ui-core/core';
+import { distinctUntilChange } from '@gauzy/ui-core/common';
 
 /**
  * This component contains the properties stored within the User Entity of an candidate.
  * Any property which is either stored directly in the candidate entity or as a relation of the candidate entity should NOT be put in this Component
  */
+@UntilDestroy({ checkProperties: true })
 @Component({
-	selector: 'ga-edit-candidate-main',
-	templateUrl: './edit-candidate-main.component.html',
-	styleUrls: [
-		'../../../../organizations/edit-organization/edit-organization-settings/edit-organization-main/edit-organization-main.component.scss'
-	]
+    selector: 'ga-edit-candidate-main',
+    templateUrl: './edit-candidate-main.component.html',
+    styleUrls: ['./edit-candidate-main.component.scss'],
+    styles: [
+        `
+			:host {
+				overflow-y: auto;
+				max-height: calc(100vh - 24rem);
+				height: 100%;
+			}
+		`
+    ],
+    changeDetection: ChangeDetectionStrategy.Eager,
+    standalone: false
 })
 export class EditCandidateMainComponent implements OnInit, OnDestroy {
-	private _ngDestroy$ = new Subject<void>();
-	form: FormGroup;
-	paramSubscription: Subscription;
 	hoverState: boolean;
-	routeParams: Params;
 	selectedCandidate: ICandidate;
-	selectedOrganization: IOrganization;
+	organization: IOrganization;
+
+	/*
+	 * Candidate Main Mutation Form
+	 */
+	public form: UntypedFormGroup = this._fb.group({
+		username: [],
+		email: ['', Validators.required],
+		firstName: ['', Validators.required],
+		lastName: [],
+		imageUrl: [{ value: null, disabled: true }],
+		imageId: []
+	});
 
 	constructor(
-		private readonly fb: FormBuilder,
-		private readonly store: Store,
-		private readonly toastrService: ToastrService,
-		private readonly candidateStore: CandidateStore
+		private readonly _fb: UntypedFormBuilder,
+		private readonly _store: Store,
+		private readonly _toastrService: ToastrService,
+		private readonly _candidateStore: CandidateStore
 	) {}
 
 	ngOnInit() {
-		this.candidateStore.selectedCandidate$
-			.pipe(takeUntil(this._ngDestroy$))
-			.subscribe(async (candidate) => {
+		const storeOrganization$ = this._store.selectedOrganization$.pipe(
+			filter((organization: IOrganization) => !!organization),
+			distinctUntilChange(),
+			tap((organization: IOrganization) => {
+				this.organization = organization;
+			})
+		);
+		const storeCandidate$ = this._candidateStore.selectedCandidate$.pipe(
+			filter((candidate: ICandidate) => !!candidate),
+			distinctUntilChange(),
+			tap((candidate: ICandidate) => {
 				this.selectedCandidate = candidate;
-
-				if (this.selectedCandidate) {
-					this._initializeForm(this.selectedCandidate);
-				}
-
-				this.store.selectedOrganization$
-					.pipe(takeUntil(this._ngDestroy$))
-					.subscribe((organization) => {
-						this.selectedOrganization = organization;
-					});
-			});
+			})
+		);
+		combineLatest([storeOrganization$, storeCandidate$])
+			.pipe(
+				tap(() => this._initializeFormValue(this.selectedCandidate)),
+				untilDestroyed(this)
+			)
+			.subscribe();
 	}
 
-	handleImageUploadError(error: any) {
-		this.toastrService.danger(error);
-	}
-
-	async submitForm() {
-		if (this.form.valid) {
-			this.candidateStore.userForm = {
-				...this.form.value
-			};
+	/**
+	 * Handles form submission and updates the candidate store with the form value.
+	 */
+	async onSubmit() {
+		try {
+			if (this.form.valid) {
+				// Update user form data in store (assuming updateUserForm is async)
+				await this._candidateStore.updateUserForm(this.form.value);
+			}
+		} catch (error) {
+			this.handleSubmissionError(error);
 		}
 	}
 
-	private _initializeForm(candidate: ICandidate) {
-		this.form = this.fb.group({
-			username: [candidate.user.username],
-			email: [candidate.user.email, Validators.required],
-			firstName: [candidate.user.firstName],
-			lastName: [candidate.user.lastName],
-			imageUrl: [candidate.user.imageUrl, Validators.required]
-		});
+	/**
+	 * Initializes form values with the given candidate data.
+	 *
+	 * @param candidate - The candidate data to initialize the form with.
+	 */
+	private _initializeFormValue(candidate: ICandidate) {
+		const { username, email, firstName, lastName, imageUrl, imageId } = candidate?.user || {};
+		this.form.patchValue({ username, email, firstName, lastName, imageUrl, imageId });
 	}
-	ngOnDestroy() {
-		this._ngDestroy$.next();
-		this._ngDestroy$.complete();
+
+	/**
+	 * Upload candidate image/avatar
+	 *
+	 * @param image - The image asset to update.
+	 */
+	async updateImageAsset(image: IImageAsset) {
+		if (image) {
+			try {
+				await this._candidateStore.updateUserForm({ imageId: image.id });
+			} catch (error) {
+				console.error('Error while updating candidate avatar:', error);
+				this.handleImageUploadError(error);
+			}
+		}
 	}
+
+	/**
+	 * Handles errors during form submission.
+	 *
+	 * @param error - The error object to handle.
+	 */
+	private handleSubmissionError(error: any) {
+		// Optional: Implement error handling logic (e.g., show error message)
+		console.error('Form submission error:', error);
+		this._toastrService.danger(error);
+	}
+
+	/**
+	 * Handle errors during image upload.
+	 *
+	 * @param error - The error object to handle.
+	 */
+	handleImageUploadError(error: any) {
+		// The server's reason first — nested in an HTTP-shaped error, else the body's own — each read alone, so an
+		// unusable nested one does not hide a usable top-level one; then the uploader's fallback, a translation key the
+		// toastr translates.
+		const text = [error?.error?.message, error?.message].map(messageText).find((candidate) => !!candidate);
+		this._toastrService.danger(text || 'INVENTORY_PAGE.COULD_NOT_UPLOAD_IMAGE');
+	}
+
+	ngOnDestroy(): void {}
+}
+
+/** An error message as text: a validation error's list of sentences joined, anything but text dropped. */
+function messageText(message: unknown): string {
+	if (Array.isArray(message)) {
+		return message.filter((part): part is string => typeof part === 'string').join('; ').trim();
+	}
+	return typeof message === 'string' ? message.trim() : '';
 }

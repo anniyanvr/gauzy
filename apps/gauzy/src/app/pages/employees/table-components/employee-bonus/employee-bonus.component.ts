@@ -1,10 +1,11 @@
-import { Component, Input } from '@angular/core';
-import { ViewCell } from 'ng2-smart-table';
+import { Component, Input, ChangeDetectionStrategy } from '@angular/core';
 
 @Component({
-    templateUrl: './employee-bonus.component.html'
+    templateUrl: './employee-bonus.component.html',
+    changeDetection: ChangeDetectionStrategy.Eager,
+    standalone: false
 })
-export class EmployeeBonusComponent implements ViewCell {
+export class EmployeeBonusComponent {
     @Input()
     rowData: any;
 

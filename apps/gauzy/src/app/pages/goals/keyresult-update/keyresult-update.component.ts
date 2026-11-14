@@ -1,6 +1,6 @@
-import { Component, OnInit } from '@angular/core';
+import { Component, OnInit, ChangeDetectionStrategy } from '@angular/core';
 import { NbDialogRef } from '@nebular/theme';
-import { FormGroup, FormBuilder } from '@angular/forms';
+import { UntypedFormGroup, UntypedFormBuilder } from '@angular/forms';
 import {
 	IKeyResult,
 	IKeyResultUpdate,
@@ -10,20 +10,19 @@ import {
 	KpiOperatorEnum
 } from '@gauzy/contracts';
 import { TranslateService } from '@ngx-translate/core';
-import { TranslationBaseComponent } from '../../../@shared/language-base/translation-base.component';
-import { KeyResultUpdateService } from '../../../@core/services/keyresult-update.service';
-import { GoalSettingsService } from '../../../@core/services/goal-settings.service';
-import { Store } from '../../../@core/services/store.service';
+import { TranslationBaseComponent } from '@gauzy/ui-core/i18n';
+import { GoalSettingsService, KeyResultUpdateService } from '@gauzy/ui-core/core';
+import { Store } from '@gauzy/ui-core/core';
 
 @Component({
-	selector: 'ga-keyresult-update',
-	templateUrl: './keyresult-update.component.html',
-	styleUrls: ['./keyresult-update.component.scss']
+    selector: 'ga-keyresult-update',
+    templateUrl: './keyresult-update.component.html',
+    styleUrls: ['./keyresult-update.component.scss'],
+    changeDetection: ChangeDetectionStrategy.Eager,
+    standalone: false
 })
-export class KeyResultUpdateComponent
-	extends TranslationBaseComponent
-	implements OnInit {
-	keyResultUpdateForm: FormGroup;
+export class KeyResultUpdateComponent extends TranslationBaseComponent implements OnInit {
+	keyResultUpdateForm: UntypedFormGroup;
 	keyResult: IKeyResult;
 	KPI: IKPI;
 	keyResultTypeEnum = KeyResultTypeEnum;
@@ -32,7 +31,7 @@ export class KeyResultUpdateComponent
 
 	constructor(
 		private dialogRef: NbDialogRef<KeyResultUpdateComponent>,
-		private fb: FormBuilder,
+		private fb: UntypedFormBuilder,
 		readonly translateService: TranslateService,
 		private keyResultUpdateService: KeyResultUpdateService,
 		private goalSettingsService: GoalSettingsService,
@@ -48,10 +47,7 @@ export class KeyResultUpdateComponent
 			newStatus: [KeyResultUpdateStatusEnum.ON_TRACK]
 		});
 		this.keyResultUpdateForm.patchValue({
-			newStatus:
-				this.keyResult.status === 'none'
-					? KeyResultUpdateStatusEnum.ON_TRACK
-					: this.keyResult.status
+			newStatus: this.keyResult.status === 'none' ? KeyResultUpdateStatusEnum.ON_TRACK : this.keyResult.status
 		});
 		await this.getKPI();
 		if (
@@ -72,10 +68,14 @@ export class KeyResultUpdateComponent
 	}
 
 	async getKPI() {
+		// The key result's own KPI, the one the server judges a KPI report by; the organization's last KPI stood in
+		// for it before, and still does for a key result that names none
 		await this.goalSettingsService
-			.getAllKPI({
-				organization: { id: this.store.selectedOrganization.id }
-			})
+			.getAllKPI(
+				this.keyResult.kpiId
+					? { id: this.keyResult.kpiId }
+					: { organization: { id: this.store.selectedOrganization.id } }
+			)
 			.then((kpi) => {
 				const { items } = kpi;
 				this.KPI = items.pop();
@@ -87,54 +87,45 @@ export class KeyResultUpdateComponent
 	}
 
 	async updateKeyResult() {
-		if (
-			this.keyResult.type === KeyResultTypeEnum.NUMERICAL ||
-			this.keyResult.type === KeyResultTypeEnum.CURRENCY
-		) {
+		if (this.keyResult.type === KeyResultTypeEnum.NUMERICAL || this.keyResult.type === KeyResultTypeEnum.CURRENCY) {
 			this.keyResult.update = this.keyResultUpdateForm.value.newValueNumber;
-			const diff =
-				this.keyResult.targetValue - this.keyResult.initialValue;
-			const updateDiff =
-				this.keyResultUpdateForm.value.newValueNumber -
-				this.keyResult.initialValue;
-			this.keyResult.progress = Math.round(
-				(Math.abs(updateDiff) / Math.abs(diff)) * 100
-			);
+			const diff = this.keyResult.targetValue - this.keyResult.initialValue;
+			const updateDiff = this.keyResultUpdateForm.value.newValueNumber - this.keyResult.initialValue;
+			this.keyResult.progress = Math.round((Math.abs(updateDiff) / Math.abs(diff)) * 100);
 		} else if (this.keyResult.type === KeyResultTypeEnum.TRUE_OR_FALSE) {
-			this.keyResult.update =
-				this.keyResultUpdateForm.value.newValueBoolean === true ? 1 : 0;
+			this.keyResult.update = this.keyResultUpdateForm.value.newValueBoolean === true ? 1 : 0;
 			this.keyResult.progress = this.keyResult.update === 0 ? 0 : 100;
 		} else if (this.keyResult.type === KeyResultTypeEnum.KPI) {
 			this.keyResult.update = this.keyResultUpdateForm.value.newValueNumber;
 			if (this.KPI.operator === KpiOperatorEnum.LESSER_THAN_EQUAL_TO) {
-				this.keyResult.progress =
-					this.keyResult.update <= this.keyResult.targetValue
-						? 100
-						: 0;
+				this.keyResult.progress = this.keyResult.update <= this.keyResult.targetValue ? 100 : 0;
 			} else {
-				this.keyResult.progress =
-					this.keyResult.update >= this.keyResult.targetValue
-						? 100
-						: 0;
+				this.keyResult.progress = this.keyResult.update >= this.keyResult.targetValue ? 100 : 0;
 			}
 		}
 		this.keyResult.status = this.keyResultUpdateForm.value.newStatus;
+		// Filing the update is the whole report: the server applies it to the key result and its goal (owner
+		// decision 2(a), 2026-10-23) and computes the progress itself. The values above only keep the page current
+		// until it re-reads.
 		try {
+			// The endpoint validates against `TenantOrganizationBaseDTO`, which requires the tenancy
+			// fields — without them the POST is rejected and the dialog can never be dismissed.
+			const { id: organizationId, tenantId } = this.store.selectedOrganization;
 			const update: IKeyResultUpdate = {
 				keyResultId: this.keyResult.id,
 				owner: this.keyResult.owner.id,
 				update: this.keyResult.update,
 				progress: this.keyResult.progress,
-				status: this.keyResult.status
+				status: this.keyResult.status,
+				organizationId,
+				tenantId
 			};
 			delete this.keyResult.updates;
-			await this.keyResultUpdateService
-				.createUpdate(update)
-				.then(async (res) => {
-					if (res) {
-						this.dialogRef.close(this.keyResult);
-					}
-				});
+			await this.keyResultUpdateService.createUpdate(update).then(async (res) => {
+				if (res) {
+					this.dialogRef.close(this.keyResult);
+				}
+			});
 		} catch (error) {
 			console.log(error);
 		}

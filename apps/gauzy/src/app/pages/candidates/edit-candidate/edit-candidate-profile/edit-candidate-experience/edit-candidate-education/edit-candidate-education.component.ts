@@ -1,72 +1,62 @@
-import { Component, OnInit, OnDestroy, ViewChild } from '@angular/core';
+import { Component, OnInit, OnDestroy, ChangeDetectionStrategy } from '@angular/core';
 import { TranslateService } from '@ngx-translate/core';
-import { TranslationBaseComponent } from 'apps/gauzy/src/app/@shared/language-base/translation-base.component';
-import { FormGroup, FormBuilder, FormArray, Validators } from '@angular/forms';
-import { takeUntil } from 'rxjs/operators';
-import { Subject } from 'rxjs';
-import { CandidateStore } from 'apps/gauzy/src/app/@core/services/candidate-store.service';
-import { CandidateEducationsService } from 'apps/gauzy/src/app/@core/services/candidate-educations.service';
-import {
-	ICandidateEducation,
-	ComponentLayoutStyleEnum,
-	IOrganization
-} from '@gauzy/contracts';
-import { LocalDataSource } from 'ng2-smart-table';
-import { ComponentEnum } from 'apps/gauzy/src/app/@core/constants/layout.constants';
-import { Store } from 'apps/gauzy/src/app/@core/services/store.service';
-import { DateViewComponent } from 'apps/gauzy/src/app/@shared/table-components/date-view/date-view.component';
-import { ToastrService } from 'apps/gauzy/src/app/@core/services/toastr.service';
+import { UntypedFormGroup, UntypedFormBuilder, FormArray, Validators } from '@angular/forms';
+import { UntilDestroy, untilDestroyed } from '@ngneat/until-destroy';
+import { ICandidateEducation, ComponentLayoutStyleEnum, IOrganization } from '@gauzy/contracts';
+import { LocalDataSource, Cell } from 'angular2-smart-table';
+import { ComponentEnum } from '@gauzy/ui-core/common';
+import { CandidateEducationsService, CandidateStore, Store, ToastrService } from '@gauzy/ui-core/core';
+import { tap } from 'rxjs/operators';
+import { DateViewComponent, PaginationFilterBaseComponent } from '@gauzy/ui-core/shared';
 
+@UntilDestroy({ checkProperties: true })
 @Component({
-	selector: 'ga-edit-candidate-education',
-	templateUrl: './edit-candidate-education.component.html',
-	styleUrls: ['./edit-candidate-education.component.scss']
+    selector: 'ga-edit-candidate-education',
+    templateUrl: './edit-candidate-education.component.html',
+    styleUrls: ['./edit-candidate-education.component.scss'],
+    changeDetection: ChangeDetectionStrategy.Eager,
+    standalone: false
 })
-export class EditCandidateEducationComponent
-	extends TranslationBaseComponent
-	implements OnInit, OnDestroy {
-	selectedOrganization: IOrganization;
-	showAddCard: boolean;
-	candidateId: string;
-	educationList: ICandidateEducation[] = [];
-	private _ngDestroy$ = new Subject<void>();
-	form: FormGroup;
-	settingsSmartTable: object;
-	sourceSmartTable = new LocalDataSource();
-	viewComponentName: ComponentEnum;
-	dataLayoutStyle = ComponentLayoutStyleEnum.TABLE;
-	selectedEducation: ICandidateEducation;
-	disableButton = true;
-	loading: boolean;
-	@ViewChild('educationTable') educationTable;
+export class EditCandidateEducationComponent extends PaginationFilterBaseComponent implements OnInit, OnDestroy {
+	public selectedOrganization: IOrganization;
+	public showAddCard: boolean;
+	public candidateId: string;
+	public educationList: ICandidateEducation[] = [];
+	public form: UntypedFormGroup;
+	public settingsSmartTable: object;
+	public sourceSmartTable = new LocalDataSource();
+	public viewComponentName: ComponentEnum;
+	public dataLayoutStyle = ComponentLayoutStyleEnum.TABLE;
+	public selectedEducation: ICandidateEducation;
+	public disableButton = true;
+	public loading: boolean;
+
 	constructor(
 		private readonly toastrService: ToastrService,
 		readonly translateService: TranslateService,
-		private candidateStore: CandidateStore,
-		private fb: FormBuilder,
-		private store: Store,
-		private candidateEducationsService: CandidateEducationsService
+		private readonly candidateStore: CandidateStore,
+		private readonly fb: UntypedFormBuilder,
+		private readonly store: Store,
+		private readonly candidateEducationsService: CandidateEducationsService
 	) {
 		super(translateService);
 		this.setView();
 	}
 	ngOnInit() {
-		this.candidateStore.selectedCandidate$
-			.pipe(takeUntil(this._ngDestroy$))
-			.subscribe(async (candidate) => {
-				if (candidate) {
-					this.candidateId = candidate.id;
-					this.selectedOrganization = this.store.selectedOrganization;
+		this.candidateStore.selectedCandidate$.pipe(untilDestroyed(this)).subscribe(async (candidate) => {
+			if (candidate) {
+				this.candidateId = candidate.id;
+				this.selectedOrganization = this.store.selectedOrganization;
 
-					await this._initializeForm();
-					await this.loadEducations();
-					await this.loadSmartTable();
-					this._applyTranslationOnSmartTable();
-				}
-			});
+				await this._initializeForm();
+				await this.loadEducations();
+				await this.loadSmartTable();
+				this._applyTranslationOnSmartTable();
+			}
+		});
 	}
 	private async _initializeForm() {
-		this.form = new FormGroup({
+		this.form = new UntypedFormGroup({
 			educations: this.fb.array([])
 		});
 		const educationForm = this.educations;
@@ -81,20 +71,14 @@ export class EditCandidateEducationComponent
 		);
 	}
 	editEducation(education: ICandidateEducation) {
-		const selectedItem: ICandidateEducation = education
-			? education
-			: this.selectedEducation;
+		const selectedItem: ICandidateEducation = education ? education : this.selectedEducation;
 		this.showAddCard = !this.showAddCard;
 		this.educations.patchValue([selectedItem]);
 		this.selectedEducation = selectedItem;
 	}
 	selectEducation({ isSelected, data }) {
-		const selectedEducation = isSelected ? data : null;
-		if (this.educationTable) {
-			this.educationTable.grid.dataSet.willSelect = false;
-		}
 		this.disableButton = !isSelected;
-		this.selectedEducation = selectedEducation;
+		this.selectedEducation = isSelected ? data : null;
 	}
 	showCard() {
 		this.showAddCard = !this.showAddCard;
@@ -113,53 +97,58 @@ export class EditCandidateEducationComponent
 	}
 	private async loadEducations() {
 		this.loading = true;
-		const { id: organizationId, tenantId } = this.selectedOrganization;
-		const { items = [] } = await this.candidateEducationsService.getAll({
-			candidateId: this.candidateId,
-			organizationId,
-			tenantId
-		});
-		this.educationList = items;
-		this.sourceSmartTable.load(items);
-		this.loading = false;
+		try {
+			const { id: organizationId, tenantId } = this.selectedOrganization;
+			const { items = [] } = await this.candidateEducationsService.getAll({
+				candidateId: this.candidateId,
+				organizationId,
+				tenantId
+			});
+			this.educationList = items;
+			this.sourceSmartTable.load(items);
+			this.setPagination({
+				...this.getPagination(),
+				totalItems: this.sourceSmartTable.count()
+			});
+		} catch (error) {
+			console.error('Error while retrieving candidate educations', error);
+			this.toastrService.danger(error);
+		} finally {
+			this.loading = false;
+		}
 	}
 	async loadSmartTable() {
 		this.settingsSmartTable = {
 			actions: false,
+			selectedRowIndex: -1,
 			columns: {
 				schoolName: {
-					title: this.getTranslation(
-						'CANDIDATES_PAGE.EDIT_CANDIDATE.SCHOOL_NAME'
-					),
+					title: this.getTranslation('CANDIDATES_PAGE.EDIT_CANDIDATE.SCHOOL_NAME'),
 					type: 'string'
 				},
 				degree: {
-					title: this.getTranslation(
-						'CANDIDATES_PAGE.EDIT_CANDIDATE.DEGREE'
-					),
+					title: this.getTranslation('CANDIDATES_PAGE.EDIT_CANDIDATE.DEGREE'),
 					type: 'string',
-					filter: false
+					isFilterable: false
 				},
 				field: {
-					title: this.getTranslation(
-						'CANDIDATES_PAGE.EDIT_CANDIDATE.FIELD'
-					),
+					title: this.getTranslation('CANDIDATES_PAGE.EDIT_CANDIDATE.FIELD'),
 					type: 'string'
 				},
 				notes: {
-					title: this.getTranslation(
-						'CANDIDATES_PAGE.EDIT_CANDIDATE.ADDITIONAL_NOTES'
-					),
+					title: this.getTranslation('CANDIDATES_PAGE.EDIT_CANDIDATE.ADDITIONAL_NOTES'),
 					type: 'string',
-					filter: false
+					isFilterable: false
 				},
 				completionDate: {
-					title: this.getTranslation(
-						'CANDIDATES_PAGE.EDIT_CANDIDATE.COMPLETION_DATE'
-					),
+					title: this.getTranslation('CANDIDATES_PAGE.EDIT_CANDIDATE.COMPLETION_DATE'),
 					type: 'custom',
+					isFilterable: false,
 					renderComponent: DateViewComponent,
-					filter: false
+					componentInitFunction: (instance: DateViewComponent, cell: Cell) => {
+						instance.rowData = cell.getRow().getData();
+						instance.value = cell.getValue();
+					}
 				}
 			}
 		};
@@ -168,13 +157,10 @@ export class EditCandidateEducationComponent
 		this.viewComponentName = ComponentEnum.EDUCATION;
 		this.store
 			.componentLayout$(this.viewComponentName)
-			.pipe(takeUntil(this._ngDestroy$))
+			.pipe(untilDestroyed(this))
 			.subscribe((componentLayout) => {
 				this.dataLayoutStyle = componentLayout;
-				this.selectedEducation =
-					this.dataLayoutStyle === 'CARDS_GRID'
-						? null
-						: this.selectedEducation;
+				this.selectedEducation = this.dataLayoutStyle === 'CARDS_GRID' ? null : this.selectedEducation;
 			});
 	}
 	async submitForm() {
@@ -192,20 +178,14 @@ export class EditCandidateEducationComponent
 		if (this.selectedEducation) {
 			//editing existing education
 			try {
-				await this.candidateEducationsService.update(
-					this.selectedEducation.id,
-					{
-						...formValue,
-						organizationId,
-						tenantId
-					}
-				);
-				this.toastrService.success(
-					'TOASTR.MESSAGE.CANDIDATE_EDUCATION_UPDATED',
-					{
-						name: formValue.schoolName
-					}
-				);
+				await this.candidateEducationsService.update(this.selectedEducation.id, {
+					...formValue,
+					organizationId,
+					tenantId
+				});
+				this.toastrService.success('TOASTR.MESSAGE.CANDIDATE_EDUCATION_UPDATED', {
+					name: formValue.schoolName
+				});
 				this.loadEducations();
 			} catch (error) {
 				this.toastrError(error);
@@ -219,12 +199,9 @@ export class EditCandidateEducationComponent
 					organizationId,
 					tenantId
 				});
-				this.toastrService.success(
-					'TOASTR.MESSAGE.CANDIDATE_EDUCATION_CREATED',
-					{
-						name: formValue.schoolName
-					}
-				);
+				this.toastrService.success('TOASTR.MESSAGE.CANDIDATE_EDUCATION_CREATED', {
+					name: formValue.schoolName
+				});
 				this.loadEducations();
 			} catch (error) {
 				this.toastrError(error);
@@ -233,19 +210,14 @@ export class EditCandidateEducationComponent
 		this.cancel();
 	}
 	async removeEducation(education: ICandidateEducation) {
-		const selectedItem: ICandidateEducation = education
-			? education
-			: this.selectedEducation;
+		const selectedItem: ICandidateEducation = education ? education : this.selectedEducation;
 		try {
 			await this.candidateEducationsService.delete(selectedItem.id);
 			this.selectedEducation = null;
 			this.disableButton = true;
-			this.toastrService.success(
-				'TOASTR.MESSAGE.CANDIDATE_EDUCATION_DELETED',
-				{
-					name: selectedItem.schoolName
-				}
-			);
+			this.toastrService.success('TOASTR.MESSAGE.CANDIDATE_EDUCATION_DELETED', {
+				name: selectedItem.schoolName
+			});
 			this.loadEducations();
 		} catch (error) {
 			this.toastrError(error);
@@ -255,16 +227,13 @@ export class EditCandidateEducationComponent
 		this.toastrService.danger(error);
 	}
 
-	_applyTranslationOnSmartTable() {
+	private _applyTranslationOnSmartTable() {
 		this.translateService.onLangChange
-			.pipe(takeUntil(this._ngDestroy$))
-			.subscribe(() => {
-				this.loadSmartTable();
-			});
-	}
-	ngOnDestroy() {
-		this._ngDestroy$.next();
-		this._ngDestroy$.complete();
+			.pipe(
+				tap(() => this.loadSmartTable()),
+				untilDestroyed(this)
+			)
+			.subscribe();
 	}
 
 	/*
@@ -273,4 +242,6 @@ export class EditCandidateEducationComponent
 	get educations(): FormArray {
 		return this.form.get('educations') as FormArray;
 	}
+
+	ngOnDestroy(): void {}
 }

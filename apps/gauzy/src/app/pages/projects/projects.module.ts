@@ -1,85 +1,87 @@
 import { NgModule } from '@angular/core';
-import { ThemeModule } from '../../@theme/theme.module';
 import {
-	NbCardModule,
-	NbButtonModule,
-	NbInputModule,
-	NbIconModule,
-	NbDialogModule,
 	NbActionsModule,
-	NbToggleModule,
+	NbButtonModule,
+	NbCardModule,
+	NbDialogModule,
+	NbIconModule,
+	NbInputModule,
 	NbSelectModule,
-	NbDatepickerModule,
 	NbSpinnerModule,
-	NbTabsetModule
+	NbToggleModule,
+	NbTooltipModule
 } from '@nebular/theme';
-import { FormsModule, ReactiveFormsModule } from '@angular/forms';
+import { NgxPermissionsModule } from 'ngx-permissions';
+import { TranslatePipe } from '@ngx-translate/core';
+import {
+	SmartDataViewLayoutModule,
+	CardGridModule,
+	EntityWithMembersModule,
+	FavoriteToggleModule,
+	ProjectMutationModule,
+	ProjectModuleMutationModule,
+	RecordViewModule
+} from '@gauzy/ui-core/shared';
+// Record-side Documents panel (spec 00 §6.14 R-LNK-02). Standalone, so it is
+// imported directly — the Documents hub module is never pulled in here.
+import { DocumentLinksPanelComponent } from '@gauzy/plugin-docs-ui';
 import { ProjectsRoutingModule } from './projects-routing.module';
-import { ProjectsComponent } from './projects.component';
-import { TagsColorInputModule } from '../../@shared/tags/tags-color-input/tags-color-input.module';
-import { TableComponentsModule } from '../../@shared/table-components/table-components.module';
-import { OrganizationProjectsService } from '../../@core/services/organization-projects.service';
-import { ProjectsMutationComponent } from './projects-mutation/projects-mutation.component';
-import { RemoveLodashModule } from '../../@shared/remove-lodash/remove-lodash.module';
-import { EntityWithMembersModule } from '../../@shared/entity-with-members-card/entity-with-members-card.module';
-import { OrganizationContactService } from '../../@core/services/organization-contact.service';
-import { SharedModule } from '../../@shared/shared.module';
-import { NgSelectModule } from '@ng-select/ng-select';
-import { OrganizationsMutationModule } from '../../@shared/organizations/organizations-mutation/organizations-mutation.module';
-import { UserFormsModule } from '../../@shared/user/forms/user-forms.module';
-import { ImageUploaderModule } from '../../@shared/image-uploader/image-uploader.module';
-import { EmployeeSelectorsModule } from '../../@theme/components/header/selectors/employee/employee.module';
-import { EmployeeMultiSelectModule } from '../../@shared/employee/employee-multi-select/employee-multi-select.module';
-import { FileUploaderModule } from '../../@shared/file-uploader-input/file-uploader-input.module';
-import { Ng2SmartTableModule } from 'ng2-smart-table';
-import { ColorPickerModule } from 'ngx-color-picker';
-import { TasksSprintSettingsViewModule } from '../../@shared/tasks-sprint-settings-view/tasks-sprint-settings-view.module';
-import { CommonModule } from '@angular/common';
-import { CKEditorModule } from 'ng2-ckeditor';
-import { CurrencyModule } from '../../@shared/currency/currency.module';
-import { TranslateModule } from '../../@shared/translate/translate.module';
-import { HeaderTitleModule } from '../../@shared/components/header-title/header-title.module';
+import { TableComponentsModule } from '@gauzy/ui-core/shared';
+import { SharedModule } from '@gauzy/ui-core/shared';
+import { ProjectLayoutComponent } from './layout/layout.component';
+import { ProjectCreateMutationComponent } from './components/project-create/create.component';
+import { ProjectEditMutationComponent } from './components/project-edit/edit.component';
+import { ProjectListComponent } from './components/project-list/list.component';
+import { ProjectQuickLookComponent } from './components/project-quick-look/project-quick-look.component';
+import { ProjectViewPageComponent } from './components/project-view/project-view-page.component';
+import { ProjectBoardComponent } from './components/project-view/project-board/project-board.component';
+import { ProjectActivityComponent } from './components/project-view/project-activity/project-activity.component';
+import { EntityCommentsComponent } from '../shared/entity-comments/entity-comments.component';
+import { TaskViewHeaderComponent } from '../tasks/components/task-view/task-view-header.component';
 
 @NgModule({
 	imports: [
-		CommonModule,
-		ThemeModule,
-		NbCardModule,
-		FormsModule,
-		NbButtonModule,
-		ReactiveFormsModule,
-		NbInputModule,
-		NbIconModule,
-		TagsColorInputModule,
-		ColorPickerModule,
 		NbActionsModule,
-		TableComponentsModule,
-		ProjectsRoutingModule,
+		NbButtonModule,
+		NbCardModule,
 		NbDialogModule,
-		RemoveLodashModule,
-		EntityWithMembersModule,
-		NbDialogModule.forChild(),
-		TranslateModule,
-		NgSelectModule,
-		OrganizationsMutationModule,
-		UserFormsModule,
-		ImageUploaderModule,
+		NbIconModule,
+		NbInputModule,
 		NbSelectModule,
-		NbDatepickerModule,
-		NbToggleModule,
-		EmployeeSelectorsModule,
-		EmployeeMultiSelectModule,
-		FileUploaderModule,
-		SharedModule,
-		Ng2SmartTableModule,
 		NbSpinnerModule,
-		TasksSprintSettingsViewModule,
-		NbTabsetModule,
-		CKEditorModule,
-		CurrencyModule,
-		HeaderTitleModule
+		NbToggleModule,
+		NbTooltipModule,
+		TranslatePipe,
+		NgxPermissionsModule.forChild(),
+		ProjectsRoutingModule,
+		TableComponentsModule,
+		EntityWithMembersModule,
+		SharedModule,
+		SmartDataViewLayoutModule,
+		CardGridModule,
+		FavoriteToggleModule,
+		ProjectMutationModule,
+		ProjectModuleMutationModule,
+		DocumentLinksPanelComponent,
+		// The project page's shell (back button, heading, not-found / no-access states).
+		RecordViewModule,
+		// The project page's body. Standalone, shared with the team and employee pages' drawers.
+		ProjectQuickLookComponent,
+		// The project page's other tabs. Standalone, used only by the project page.
+		ProjectBoardComponent,
+		ProjectActivityComponent,
+		// The Comments tab: the shared comments of a record, also the contact page's Notes.
+		EntityCommentsComponent,
+		// The task drawer's issue-style header, shared with the task lists. Standalone.
+		TaskViewHeaderComponent
 	],
-	declarations: [ProjectsComponent, ProjectsMutationComponent],
-	providers: [OrganizationProjectsService, OrganizationContactService]
+	declarations: [
+		ProjectLayoutComponent,
+		ProjectListComponent,
+		ProjectCreateMutationComponent,
+		ProjectEditMutationComponent,
+		ProjectViewPageComponent
+	],
+	providers: []
 })
 export class ProjectsModule {}

@@ -8,9 +8,9 @@ import {
 	IReport,
 	UpdateReportMenuInput
 } from '@gauzy/contracts';
-import { toParams } from '@gauzy/common-angular';
+import { toParams } from '@gauzy/ui-core/common';
 import { Query, Store, StoreConfig } from '@datorama/akita';
-import { API_PREFIX } from '../../../@core/constants/app.constants';
+import { API_PREFIX } from '@gauzy/ui-core/common';
 import { firstValueFrom } from 'rxjs';
 
 export function initialReportFilterState(): IReport[] {
@@ -53,8 +53,7 @@ export class ReportService {
 
 	getReportMenuItems(request: GetReportMenuItemsInput = {}) {
 		return firstValueFrom(
-			this.http
-			.get<IReport[]>(`${API_PREFIX}/report/menu-items`, {
+			this.http.get<IReport[]>(`${API_PREFIX}/report/menu-items`, {
 				params: request ? toParams(request) : {}
 			})
 		).then((resp) => {
@@ -65,27 +64,19 @@ export class ReportService {
 
 	getReports(request?: IGetReport) {
 		return firstValueFrom(
-			this.http
-			.get<IPagination<IReport>>(`${API_PREFIX}/report`, {
+			this.http.get<IPagination<IReport>>(`${API_PREFIX}/report`, {
 				params: request ? toParams(request) : {}
 			})
 		);
 	}
 
 	updateReport(request?: UpdateReportMenuInput) {
-		return firstValueFrom(
-			this.http
-			.post<IPagination<IReport>>(
-				`${API_PREFIX}/report/menu-item`,
-				request
-			)
-		);
+		return firstValueFrom(this.http.post<IPagination<IReport>>(`${API_PREFIX}/report/menu-item`, request));
 	}
 
 	getReportCategories(request?: IGetReportCategory) {
 		return firstValueFrom(
-			this.http
-			.get<IPagination<IReport>>(`${API_PREFIX}/report/category`, {
+			this.http.get<IPagination<IReport>>(`${API_PREFIX}/report/category`, {
 				params: request ? toParams(request) : {}
 			})
 		);

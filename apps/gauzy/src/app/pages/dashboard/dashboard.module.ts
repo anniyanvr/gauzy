@@ -1,72 +1,195 @@
-import { NgModule } from '@angular/core';
-import { FormsModule } from '@angular/forms';
+import { CUSTOM_ELEMENTS_SCHEMA, NgModule } from '@angular/core';
+import { RouterModule, ROUTES } from '@angular/router';
+import { DragDropModule } from '@angular/cdk/drag-drop';
 import {
 	NbAlertModule,
+	NbBadgeModule,
 	NbButtonModule,
 	NbCardModule,
 	NbDialogModule,
 	NbIconModule,
 	NbInputModule,
-	NbSpinnerModule,
-	NbTooltipModule,
-	NbTreeGridModule,
+	NbListModule,
+	NbPopoverModule,
+	NbProgressBarModule,
+	NbRouteTabsetModule,
 	NbSelectModule,
-	NbRouteTabsetModule
+	NbSpinnerModule,
+	NbToggleModule,
+	NbTooltipModule,
+	NbTreeGridModule
 } from '@nebular/theme';
 import { NgSelectModule } from '@ng-select/ng-select';
-import { AuthService } from '../../@core/services/auth.service';
-import { ExpensesService } from '../../@core/services/expenses.service';
-import { IncomeService } from '../../@core/services/income.service';
-import { ProfitHistoryModule } from '../../@shared/dashboard/profit-history/profit-history.module';
-import { RecordsHistoryModule } from '../../@shared/dashboard/records-history/records-history.module';
-import { SingleStatisticModule } from '../../@shared/single-statistic/single-statistic.module';
-import { ThemeModule } from '../../@theme/theme.module';
-import { DashboardRoutingModule } from './dashboard-routing.module';
+import { TranslatePipe } from '@ngx-translate/core';
+import { BaseChartDirective } from 'ng2-charts';
+import { InfiniteScrollDirective } from 'ngx-infinite-scroll';
+import { NgxPermissionsModule } from 'ngx-permissions';
+import { PageExtensionSlotComponent } from '@gauzy/plugin-ui';
+import {
+	ActivityItemModule,
+	CounterPointComponent,
+	DashboardWidgetHostComponent,
+	DialogsModule,
+	DynamicTabsModule,
+	GalleryModule,
+	InfoBlockModule,
+	LineChartModule,
+	NoDataMessageModule,
+	ProfitHistoryModule,
+	RecordsHistoryModule,
+	RecordViewModule,
+	ScreenshotsItemModule,
+	SharedModule,
+	SingleStatisticModule,
+	TableComponentsModule,
+	TimezoneFilterModule,
+	WidgetLayoutModule,
+	WindowLayoutModule
+} from '@gauzy/ui-core/shared';
+import { PageRouteRegistryService } from '@gauzy/ui-core/core';
+import { createDashboardRoutes } from './dashboard.routes';
 import { DashboardComponent } from './dashboard.component';
-import { DataEntryShortcutsComponent } from './data-entry-shortcuts/data-entry-shortcuts.component';
+import { DashboardSwitcherComponent } from './dashboard-switcher/dashboard-switcher.component';
+import { DashboardQuickLookComponent } from './dashboard-quick-look/dashboard-quick-look.component';
+import { CustomDashboardComponent } from './custom-dashboard/custom-dashboard.component';
+import { DashboardCanvasComponent } from './custom-dashboard/dashboard-canvas.component';
+import { WidgetPaletteComponent } from './custom-dashboard/widget-palette.component';
+import { DashboardTabStripComponent } from './custom-dashboard/dashboard-tab-strip.component';
+import { WidgetConfigDialogComponent } from './custom-dashboard/widget-config-dialog.component';
 import { HumanResourcesComponent } from './human-resources/human-resources.component';
 import { AccountingComponent } from './accounting/accounting.component';
-import { InfoBlockModule } from '../../@shared/dashboard/info-block/info-block.module';
 import { ProjectManagementComponent } from './project-management/project-management.component';
-import { EmployeeChartsModule } from './human-resources/employee-charts/employee-charts.module';
-import { TimeTrackingModule } from './time-tracking/time-tracking.module';
-import { TranslateModule } from '../../@shared/translate/translate.module';
-import { HeaderTitleModule } from '../../@shared/components/header-title/header-title.module';
+import { ProjectManagementDetailsComponent } from './project-management/project-management-details/project-management-details.component';
+import { RecentActivityComponent } from './project-management/recent-activity/recent-activity.component';
+import { ProjectQuickLookComponent } from '../projects/components/project-quick-look/project-quick-look.component';
+import { TaskViewHeaderComponent } from '../tasks/components/task-view/task-view-header.component';
+import {
+	EmployeeChartLegendComponent,
+	EmployeeChartsComponent,
+	EmployeeDoughnutChartComponent,
+	EmployeeHorizontalBarChartComponent,
+	EmployeeStackedBarChartComponent
+} from './employee-charts';
+import {
+	AllTeamComponent,
+	ChartComponent,
+	TeamCardComponent,
+	TeamComponent,
+	TeamMemberComponent,
+	TeamProjectsListComponent,
+	TeamPersonCardComponent
+} from './team';
+
+// NB Modules
+const NB_MODULES = [
+	NbAlertModule,
+	NbBadgeModule,
+	NbButtonModule,
+	NbCardModule,
+	NbDialogModule.forChild(),
+	NbIconModule,
+	NbInputModule,
+	NbListModule,
+	NbPopoverModule,
+	NbProgressBarModule,
+	NbRouteTabsetModule,
+	NbSelectModule,
+	NbSpinnerModule,
+	NbToggleModule,
+	NbTooltipModule,
+	NbTreeGridModule
+];
+
+// Standalone Modules
+const STANDALONE_MODULES = [
+	InfiniteScrollDirective, // Standalone directive must be imported, not declared
+	PageExtensionSlotComponent // Plugin extension slot for rendering React/Vue/etc widgets
+];
+
+// Third Party Modules
+const THIRD_PARTY_MODULES = [
+	LineChartModule,
+	NgSelectModule,
+	NgxPermissionsModule.forChild(),
+	TranslatePipe
+];
+
+// Components
+const COMPONENTS = [
+	DashboardComponent,
+	DashboardSwitcherComponent,
+	DashboardQuickLookComponent,
+	// Dashboard builder: canvas page, grid canvas, widget palette, tab strip
+	// and the per-widget settings dialog opened from a widget's kebab menu
+	CustomDashboardComponent,
+	DashboardCanvasComponent,
+	WidgetPaletteComponent,
+	DashboardTabStripComponent,
+	WidgetConfigDialogComponent,
+	AccountingComponent,
+	HumanResourcesComponent,
+	ProjectManagementComponent,
+	ProjectManagementDetailsComponent,
+	EmployeeChartsComponent,
+	EmployeeChartLegendComponent,
+	EmployeeHorizontalBarChartComponent,
+	EmployeeStackedBarChartComponent,
+	EmployeeDoughnutChartComponent,
+	TeamComponent,
+	TeamCardComponent,
+	TeamMemberComponent,
+	ChartComponent,
+	AllTeamComponent,
+	TeamProjectsListComponent,
+	TeamPersonCardComponent
+];
 
 @NgModule({
 	imports: [
-		DashboardRoutingModule,
-		ThemeModule,
-		NbCardModule,
-		NgSelectModule,
-		FormsModule,
-		NbButtonModule,
-		NbInputModule,
+		RouterModule.forChild([]),
+		...NB_MODULES,
+		...THIRD_PARTY_MODULES,
+		...STANDALONE_MODULES,
+		BaseChartDirective,
+		// Dashboard builder: CDK drag & drop (canvas + palette + tab strip)
+		// and the standalone widget host that instantiates palette widgets.
+		DragDropModule,
+		DashboardWidgetHostComponent,
+		// Feature Modules
+		DialogsModule,
 		RecordsHistoryModule,
-		NbDialogModule.forChild(),
-		NbTreeGridModule,
-		NbIconModule,
-		NbTooltipModule,
-		NbSpinnerModule,
-		NbSelectModule,
-		NbAlertModule,
 		ProfitHistoryModule,
-		TranslateModule,
-		EmployeeChartsModule,
-		NbSpinnerModule,
 		SingleStatisticModule,
 		InfoBlockModule,
-		NbRouteTabsetModule,
-		TimeTrackingModule,
-		HeaderTitleModule
+		SharedModule,
+		TableComponentsModule,
+		NoDataMessageModule,
+		ActivityItemModule,
+		CounterPointComponent,
+		DynamicTabsModule,
+		GalleryModule,
+		ScreenshotsItemModule,
+		TimezoneFilterModule,
+		WidgetLayoutModule,
+		WindowLayoutModule,
+		// Project management quick looks: the same task and project drawers as the employee page.
+		RecordViewModule,
+		TaskViewHeaderComponent,
+		ProjectQuickLookComponent,
+		// Project management: the Recent activity panel.
+		RecentActivityComponent
 	],
-	declarations: [
-		DashboardComponent,
-		AccountingComponent,
-		HumanResourcesComponent,
-		DataEntryShortcutsComponent,
-		ProjectManagementComponent
-	],
-	providers: [IncomeService, ExpensesService, AuthService]
+	declarations: [...COMPONENTS],
+	exports: [RouterModule],
+	schemas: [CUSTOM_ELEMENTS_SCHEMA],
+	providers: [
+		{
+			provide: ROUTES,
+			useFactory: (_pageRouteRegistryService: PageRouteRegistryService) =>
+				createDashboardRoutes(_pageRouteRegistryService),
+			deps: [PageRouteRegistryService],
+			multi: true
+		}
+	]
 })
 export class DashboardModule {}

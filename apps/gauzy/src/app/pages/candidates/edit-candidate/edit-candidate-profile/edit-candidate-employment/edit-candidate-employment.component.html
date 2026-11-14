@@ -1,27 +1,27 @@
 <nb-card>
 	<nb-card-body>
-		<form [formGroup]="form" *ngIf="form">
+		<form [formGroup]="form">
 			<div class="row">
 				<div class="col-md-6">
 					<div class="form-group">
-						<label for="employmentType" class="label">{{
-							'CANDIDATES_PAGE.EDIT_CANDIDATE.EMPLOYMENT_TYPE'
-								| translate
-						}}</label>
+						<label for="employmentType" class="label">
+							{{ 
+								'CANDIDATES_PAGE.EDIT_CANDIDATE.EMPLOYMENT_TYPE'
+									| translate
+							}}
+						</label>
 						<ng-select
 							id="employmentType"
 							[items]="employmentTypes"
 							formControlName="organizationEmploymentTypes"
 							bindLabel="name"
 							[searchable]="false"
-							placeholder="{{
-								'CANDIDATES_PAGE.EDIT_CANDIDATE.EMPLOYMENT_TYPE'
-									| translate
-							}}"
+							[placeholder]="
+								'CANDIDATES_PAGE.EDIT_CANDIDATE.EMPLOYMENT_TYPE' | translate
+							"
 							multiple="true"
 							appendTo="body"
-						>
-						</ng-select>
+						></ng-select>
 					</div>
 				</div>
 				<div class="col-md-6">
@@ -32,8 +32,16 @@
 									| translate
 							}}
 						</label>
-						<ng-select appendTo="body" formControlName="candidateLevel">							
-						</ng-select>						
+						<ng-select
+							[items]="candidateLevels"
+							bindLabel="level"
+							bindValue="level"
+							[placeholder]="
+								'CANDIDATES_PAGE.EDIT_CANDIDATE.CANDIDATES_LEVEL' | translate
+							"
+							appendTo="body"
+							formControlName="candidateLevel"
+						></ng-select>
 					</div>
 				</div>
 			</div>
@@ -52,30 +60,31 @@
 							formControlName="organizationDepartments"
 							bindLabel="name"
 							[searchable]="false"
-							placeholder="{{
+							[placeholder]="
 								'FORM.PLACEHOLDERS.ALL_DEPARTMENTS' | translate
-							}}"
+							"
 							multiple="true"
 							appendTo="body"
-						>
-						</ng-select>
+						></ng-select>
 					</div>
 				</div>
 				<div class="col">
 					<div class="form-group">
-						<label for="positionInput" class="label">{{
-							'CANDIDATES_PAGE.EDIT_CANDIDATE.POSITION'
-								| translate
-						}}</label>
+						<label for="positionInput" class="label">
+							{{
+								'CANDIDATES_PAGE.EDIT_CANDIDATE.POSITION'
+									| translate
+							}}
+						</label>
 						<ng-select
 							id="positionInput"
 							[items]="positions"
 							formControlName="organizationPosition"
 							bindLabel="name"
 							[searchable]="false"
-							placeholder="{{
+							[placeholder]="
 								'FORM.PLACEHOLDERS.ALL_POSITIONS' | translate
-							}}"
+							"
 							appendTo="body"
 						>
 						</ng-select>
@@ -86,15 +95,13 @@
 				<div class="col-md-6">
 					<div class="form-group">
 						<ga-tags-color-input
-							[selectedTags]="tags"
+							[selectedTags]="form.get('tags').value"
 							(selectedTagsEvent)="selectedTagsHandler($event)"
 							[isOrgLevel]="true"
-						>
-						</ga-tags-color-input>
+						></ga-tags-color-input>
 					</div>
 				</div>
 			</div>
-
 			<div class="actions">
 				<button
 					[disabled]="form.invalid"

@@ -1,11 +1,11 @@
-import { Component, OnInit } from '@angular/core';
+import { Component, OnInit, ChangeDetectionStrategy } from '@angular/core';
 import { saveAs } from 'file-saver';
 import { Router, UrlSerializer } from '@angular/router';
 import { catchError, concatMap, delay, filter, finalize, switchMap, tap } from 'rxjs/operators';
-import { EMPTY, of as observableOf } from 'rxjs';
+import { EMPTY, firstValueFrom, of as observableOf } from 'rxjs';
 import { TranslateService } from '@ngx-translate/core';
 import { UntilDestroy, untilDestroyed } from '@ngneat/until-destroy';
-import { 
+import {
 	ITenant,
 	IAuthResponse,
 	IOrganization,
@@ -16,22 +16,32 @@ import {
 	BonusTypeEnum,
 	CurrenciesEnum,
 	DefaultValueDateTypeEnum,
-	ImportTypeEnum, 
+	ImportTypeEnum,
+	IImportHistory,
+	ImportStatusEnum,
 	IUserOrganization
 } from '@gauzy/contracts';
-import { ExportAllService } from '../../@core/services/export-all.service';
-import { environment } from './../../../environments/environment';
-import { Environment } from './../../../environments/model';
-import { ErrorHandlingService, GauzyCloudService, Store, ToastrService, UsersOrganizationsService } from '../../@core/services';
-import { TranslationBaseComponent } from '../../@shared/language-base/translation-base.component';
+import { Environment, environment } from '@gauzy/ui-config';
+import { TranslationBaseComponent } from '@gauzy/ui-core/i18n';
+import {
+	ErrorHandlingService,
+	ExportAllService,
+	GauzyCloudService,
+	ImportService,
+	Store,
+	ToastrService,
+	UsersOrganizationsService
+} from '@gauzy/ui-core/core';
 
 @UntilDestroy({ checkProperties: true })
 @Component({
-	selector: 'ngx-import-export',
-	templateUrl: './import-export.html'
+    selector: 'ngx-import-export',
+    templateUrl: './import-export.component.html',
+    styleUrls: ['./import-export.component.scss'],
+    changeDetection: ChangeDetectionStrategy.Eager,
+    standalone: false
 })
 export class ImportExportComponent extends TranslationBaseComponent implements OnInit {
-
 	user: IUser;
 	environment: Environment = environment;
 	permissionsEnum = PermissionsEnum;
@@ -40,7 +50,16 @@ export class ImportExportComponent extends TranslationBaseComponent implements O
 	gauzyUser: IUser;
 	userOrganizations: IUserOrganization[] = [];
 
+	/** How many imports the landing page lists; the Import page has the full history. */
+	readonly recentImportsLimit = 3;
+	readonly importStatus = ImportStatusEnum;
+	/** The newest imports, from the same `GET /import/history` the Import page uses. */
+	recentImports: IImportHistory[] = [];
+	/** `false` until the history answers; stays `false` (panel hidden) if it is refused. */
+	historyAvailable = false;
+
 	constructor(
+		private readonly importService: ImportService,
 		private readonly exportAll: ExportAllService,
 		private readonly gauzyCloudService: GauzyCloudService,
 		private readonly userOrganizationService: UsersOrganizationsService,
@@ -63,6 +82,49 @@ export class ImportExportComponent extends TranslationBaseComponent implements O
 				untilDestroyed(this)
 			)
 			.subscribe();
+		this.loadRecentImports();
+	}
+
+	/**
+	 * Downloads the archive an import was made from, through the authenticated API — the same
+	 * call as the Import page's history (`ImportComponent.download`).
+	 *
+	 * @param item - The import-history row whose archive to save.
+	 */
+	downloadImport(item: IImportHistory): void {
+		if (!item?.id) {
+			return;
+		}
+		this.importService
+			.downloadArchive(item.id)
+			.pipe(untilDestroyed(this))
+			.subscribe({
+				next: (blob: Blob) => saveAs(blob, item.file),
+				// This page's ToastrService translates the key and defaults the error title.
+				error: () => this.toastrService.danger('TOASTR.MESSAGE.SOMETHING_BAD_HAPPENED')
+			});
+	}
+
+	/**
+	 * Reads the import history for the "Import history" panel. The server already orders it
+	 * newest first (`importDate DESC`), so the first rows are the latest. A refusal (the endpoint
+	 * needs IMPORT_ADD) or any error just leaves the panel hidden.
+	 */
+	private loadRecentImports(): void {
+		this.importService
+			.getHistory()
+			.pipe(
+				tap(({ items }) => {
+					this.recentImports = (items ?? []).slice(0, this.recentImportsLimit);
+					this.historyAvailable = true;
+				}),
+				catchError(() => {
+					this.historyAvailable = false;
+					return EMPTY;
+				}),
+				untilDestroyed(this)
+			)
+			.subscribe();
 	}
 
 	importPage() {
@@ -75,16 +137,15 @@ export class ImportExportComponent extends TranslationBaseComponent implements O
 
 	onDownloadTemplates() {
 		this.exportAll
-			.downloadTemplates()
+			.downloadExportTemplates()
 			.pipe(untilDestroyed(this))
 			.subscribe((data) => saveAs(data, `archive.zip`));
 	}
 
 	/*
-	* Migrate Self Hosted to Gauzy Cloud Hosted
-	*/
+	 * Migrate Self Hosted to Gauzy Cloud Hosted
+	 */
 	onMigrateIntoCloud(password: string) {
-		this.loading = true;
 		const {
 			id: sourceId,
 			firstName,
@@ -99,7 +160,7 @@ export class ImportExportComponent extends TranslationBaseComponent implements O
 		} = this.user;
 		const register: IUserRegistrationInput = {
 			user: {
-				firstName, 
+				firstName,
 				lastName,
 				username,
 				thirdPartyId,
@@ -110,11 +171,14 @@ export class ImportExportComponent extends TranslationBaseComponent implements O
 			},
 			isImporting: true,
 			sourceId,
-			password
-		}
+			password,
+			confirmPassword: password
+		};
 
+		this.loading = true;
 		try {
-			this.gauzyCloudService.migrateIntoCloud(register)
+			this.gauzyCloudService
+				.migrateIntoCloud(register)
 				.pipe(
 					catchError((error) => {
 						this._errorHandlingService.handleError(error);
@@ -122,15 +186,25 @@ export class ImportExportComponent extends TranslationBaseComponent implements O
 					}),
 					switchMap((response: IAuthResponse) => {
 						if (response) {
+							if (response['status']) {
+								const statuses = [400, 404];
+								if (statuses.includes(response['status'])) {
+									this._errorHandlingService.handleError(response);
+									return EMPTY;
+								}
+							}
 							const { token, user } = response;
 							this.token = token;
 							this.gauzyUser = user;
-							return this.gauzyCloudService.migrateTenant({ 
-								name, 
-								isImporting: true, 
-								sourceId: tenantId,
-								userSourceId: sourceId
-							}, token);
+							return this.gauzyCloudService.migrateTenant(
+								{
+									name,
+									isImporting: true,
+									sourceId: tenantId,
+									userSourceId: sourceId
+								},
+								token
+							);
 						}
 						return EMPTY;
 					}),
@@ -138,17 +212,18 @@ export class ImportExportComponent extends TranslationBaseComponent implements O
 					concatMap(async (tenant: ITenant) => {
 						if (tenant) {
 							for await (const { id: userOrganizationSourceId, organization } of this.userOrganizations) {
-								await this.gauzyCloudService.migrateOrganization({ 
-									...this.mapOrganization(
-										organization, 
-										tenant,
-										userOrganizationSourceId
-									) 
-								}, this.token).toPromise();
+								await firstValueFrom(
+									this.gauzyCloudService.migrateOrganization(
+										{
+											...this.mapOrganization(organization, tenant, userOrganizationSourceId)
+										},
+										this.token
+									)
+								);
 							}
-							return await observableOf(tenant).toPromise();
+							return await firstValueFrom(observableOf(tenant));
 						}
-						return await observableOf(EMPTY).toPromise();						
+						return await firstValueFrom(observableOf(EMPTY));
 					}),
 					tap({
 						next: (x) => {
@@ -156,12 +231,12 @@ export class ImportExportComponent extends TranslationBaseComponent implements O
 								tenant: name
 							});
 							const externalUrl = environment.GAUZY_CLOUD_APP;
-							const tree = this.router.createUrlTree(['/pages/settings/import-export/import'], { 
-								queryParams: { 
+							const tree = this.router.createUrlTree(['/pages/settings/import-export/import'], {
+								queryParams: {
 									token: this.token,
 									userId: this.gauzyUser.id,
 									importType: ImportTypeEnum.MERGE
-								} 
+								}
 							});
 							let redirect: string;
 							if (externalUrl.indexOf('#') !== -1) {
@@ -169,15 +244,16 @@ export class ImportExportComponent extends TranslationBaseComponent implements O
 							} else {
 								redirect = externalUrl + '/#' + this.serializer.serialize(tree);
 							}
-							setTimeout(() => { this.router.navigate(['/pages/settings/import-export/external-redirect', { redirect }]); }, 1500);	
+							setTimeout(() => {
+								this.router.navigate(['/pages/settings/import-export/external-redirect', { redirect }]);
+							}, 1500);
 						},
 						error: (err) => {
-							console.log('tap error', err);
 							this._errorHandlingService.handleError(err);
-						},
+						}
 					}),
-					finalize(() => this.loading = false),
-					untilDestroyed(this),
+					finalize(() => (this.loading = false)),
+					untilDestroyed(this)
 				)
 				.subscribe();
 		} catch (error) {
@@ -187,7 +263,10 @@ export class ImportExportComponent extends TranslationBaseComponent implements O
 
 	async getOrganizations() {
 		const { id: userId, tenantId } = this.user;
-		const { items = [] } = await this.userOrganizationService.getAll([ 'organization' ], {  userId,  tenantId  });
+		const { items = [] } = await this.userOrganizationService.getAll(['organization', 'organization.contact'], {
+			userId,
+			tenantId
+		});
 		this.userOrganizations = items;
 	}
 
@@ -198,18 +277,19 @@ export class ImportExportComponent extends TranslationBaseComponent implements O
 	): IOrganizationCreateInput {
 		const { currency, defaultValueDateType, bonusType, imageUrl, id: sourceId } = organization;
 		delete organization['id'];
+		delete organization['contactId'];
 
 		return {
 			...organization,
 			imageUrl,
 			tenant,
 			tenantId: tenant.id,
-			currency: currency as CurrenciesEnum, 
-			defaultValueDateType: defaultValueDateType as DefaultValueDateTypeEnum, 
+			currency: currency as CurrenciesEnum,
+			defaultValueDateType: defaultValueDateType as DefaultValueDateTypeEnum,
 			bonusType: bonusType as BonusTypeEnum,
 			isImporting: true,
 			sourceId,
 			userOrganizationSourceId
-		}
+		};
 	}
 }

@@ -1,45 +1,70 @@
-import { RouterModule, Routes, ExtraOptions } from '@angular/router';
 import { NgModule } from '@angular/core';
-import {
-	ImageViewerComponent,
-	SettingsComponent,
-	ScreenCaptureComponent,
-	TimeTrackerComponent,
-	SetupComponent,
-	UpdaterComponent
-} from '@gauzy/desktop-ui-lib';
+import { ExtraOptions, RouterModule, Routes } from '@angular/router';
+import { authConnectionGuard, noAuthGuard } from '@gauzy/desktop-ui-lib';
 
 const routes: Routes = [
 	{
 		path: '',
-		component: TimeTrackerComponent
+		redirectTo: 'time-tracker',
+		pathMatch: 'full'
 	},
 	{
 		path: 'setup',
-		component: SetupComponent
+		loadComponent: () => import('@gauzy/desktop-ui-lib').then((m) => m.SetupComponent)
 	},
 	{
 		path: 'time-tracker',
-		component: TimeTrackerComponent
+		canActivate: [authConnectionGuard],
+		loadComponent: () => import('@gauzy/desktop-ui-lib').then((m) => m.TimeTrackerComponent),
+		loadChildren: () => import('@gauzy/desktop-ui-lib').then((m) => m.RecapModule)
+	},
+	{
+		path: 'auth',
+		canActivate: [noAuthGuard],
+		loadChildren: () => import('@gauzy/desktop-ui-lib').then((m) => m.AuthModule)
 	},
 	{
 		path: 'screen-capture',
-		component: ScreenCaptureComponent
+		loadComponent: () => import('@gauzy/desktop-ui-lib').then((m) => m.ScreenCaptureComponent)
+	},
+	{
+		path: 'plugins',
+		canActivate: [authConnectionGuard],
+		loadChildren: () => import('@gauzy/desktop-ui-lib').then((m) => m.PluginRoutingModule)
 	},
 	{
 		path: 'settings',
-		component: SettingsComponent
+		loadComponent: () => import('@gauzy/desktop-ui-lib').then((m) => m.SettingsComponent)
 	},
 	{
 		path: 'updater',
-		component: UpdaterComponent
+		loadComponent: () => import('@gauzy/desktop-ui-lib').then((m) => m.UpdaterComponent)
 	},
 	{
 		path: 'viewer',
-		component: ImageViewerComponent
+		loadComponent: () => import('@gauzy/desktop-ui-lib').then((m) => m.ImageViewerComponent)
+	},
+	{
+		path: 'about',
+		loadComponent: () => import('@gauzy/desktop-ui-lib').then((m) => m.AboutComponent)
+	},
+	{
+		path: 'splash-screen',
+		loadComponent: () => import('@gauzy/desktop-ui-lib').then((m) => m.SplashScreenComponent)
+	},
+	{
+		path: 'always-on',
+		loadComponent: () => import('@gauzy/desktop-ui-lib').then((m) => m.AlwaysOnComponent)
+	},
+	{
+		path: '**',
+		redirectTo: ''
 	}
 ];
 
+/**
+ * Configures the router for the application.
+ */
 const config: ExtraOptions = {
 	useHash: true
 };
@@ -48,4 +73,4 @@ const config: ExtraOptions = {
 	imports: [RouterModule.forRoot(routes, config)],
 	exports: [RouterModule]
 })
-export class AppRoutingModule {}
+export class AppRoutingModule { }

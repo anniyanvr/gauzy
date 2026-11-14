@@ -1,131 +1,431 @@
-import { Component, OnInit, ViewChild, OnDestroy } from '@angular/core';
-import {
-	Router,
-	ActivatedRoute
-} from '@angular/router';
+import { Component, OnDestroy, OnInit, ChangeDetectionStrategy, inject } from '@angular/core';
+import { ActivatedRoute, Router } from '@angular/router';
 import { HttpClient } from '@angular/common/http';
-import { combineLatest, Observable, Subject } from 'rxjs';
-import { first, tap, filter, debounceTime } from 'rxjs/operators';
+import { combineLatest, firstValueFrom, Observable, Subject } from 'rxjs';
+import { debounceTime, filter, first, tap } from 'rxjs/operators';
 import { TranslateService } from '@ngx-translate/core';
-import { Ng2SmartTableComponent } from 'ng2-smart-table';
+import { Cell } from 'angular2-smart-table';
 import { NbDialogService } from '@nebular/theme';
-import {
-	ITask,
-	IOrganizationProject,
-	ComponentLayoutStyleEnum,
-	TaskListTypeEnum,
-	IOrganization,
-	ISelectedEmployee
-} from '@gauzy/contracts';
 import { UntilDestroy, untilDestroyed } from '@ngneat/until-destroy';
-import { distinctUntilChange } from '@gauzy/common-angular';
-import { DeleteConfirmationComponent } from '../../../../@shared/user/forms/delete-confirmation/delete-confirmation.component';
-import { MyTaskDialogComponent } from './../my-task-dialog/my-task-dialog.component';
-import { TeamTaskDialogComponent } from '../team-task-dialog/team-task-dialog.component';
-import { AddTaskDialogComponent } from '../../../../@shared/tasks/add-task-dialog/add-task-dialog.component';
-import { API_PREFIX, ComponentEnum } from '../../../../@core/constants';
 import {
 	ErrorHandlingService,
 	MyTasksStoreService,
+	ServerDataSource,
 	Store,
 	TasksStoreService,
-	TeamTasksStoreService
-} from './../../../../@core/services';
+	TaskTrashService,
+	TeamTasksStoreService,
+	GenericFavoriteService
+} from '@gauzy/ui-core/core';
 import {
+	AddTaskDialogComponent,
+	ALL_PROJECT_SELECTED,
 	AssignedToComponent,
+	CreatedByUserComponent,
+	CreatedAtComponent,
 	DateViewComponent,
-	EmployeeWithLinksComponent,
+	DeleteConfirmationComponent,
+	EmployeesMergedTeamsComponent,
+	HashNumberPipe,
+	InputFilterComponent,
+	IPaginationBase,
+	IRecordViewSection,
+	IRecordViewStatus,
 	NotesWithTagsComponent,
+	OrganizationTeamFilterComponent,
+	PaginationFilterBaseComponent,
+	ProjectComponent,
 	StatusViewComponent,
-	TaskEstimateComponent,
-	TaskTeamsComponent
-} from './../../../../@shared/table-components';
-import { ALL_PROJECT_SELECTED } from './../../../../@shared/project-select/project/default-project';
-import { ServerDataSource } from './../../../../@core/utils/smart-table/server.data-source';
-import { OrganizationTeamFilterComponent, TaskStatusFilterComponent } from './../../../../@shared/table-filters';
-import { PaginationFilterBaseComponent } from './../../../../@shared/pagination/pagination-filter-base.component';
-import { InputFilterComponent } from './../../../../@shared/table-filters/input-filter.component';
+	TaskStatusFilterComponent
+} from '@gauzy/ui-core/shared';
+import {
+	ComponentLayoutStyleEnum,
+	ID,
+	IOrganization,
+	IOrganizationProject,
+	ISelectedEmployee,
+	ITask,
+	PermissionsEnum,
+	TaskListTypeEnum,
+	IFavorite,
+	BaseEntityEnum
+} from '@gauzy/contracts';
+import { API_PREFIX, ComponentEnum, distinctUntilChange } from '@gauzy/ui-core/common';
+import { MyTaskDialogComponent } from './../my-task-dialog/my-task-dialog.component';
+import { TeamTaskDialogComponent } from '../team-task-dialog/team-task-dialog.component';
+import { buildTaskViewSections, taskStatusOf } from '../task-view/task-view-sections';
 
 @UntilDestroy({ checkProperties: true })
 @Component({
 	selector: 'ngx-tasks',
 	templateUrl: './task.component.html',
-	styleUrls: ['task.component.scss']
+	styleUrls: ['task.component.scss'],
+	changeDetection: ChangeDetectionStrategy.Eager,
+	standalone: false
 })
 export class TaskComponent extends PaginationFilterBaseComponent implements OnInit, OnDestroy {
-
+	private _refresh$: Subject<boolean> = new Subject();
+	private _tasks: ITask[] = [];
 	settingsSmartTable: object;
-	loading: boolean;
+	loading: boolean = false;
+	disableButton: boolean = true;
 	smartTableSource: ServerDataSource;
-	disableButton: boolean;
 	availableTasks$: Observable<ITask[]>;
 	tasks$: Observable<ITask[]> = this._taskStore.tasks$;
 	myTasks$: Observable<ITask[]> = this._myTaskStore.myTasks$;
 	teamTasks$: Observable<ITask[]> = this._teamTaskStore.tasks$;
 	selectedTask: ITask;
+
+	/*
+	 * Read-only View: a quick look in the right-side drawer; the drawer's expand
+	 * icon opens the task's own full-width page (TaskViewPageComponent). One
+	 * wiring serves all three task pages (dashboard / me / team) — they share
+	 * this component and toolbar.
+	 */
+	viewedTask: ITask;
+	viewSections: IRecordViewSection[] = [];
+	/** Shared by the drawer header's lozenge and the Details status row. */
+	viewStatus: IRecordViewStatus;
+
 	viewComponentName: ComponentEnum;
 	dataLayoutStyle = ComponentLayoutStyleEnum.TABLE;
 	componentLayoutStyleEnum = ComponentLayoutStyleEnum;
-	organization: IOrganization;
+	public organization: IOrganization;
 	viewMode: TaskListTypeEnum = TaskListTypeEnum.GRID;
 	taskListTypeEnum = TaskListTypeEnum;
 	defaultProject = ALL_PROJECT_SELECTED;
-	subject$: Subject<any> = new Subject();
+	taskSubject$: Subject<boolean> = this.subject$;
 	selectedEmployee: ISelectedEmployee;
+	selectedEmployeeId: ID;
 	selectedProject: IOrganizationProject;
-
-	tasksTable: Ng2SmartTableComponent;
-	@ViewChild('tasksTable') set content(content: Ng2SmartTableComponent) {
-		if (content) {
-			this.tasksTable = content;
-			this.onChangedSource();
-		}
-	}
+	selectedTeamIds: string[] = [];
+	public favoriteTasks: IFavorite[] = [];
+	/** Whether the platform keeps a trash for the organization's tasks (`GAUZY_TASK_TRASH_ENABLED`): the header links it. */
+	public hasTrash = false;
+	private readonly _taskTrash = inject(TaskTrashService);
 
 	constructor(
 		private readonly dialogService: NbDialogService,
 		private readonly _taskStore: TasksStoreService,
 		private readonly _myTaskStore: MyTasksStoreService,
 		private readonly _teamTaskStore: TeamTasksStoreService,
-		readonly translateService: TranslateService,
-		private readonly router: Router,
+		public readonly translateService: TranslateService,
+		private readonly _router: Router,
+		private readonly _activatedRoute: ActivatedRoute,
 		private readonly _store: Store,
 		private readonly route: ActivatedRoute,
 		private readonly httpClient: HttpClient,
 		private readonly _errorHandlingService: ErrorHandlingService,
+		private readonly _hashNumberPipe: HashNumberPipe,
+		private readonly genericFavoriteService: GenericFavoriteService
 	) {
 		super(translateService);
+		this.initTasks();
 		this.setView();
 	}
 
+	/**
+	 * If, default project is selected from header
+	 *
+	 * @returns
+	 */
+	get isDefaultProject() {
+		if (this.selectedProject) {
+			return this.selectedProject.id === this.defaultProject.id;
+		}
+		return true;
+	}
+
+	/**
+	 * return store instance as per page
+	 */
+	get storeInstance() {
+		if (this.isTasksPage()) {
+			return this._taskStore;
+		} else if (this.isMyTasksPage()) {
+			return this._myTaskStore;
+		} else if (this.isTeamTaskPage()) {
+			return this._teamTaskStore;
+		}
+	}
+
+	private initTasks(): void {
+		const path = this._activatedRoute.snapshot.url[0].path;
+		if (path === 'me') {
+			this.viewComponentName = ComponentEnum.MY_TASKS;
+			this.availableTasks$ = this.myTasks$;
+			return;
+		}
+		if (path === 'team') {
+			this.viewComponentName = ComponentEnum.TEAM_TASKS;
+			this.availableTasks$ = this.teamTasks$;
+			return;
+		}
+		this.viewComponentName = ComponentEnum.ALL_TASKS;
+		this.availableTasks$ = this.tasks$;
+		return;
+	}
+
+	private _applyTranslationOnSmartTable() {
+		this.translateService.onLangChange
+			.pipe(
+				tap(() => this._loadSmartTableSettings()),
+				untilDestroyed(this)
+			)
+			.subscribe();
+	}
+
+	private _loadSmartTableSettings() {
+		const pagination: IPaginationBase = this.getPagination();
+		this.settingsSmartTable = {
+			actions: false,
+			selectedRowIndex: -1,
+			pager: {
+				display: false,
+				perPage: pagination ? pagination.itemsPerPage : 10
+			},
+			noDataMessage: this.getTranslation('SM_TABLE.NO_DATA.TASK'),
+			columns: {
+				taskNumber: {
+					title: this.getTranslation('TASKS_PAGE.TASK_ID'),
+					type: 'string',
+					// Fixed so values like #GAU-7777 fit on one line; the nowrap
+					// itself is a scoped rule in task.component.scss.
+					width: '90px',
+					filter: {
+						type: 'custom',
+						component: InputFilterComponent
+					},
+					filterFunction: (prefix: string) => {
+						this.setFilter({ field: 'prefix', search: prefix });
+					},
+					valuePrepareFunction: (value: string, cell: Cell) => {
+						return this._hashNumberPipe.transform(value);
+					}
+				},
+				parent: {
+					title: this.getTranslation('TASKS_PAGE.PARENT_TASK'),
+					type: 'string',
+					width: '10%',
+					filter: {
+						type: 'custom',
+						component: InputFilterComponent
+					},
+					filterFunction: (prefix: string) => {
+						this.setFilter({ field: 'parent.prefix', search: prefix });
+					},
+					valuePrepareFunction: (value: ITask, cell: Cell) => {
+						const parentTaskNumber = cell.getRow().getData()?.parent?.taskNumber;
+						if (!parentTaskNumber) return '-';
+						return this._hashNumberPipe.transform(parentTaskNumber);
+					}
+				},
+				description: {
+					title: this.getTranslation('TASKS_PAGE.TASKS_TITLE'),
+					type: 'custom',
+					width: '25%',
+					class: 'align-row',
+					renderComponent: NotesWithTagsComponent,
+					componentInitFunction: (instance: NotesWithTagsComponent, cell: Cell) => {
+						instance.value = cell.getValue();
+						instance.rowData = cell.getRow().getData();
+					},
+					filter: {
+						type: 'custom',
+						component: InputFilterComponent
+					},
+					filterFunction: (value) => {
+						this.setFilter({ field: 'title', search: value });
+					}
+				},
+				project: {
+					title: this.getTranslation('TASKS_PAGE.TASKS_PROJECT'),
+					type: 'custom',
+					isFilterable: false,
+					renderComponent: ProjectComponent,
+					componentInitFunction: (instance: ProjectComponent, cell: Cell) => {
+						instance.value = cell.getValue();
+						instance.rowData = cell.getRow().getData();
+					}
+				},
+				createdAt: {
+					title: this.getTranslation('SM_TABLE.CREATED_AT'),
+					type: 'custom',
+					// One of the few columns that declared no width, so `table-layout:
+					// auto` sized it against neighbours that demand far more min-content
+					// room (Project's logo + name, Creator's avatar + name, the Members
+					// people list) and it came out narrower than its own header. The
+					// content is a fixed-width formatted date rather than a share of the
+					// table, so this is px like `taskNumber` above, not a percentage:
+					// enough for "Created At" plus its sort arrow on one line at the
+					// header token size, with the `ll` date sitting under it.
+					width: '110px',
+					isFilterable: false,
+					renderComponent: CreatedAtComponent,
+					componentInitFunction: (instance: CreatedAtComponent, cell: Cell) => {
+						instance.value = cell.getValue();
+					}
+				},
+				createdByUser: {
+					title: this.getTranslation('TASKS_PAGE.TASKS_CREATOR'),
+					type: 'custom',
+					renderComponent: CreatedByUserComponent<ITask>,
+					componentInitFunction: (instance: CreatedByUserComponent<ITask>, cell: Cell) => {
+						instance.value = cell.getValue();
+						instance.rowData = cell.getRow().getData();
+					},
+					filter: {
+						type: 'custom',
+						component: InputFilterComponent
+					},
+					filterFunction: (value: string) => {
+						this.setFilter({
+							field: 'createdByUser.firstName',
+							search: value
+						});
+					}
+				},
+				...this.getColumnsByPage(),
+				dueDate: {
+					title: this.getTranslation('TASKS_PAGE.DUE_DATE'),
+					type: 'custom',
+					filter: {
+						type: 'custom',
+						component: InputFilterComponent
+					},
+					filterFunction: (value) => {
+						this.setFilter({ field: 'dueDate', search: value });
+					},
+					renderComponent: DateViewComponent,
+					componentInitFunction: (instance: DateViewComponent, cell: Cell) => {
+						instance.value = cell.getValue();
+						instance.rowData = cell.getRow().getData();
+					}
+				},
+				status: {
+					title: this.getTranslation('TASKS_PAGE.TASKS_STATUS'),
+					type: 'custom',
+					width: '10%',
+					renderComponent: StatusViewComponent,
+					componentInitFunction: (instance: StatusViewComponent, cell: Cell) => {
+						instance.value = cell.getValue();
+						instance.rowData = cell.getRow().getData();
+					},
+					filter: {
+						type: 'custom',
+						component: TaskStatusFilterComponent
+					},
+					filterFunction: (value) => {
+						this.setFilter({ field: 'status', search: value?.name });
+					}
+				}
+			}
+		};
+	}
+
+	private getColumnsByPage() {
+		if (this.isTasksPage()) {
+			return {
+				employeesMergedTeams: {
+					title:
+						this.getTranslation('TASKS_PAGE.TASK_MEMBERS') +
+						'/' +
+						this.getTranslation('TASKS_PAGE.TASK_TEAMS'),
+					type: 'custom',
+					isFilterable: false,
+					renderComponent: EmployeesMergedTeamsComponent,
+					componentInitFunction: (instance: EmployeesMergedTeamsComponent, cell: Cell) => {
+						instance.value = cell.getRawValue();
+						instance.rowData = cell.getRow().getData();
+					}
+				}
+			};
+		} else if (this.isMyTasksPage()) {
+			return {
+				assignTo: {
+					title: this.getTranslation('TASKS_PAGE.TASK_ASSIGNED_TO'),
+					type: 'custom',
+					isFilterable: false,
+					renderComponent: AssignedToComponent,
+					componentInitFunction: (instance: AssignedToComponent, cell: Cell) => {
+						instance.value = cell.getValue();
+						instance.rowData = cell.getRow().getData();
+					}
+				}
+			};
+		} else if (this.isTeamTaskPage()) {
+			return {
+				assignTo: {
+					title: this.getTranslation('TASKS_PAGE.TASK_ASSIGNED_TO'),
+					type: 'custom',
+					width: '12%',
+					renderComponent: AssignedToComponent,
+					componentInitFunction: (instance: AssignedToComponent, cell: Cell) => {
+						instance.value = cell.getValue();
+						instance.rowData = cell.getRow().getData();
+					},
+					filter: {
+						type: 'custom',
+						component: OrganizationTeamFilterComponent
+					},
+					filterFunction: (value) => {
+						this.setFilter({
+							field: 'teams',
+							search: value ? [value.id] : []
+						});
+					}
+				}
+			};
+		} else {
+			return {};
+		}
+	}
+
 	ngOnInit() {
-		this._loadTableSettings();
+		this._loadSmartTableSettings();
 		this._applyTranslationOnSmartTable();
-		this.subject$
+		this.taskSubject$
 			.pipe(
 				debounceTime(400),
-				tap(() => this.loading = true),
 				tap(() => this.clearItem()),
 				tap(() => this.getTasks()),
+				untilDestroyed(this)
+			)
+			.subscribe();
+		this.pagination$
+			.pipe(
+				debounceTime(100),
+				distinctUntilChange(),
+				tap(() => this.taskSubject$.next(true)),
 				untilDestroyed(this)
 			)
 			.subscribe();
 		const storeOrganization$ = this._store.selectedOrganization$;
 		const storeEmployee$ = this._store.selectedEmployee$;
 		const storeProject$ = this._store.selectedProject$;
-		combineLatest([storeOrganization$, storeEmployee$, storeProject$])
+		const storeTeam$ = this._store.selectedTeam$;
+		combineLatest([storeOrganization$, storeEmployee$, storeProject$, storeTeam$])
 			.pipe(
-				debounceTime(300),
-				filter(([organization, employee]) => !!organization && !!employee),
 				distinctUntilChange(),
-				tap(([organization, employee, project]) => {
+				filter(([organization]) => !!organization),
+				tap(([organization, employee, project, team]) => {
+					if (this.organization?.id !== organization.id) this.hasTrash = false;
 					this.organization = organization;
-					this.selectedEmployee = employee;
+					// Only the answer for the organization still selected shows the link: a slower one for the previous
+					// organization changes nothing.
+					void this._taskTrash
+						.isEnabledOrFalse(organization.id, organization.tenantId)
+						.then((hasTrash) => {
+							if (this.organization?.id === organization.id) this.hasTrash = hasTrash;
+						});
+					this.selectedEmployeeId = employee?.id || null;
 					this.selectedProject = project;
-					this.viewMode = !!project ? (project.taskListType as TaskListTypeEnum) : TaskListTypeEnum.GRID;
+					this.selectedTeamIds = team?.id ? [team.id] : [];
+					this.viewMode = project?.taskListType || TaskListTypeEnum.GRID;
 				}),
-				tap(() => this.refreshPagination()),
-				tap(() => this.subject$.next(true)),
+				tap(() => this._refresh$.next(true)),
+				tap(() => this.taskSubject$.next(true)),
+				tap(() => this.loadFavoriteTasks()),
 				untilDestroyed(this)
 			)
 			.subscribe();
@@ -137,260 +437,139 @@ export class TaskComponent extends PaginationFilterBaseComponent implements OnIn
 				untilDestroyed(this)
 			)
 			.subscribe();
-	}
-
-	private initTasks(): void {
-		const pathName = window.location.href;
-		if (pathName.indexOf('tasks/me') !== -1) {
-			this.viewComponentName = ComponentEnum.MY_TASKS;
-			this.availableTasks$ = this.myTasks$;
-			return;
-		}
-		if (pathName.indexOf('tasks/team') !== -1) {
-			this.viewComponentName = ComponentEnum.TEAM_TASKS;
-			this.availableTasks$ = this.teamTasks$;
-			return;
-		}
-		this.viewComponentName = ComponentEnum.ALL_TASKS;
-		this.availableTasks$ = this.tasks$;
+		this._refresh$
+			.pipe(
+				filter(() => this.dataLayoutStyle === ComponentLayoutStyleEnum.CARDS_GRID),
+				tap(() => this.refreshPagination()),
+				tap(() => (this._tasks = [])),
+				untilDestroyed(this)
+			)
+			.subscribe();
 	}
 
 	setView() {
-		this.initTasks();
 		this._store
 			.componentLayout$(this.viewComponentName)
 			.pipe(
 				distinctUntilChange(),
-				tap((componentLayout) => this.dataLayoutStyle = componentLayout),
-				filter((componentLayout) => componentLayout === ComponentLayoutStyleEnum.CARDS_GRID),
+				tap((componentLayout) => (this.dataLayoutStyle = componentLayout)),
 				tap(() => this.refreshPagination()),
-				tap(() => this.subject$.next(true)),
+				filter((componentLayout) => componentLayout === ComponentLayoutStyleEnum.CARDS_GRID),
+				tap(() => (this._tasks = [])),
+				tap(() => this.taskSubject$.next(true)),
 				untilDestroyed(this)
 			)
 			.subscribe();
 	}
 
 	/*
-	 * Table on changed source event
+	 * Register Smart Table Source Config
 	 */
-	onChangedSource() {
-		this.tasksTable.source.onChangedSource
-			.pipe(
-				untilDestroyed(this),
-				tap(() => this.clearItem())
-			)
-			.subscribe();
-	}
-
-	private _applyTranslationOnSmartTable() {
-		this.translateService.onLangChange
-			.pipe(
-				tap(() => this._loadTableSettings()),
-				untilDestroyed(this)
-			)
-			.subscribe();
-	}
-
-	/*
-	* Register Smart Table Source Config 
-	*/
 	setSmartTableSource() {
+		if (!this.organization) {
+			return;
+		}
+
+		this.loading = true;
+
 		const { tenantId } = this._store.user;
 		const { id: organizationId } = this.organization;
 
-		const request = {};
-		if (this.selectedProject && this.selectedProject.id) {
-			request['projectId'] = this.selectedProject.id;
-			if (this.viewMode === TaskListTypeEnum.SPRINT) {
-				request['organizationSprintId'] = null;
-			}
-		}
-	
-		const relations = [];
-		let join: any = {};
-		let endPoint: string; 
-
-		if (this.viewComponentName == ComponentEnum.ALL_TASKS) {
-			endPoint = `${API_PREFIX}/tasks/pagination`;
-			relations.push(...[
+		this.smartTableSource = new ServerDataSource(this.httpClient, {
+			...(this.viewComponentName === ComponentEnum.ALL_TASKS
+				? { endPoint: `${API_PREFIX}/tasks/pagination` }
+				: {}),
+			...(this.viewComponentName === ComponentEnum.TEAM_TASKS ? { endPoint: `${API_PREFIX}/tasks/team` } : {}),
+			...(this.viewComponentName === ComponentEnum.MY_TASKS ? { endPoint: `${API_PREFIX}/tasks/me` } : {}),
+			relations: [
+				'members',
+				'members.user',
 				'project',
+				'parent',
+				'modules',
 				'tags',
 				'teams',
-				'creator',
-				'organizationSprint'
-			]);
-			join = {
+				'teams.members',
+				'teams.members.employee',
+				'teams.members.employee.user',
+				'createdByUser',
+				'organizationSprint',
+				'taskStatus',
+				'taskSize',
+				'taskPriority'
+			],
+			join: {
 				alias: 'task',
-				leftJoinAndSelect: {
-					'members': 'task.members',
-					'user': 'members.user'
+				leftJoin: {
+					members: 'task.members',
+					user: 'members.user'
 				}
-			}
-		}
-		if (this.viewComponentName == ComponentEnum.TEAM_TASKS) {
-			if (this.selectedEmployee && this.selectedEmployee.id) {
-				request['employeeId'] = this.selectedEmployee.id;
-			}
-			endPoint = `${API_PREFIX}/tasks/team`;
-		}
-		if (this.viewComponentName == ComponentEnum.MY_TASKS) {
-			if (this.selectedEmployee && this.selectedEmployee.id) {
-				request['employeeId'] = this.selectedEmployee.id;
-			}
-			endPoint = `${API_PREFIX}/tasks/me`;
-		}
-
-		this.smartTableSource = new ServerDataSource(this.httpClient, {
-			endPoint,
-			relations,
-			join,
+			},
 			where: {
-				...{ organizationId, tenantId },
-				...request,
-				...this.filters.where
+				organizationId,
+				tenantId,
+				...(this.selectedProject && this.selectedProject.id
+					? {
+							...(this.viewMode === TaskListTypeEnum.SPRINT
+								? {
+										organizationSprintId: null
+								  }
+								: {}),
+							projectId: this.selectedProject.id
+					  }
+					: {}),
+				...(this.selectedEmployeeId
+					? {
+							members: {
+								id: this.selectedEmployeeId
+							}
+					  }
+					: {}),
+				...(this.selectedTeamIds ? { teams: this.selectedTeamIds } : {}),
+				...(this.filters.where ? this.filters.where : {})
 			},
 			resultMap: (task: ITask) => {
 				return Object.assign({}, task, {
-					projectName: task.project ? task.project.name : undefined,
 					employees: task.members ? task.members : undefined,
 					assignTo: this._teamTaskStore._getTeamNames(task),
-					creator: task.creator ? `${task.creator.name}` : null
+					employeesMergedTeams: [task.members, task.teams]
 				});
 			},
 			finalize: () => {
-				const tasks = this.smartTableSource.getData();
-				this.storeInstance.loadAllTasks(tasks);
+				this.dataLayoutStyle === this.componentLayoutStyleEnum.CARDS_GRID
+					? this._tasks.push(...this.smartTableSource.getData())
+					: (this._tasks = this.smartTableSource.getData());
+				this.storeInstance.loadAllTasks(this._tasks);
+				this.setPagination({
+					...this.getPagination(),
+					totalItems: this.smartTableSource.count()
+				});
 				this.loading = false;
 			}
 		});
 	}
 
 	async getTasks() {
+		if (!this.organization) {
+			return;
+		}
 		try {
 			this.setSmartTableSource();
+
+			const { activePage, itemsPerPage } = this.pagination;
+			this.smartTableSource.setPaging(activePage, itemsPerPage, false);
 			if (
 				this.dataLayoutStyle === ComponentLayoutStyleEnum.CARDS_GRID ||
 				this.viewMode === TaskListTypeEnum.SPRINT
 			) {
-				// Initiate GRID view pagination
-				const { activePage, itemsPerPage } = this.pagination;
-				this.smartTableSource.setPaging(activePage, itemsPerPage, false);
-
 				await this.smartTableSource.getElements();
-
-				const tasks = this.smartTableSource.getData();
-
-				this.storeInstance.loadAllTasks(tasks);
-
-				this.pagination['totalItems'] =  this.smartTableSource.count();
-
-				this.loading = false;
+				this.setPagination({
+					...this.getPagination(),
+					totalItems: this.smartTableSource.count()
+				});
 			}
 		} catch (error) {
 			this._errorHandlingService.handleError(error);
-		}
-	}
-
-	private _loadTableSettings() {
-		this.settingsSmartTable = {
-			actions: false,
-			columns: {
-				description: {
-					title: this.getTranslation('TASKS_PAGE.TASKS_TITLE'),
-					type: 'custom',
-					class: 'align-row',
-					renderComponent: NotesWithTagsComponent,
-					filter: {
-						type: 'custom',
-						component: InputFilterComponent
-					},
-					filterFunction: (value) => {
-						this.setFilter({ field: 'title', search: value });
-					}
-				},
-				projectName: {
-					title: this.getTranslation('TASKS_PAGE.TASKS_PROJECT'),
-					type: 'string',
-					filter: false
-				},
-				creator: {
-					title: this.getTranslation('TASKS_PAGE.TASKS_CREATOR'),
-					type: 'string',
-					filter: false
-				},
-				...this.getColumnsByPage(),
-				estimate: {
-					title: this.getTranslation('TASKS_PAGE.ESTIMATE'),
-					type: 'custom',
-					filter: false,
-					renderComponent: TaskEstimateComponent
-				},
-				dueDate: {
-					title: this.getTranslation('TASKS_PAGE.DUE_DATE'),
-					type: 'custom',
-					filter: false,
-					renderComponent: DateViewComponent
-				},
-				status: {
-					title: this.getTranslation('TASKS_PAGE.TASKS_STATUS'),
-					type: 'custom',
-					width: '12%',
-					renderComponent: StatusViewComponent,
-					filter: {
-						type: 'custom',
-						component: TaskStatusFilterComponent
-					},
-					filterFunction: (value) => {
-						this.setFilter({ field: 'status', search: value });
-					}
-				}
-			}
-		};
-	}
-
-	private getColumnsByPage() {
-		if (this.isTasksPage()) {
-			return {
-				employees: {
-					title: this.getTranslation('TASKS_PAGE.TASK_MEMBERS'),
-					type: 'custom',
-					filter: false,
-					renderComponent: EmployeeWithLinksComponent
-				},
-				teams: {
-					title: this.getTranslation('TASKS_PAGE.TASK_TEAMS'),
-					type: 'custom',
-					filter: false,
-					renderComponent: TaskTeamsComponent
-				}
-			};
-		} else if (this.isMyTasksPage()) {
-			return {
-				assignTo: {
-					title: this.getTranslation('TASKS_PAGE.TASK_ASSIGNED_TO'),
-					type: 'custom',
-					filter: false,
-					renderComponent: AssignedToComponent
-				}
-			};
-		} else if(this.isTeamTaskPage()) {
-			return {
-				assignTo: {
-					title: this.getTranslation('TASKS_PAGE.TASK_ASSIGNED_TO'),
-					type: 'custom',
-					width: '12%',
-					renderComponent: AssignedToComponent,
-					filter: {
-						type: 'custom',
-						component: OrganizationTeamFilterComponent
-					},
-					filterFunction: (value) => {
-						this.setFilter({ field: 'members', search: value ? [value.id] : [] });
-					}
-				}
-			};
-		} else {
-			return {};
 		}
 	}
 
@@ -410,13 +589,10 @@ export class TaskComponent extends PaginationFilterBaseComponent implements OnIn
 			});
 		}
 		if (dialog) {
-			const data = await dialog.onClose.pipe(first()).toPromise();
+			const data: any = await firstValueFrom(dialog.onClose.pipe(first()));
 			if (data) {
 				const { estimateDays, estimateHours, estimateMinutes } = data;
-				const estimate =
-					estimateDays * 24 * 60 * 60 +
-					estimateHours * 60 * 60 +
-					estimateMinutes * 60;
+				const estimate = estimateDays * 24 * 60 * 60 + estimateHours * 60 * 60 + estimateMinutes * 60;
 
 				estimate ? (data.estimate = estimate) : (data.estimate = null);
 
@@ -429,7 +605,8 @@ export class TaskComponent extends PaginationFilterBaseComponent implements OnIn
 				this.storeInstance
 					.createTask(payload)
 					.pipe(
-						tap(() => this.subject$.next(true)),
+						tap(() => this._refresh$.next(true)),
+						tap(() => this.taskSubject$.next(true)),
 						untilDestroyed(this)
 					)
 					.subscribe();
@@ -446,6 +623,8 @@ export class TaskComponent extends PaginationFilterBaseComponent implements OnIn
 		}
 		let dialog;
 		if (this.isTasksPage()) {
+		// Whatever the drawer is showing no longer matches the selection.
+		this.closeView();
 			dialog = this.dialogService.open(AddTaskDialogComponent, {
 				context: {
 					selectedTask: this.selectedTask
@@ -465,28 +644,27 @@ export class TaskComponent extends PaginationFilterBaseComponent implements OnIn
 			});
 		}
 		if (dialog) {
-			const data = await dialog.onClose.pipe(first()).toPromise();
+			const data: any = await firstValueFrom(dialog.onClose.pipe(first()));
 
 			if (data) {
 				const { estimateDays, estimateHours, estimateMinutes } = data;
 
-				const estimate =
-					estimateDays * 24 * 60 * 60 +
-					estimateHours * 60 * 60 +
-					estimateMinutes * 60;
+				const estimate = estimateDays * 24 * 60 * 60 + estimateHours * 60 * 60 + estimateMinutes * 60;
 
 				estimate ? (data.estimate = estimate) : (data.estimate = null);
 
 				const { tenantId } = this._store.user;
-				const { id: organizationId } = this.organization;				
+				const { id: organizationId } = this.organization;
 				const payload = Object.assign(data, {
 					organizationId,
 					tenantId
 				});
 
-				this.storeInstance.editTask({ ...payload, id: this.selectedTask.id })
+				this.storeInstance
+					.editTask({ ...payload, id: this.selectedTask.id })
 					.pipe(
-						tap(() => this.subject$.next(true)),
+						tap(() => this._refresh$.next(true)),
+						tap(() => this.taskSubject$.next(true)),
 						untilDestroyed(this)
 					)
 					.subscribe();
@@ -505,7 +683,8 @@ export class TaskComponent extends PaginationFilterBaseComponent implements OnIn
 		if (this.isTasksPage()) {
 			dialog = this.dialogService.open(AddTaskDialogComponent, {
 				context: {
-					selectedTask: this.selectedTask
+					// Without the id the dialog reads this as a new task, not as an edit of the original.
+					selectedTask: { ...this.selectedTask, id: undefined }
 				}
 			});
 		} else if (this.isMyTasksPage()) {
@@ -525,14 +704,11 @@ export class TaskComponent extends PaginationFilterBaseComponent implements OnIn
 			});
 		}
 		if (dialog) {
-			const data = await dialog.onClose.pipe(first()).toPromise();
+			const data: any = await firstValueFrom(dialog.onClose.pipe(first()));
 
 			if (data) {
 				const { estimateDays, estimateHours, estimateMinutes } = data;
-				const estimate =
-					estimateDays * 24 * 60 * 60 +
-					estimateHours * 60 * 60 +
-					estimateMinutes * 60;
+				const estimate = estimateDays * 24 * 60 * 60 + estimateHours * 60 * 60 + estimateMinutes * 60;
 
 				estimate ? (data.estimate = estimate) : (data.estimate = null);
 
@@ -545,7 +721,8 @@ export class TaskComponent extends PaginationFilterBaseComponent implements OnIn
 				this.storeInstance
 					.createTask(payload)
 					.pipe(
-						tap(() => this.subject$.next(true)),
+						tap(() => this._refresh$.next(true)),
+						tap(() => this.taskSubject$.next(true)),
 						untilDestroyed(this)
 					)
 					.subscribe();
@@ -560,15 +737,13 @@ export class TaskComponent extends PaginationFilterBaseComponent implements OnIn
 				data: selectedItem
 			});
 		}
-		const result = await this.dialogService
-			.open(DeleteConfirmationComponent)
-			.onClose.pipe(first())
-			.toPromise();
-
+		const result = await firstValueFrom(this.dialogService.open(DeleteConfirmationComponent).onClose.pipe(first()));
 		if (result) {
-			this.storeInstance.delete(this.selectedTask.id)
+			this.storeInstance
+				.delete(this.selectedTask.id)
 				.pipe(
-					tap(() => this.subject$.next(true)),
+					tap(() => this._refresh$.next(true)),
+					tap(() => this.taskSubject$.next(true)),
 					untilDestroyed(this)
 				)
 				.subscribe();
@@ -578,6 +753,44 @@ export class TaskComponent extends PaginationFilterBaseComponent implements OnIn
 	selectTask({ isSelected, data }) {
 		this.disableButton = !isSelected;
 		this.selectedTask = isSelected ? data : null;
+	}
+
+	/** Drawer heading follows the page flavour (dashboard / me / team). */
+	get viewHeadingKey(): string {
+		if (this.isMyTasksPage()) {
+			return 'TASKS_PAGE.MY_TASK_HEADER';
+		}
+		if (this.isTeamTaskPage()) {
+			return 'TASKS_PAGE.TEAM_TASKS_HEADER';
+		}
+		return 'TASKS_PAGE.HEADER';
+	}
+
+	/**
+	 * Opens the read-only View of a task in the right-side drawer.
+	 *
+	 * @param selectedItem - Row the action was invoked from, when it came from the grid.
+	 */
+	viewTask(selectedItem?: ITask): void {
+		if (selectedItem) {
+			this.selectTask({ isSelected: true, data: selectedItem });
+		}
+
+		const task = selectedItem ?? this.selectedTask;
+		if (!task) {
+			return;
+		}
+
+		this.viewStatus = taskStatusOf(task);
+		this.viewSections = buildTaskViewSections(task, {
+			translate: (key) => this.getTranslation(key),
+			hash: (value) => this._hashNumberPipe.transform(value)
+		});
+		this.viewedTask = task;
+	}
+
+	closeView(): void {
+		this.viewedTask = null;
 	}
 
 	isTasksPage() {
@@ -592,49 +805,55 @@ export class TaskComponent extends PaginationFilterBaseComponent implements OnIn
 		return this.viewComponentName === ComponentEnum.TEAM_TASKS;
 	}
 
+	/**
+	 * Open task settings page for a specific project.
+	 *
+	 * @param selectedProject - The project for which the task settings page should be opened.
+	 */
 	openTasksSettings(selectedProject: IOrganizationProject): void {
-		if (selectedProject.id == this.defaultProject.id) {
+		if (
+			this.isDefaultProject ||
+			!this._store.hasAnyPermission(PermissionsEnum.ALL_ORG_EDIT, PermissionsEnum.ORG_PROJECT_EDIT)
+		) {
 			return;
 		}
 
-		this.router.navigate(['/pages/tasks/settings', selectedProject.id], {
+		this._router.navigate(['/pages/tasks/settings', selectedProject.id], {
 			state: selectedProject
 		});
-	}
-
-	/**
-	 * return store instance as per page
-	 */
-	get storeInstance() {
-		if (this.isTasksPage()) {
-			return this._taskStore;
-		} else if (this.isMyTasksPage()) {
-			return this._myTaskStore;
-		} else if (this.isTeamTaskPage()) {
-			return this._teamTaskStore;
-		}
 	}
 
 	/*
 	 * Clear selected item
 	 */
 	clearItem() {
+		// The list is about to be reloaded, so whatever the drawer is showing is
+		// about to go stale — close it rather than leave a detached record open.
+		this.closeView();
 		this.selectTask({
 			isSelected: false,
 			data: null
 		});
-		this.deselectAll();
-	}
-
-	/*
-	 * Deselect all table rows
-	 */
-	deselectAll() {
-		if (this.tasksTable && this.tasksTable.grid) {
-			this.tasksTable.grid.dataSet['willSelect'] = 'false';
-			this.tasksTable.grid.dataSet.deselectAll();
-		}
 	}
 
 	ngOnDestroy(): void {}
+
+	/**
+	 * Loads the list of favorite tasks for the current user or all for admin using the generic service.
+	 */
+	async loadFavoriteTasks() {
+		this.favoriteTasks = await this.genericFavoriteService.loadFavorites(
+			BaseEntityEnum.Task,
+			this.organization,
+			this.selectedEmployeeId || this._store.user?.employee?.id
+		);
+	}
+
+	/**
+	 * Handle task favorite toggle event from the new component
+	 */
+	onTaskFavoriteToggled(_event: { isFavorite: boolean; favorite?: IFavorite }): void {
+		// Reload favorites to keep the list in sync
+		this.loadFavoriteTasks();
+	}
 }

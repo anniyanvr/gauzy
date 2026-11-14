@@ -1,27 +1,37 @@
-import { NgModule } from '@angular/core';
 import { CommonModule } from '@angular/common';
-import { SettingsComponent } from './settings.component';
+import { NgModule } from '@angular/core';
+import { FormsModule } from '@angular/forms';
 import {
-	NbLayoutModule,
-	NbSidebarModule,
-	NbMenuModule,
-	NbCardModule,
-	NbIconModule,
-	NbListModule,
-	NbSelectModule,
-	NbToggleModule,
-	NbInputModule,
-	NbButtonModule,
+	NbAccordionModule,
 	NbAlertModule,
+	NbButtonModule,
+	NbCardModule,
+	NbDialogService,
+	NbFormFieldModule,
+	NbIconModule,
+	NbInputModule,
+	NbLayoutModule,
+	NbListModule,
+	NbMenuModule,
 	NbProgressBarModule,
+	NbSelectModule,
+	NbSidebarModule,
+	NbSpinnerModule,
 	NbTabsetModule,
 	NbToastrService,
-	NbAccordionModule
+	NbToggleModule,
+	NbTooltipModule
 } from '@nebular/theme';
-import { FormsModule } from '@angular/forms';
+
+import { LanguageModule } from '../language/language.module';
+import { Store } from '../services';
+
+import { PipeModule } from '../time-tracker/pipes/pipe.module';
+import { TaskRenderModule } from '../time-tracker/task-render';
+import { TimeTrackerService } from '../time-tracker/time-tracker.service';
+import { SslModule } from './ssl';
 
 @NgModule({
-	declarations: [SettingsComponent],
 	imports: [
 		CommonModule,
 		NbLayoutModule,
@@ -31,6 +41,7 @@ import { FormsModule } from '@angular/forms';
 		NbIconModule,
 		NbListModule,
 		NbSelectModule,
+		NbFormFieldModule,
 		FormsModule,
 		NbToggleModule,
 		NbInputModule,
@@ -38,11 +49,14 @@ import { FormsModule } from '@angular/forms';
 		NbAlertModule,
 		NbProgressBarModule,
 		NbTabsetModule,
-		NbAccordionModule
+		NbAccordionModule,
+		NbTooltipModule,
+		NbSpinnerModule,
+		LanguageModule.forChild(),
+		TaskRenderModule,
+		SslModule,
+		PipeModule
 	],
-	providers: [
-		NbToastrService
-	],
-	exports: [SettingsComponent]
+	providers: [NbToastrService, TimeTrackerService, NbDialogService, Store]
 })
 export class SettingsModule {}

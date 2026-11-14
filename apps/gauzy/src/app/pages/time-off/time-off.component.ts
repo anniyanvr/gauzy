@@ -1,109 +1,146 @@
-import { Component, OnInit, OnDestroy, ViewChild } from '@angular/core';
-import { DatePipe } from '@angular/common';
-import { Router } from '@angular/router';
+import { Component, OnInit, OnDestroy, ChangeDetectionStrategy } from '@angular/core';
+import { HttpClient, HttpErrorResponse } from '@angular/common/http';
+import { ActivatedRoute, Router } from '@angular/router';
 import { NbDialogService } from '@nebular/theme';
+import { debounceTime, filter, first, tap, finalize } from 'rxjs/operators';
+import { combineLatest, Subject } from 'rxjs';
+import { Cell } from 'angular2-smart-table';
+import { TranslateService } from '@ngx-translate/core';
+import { UntilDestroy, untilDestroyed } from '@ngneat/until-destroy';
+import * as moment from 'moment';
+import {
+	DateRangePickerBuilderService,
+	ErrorHandlingService,
+	ServerDataSource,
+	Store,
+	TimeOffService,
+	ToastrService
+} from '@gauzy/ui-core/core';
 import {
 	StatusTypesEnum,
 	ITimeOff,
 	ComponentLayoutStyleEnum,
 	IOrganization,
-	IEmployeeJobsStatisticsResponse
+	IDateRangePicker,
+	ID,
+	PermissionsEnum,
+	NullableString
 } from '@gauzy/contracts';
-import { debounceTime, filter, first, tap, finalize } from 'rxjs/operators';
-import { combineLatest, Subject } from 'rxjs';
-import { LocalDataSource, Ng2SmartTableComponent } from 'ng2-smart-table';
-import { TranslateService } from '@ngx-translate/core';
-import { UntilDestroy, untilDestroyed } from '@ngneat/until-destroy';
-import { distinctUntilChange } from '@gauzy/common-angular';
-import { ComponentEnum } from '../../@core/constants';
-import { Store, TimeOffService, ToastrService } from '../../@core/services';
-import { TimeOffHolidayMutationComponent, TimeOffRequestMutationComponent } from '../../@shared/time-off';
-import { DeleteConfirmationComponent } from '../../@shared/user/forms';
-import { TranslationBaseComponent } from '../../@shared/language-base';
-import { StatusBadgeComponent } from '../../@shared/status-badge';
-import { AvatarComponent } from '../../@shared/components/avatar/avatar.component';
+import { API_PREFIX, ComponentEnum, distinctUntilChange, escapeHtml, toHttpUrl, toUTC } from '@gauzy/ui-core/common';
+import {
+	PaginationFilterBaseComponent,
+	IPaginationBase,
+	PictureNameTagsComponent,
+	DateViewComponent,
+	DeleteConfirmationComponent,
+	getAdjustDateRangeFutureAllowed,
+	TimeOffRequestMutationComponent,
+	TimeOffHolidayMutationComponent,
+	InputFilterComponent,
+	StatusBadgeComponent
+} from '@gauzy/ui-core/shared';
+import { ApprovalPolicyComponent } from '../approvals/table-components';
 
 @UntilDestroy({ checkProperties: true })
 @Component({
-	selector: 'ga-time-off',
-	templateUrl: './time-off.component.html',
-	styleUrls: ['./time-off.component.scss']
+    selector: 'ga-time-off-list',
+    templateUrl: './time-off.component.html',
+    styleUrls: ['./time-off.component.scss'],
+    changeDetection: ChangeDetectionStrategy.Eager,
+    standalone: false
 })
-export class TimeOffComponent
-	extends TranslationBaseComponent
-	implements OnInit, OnDestroy {
-
-	settingsSmartTable: object;
-	selectedEmployeeId: string | null;
-	selectedDate: Date;
-	sourceSmartTable = new LocalDataSource();
-	timeOffs: ITimeOff[] = [];
-	selectedTimeOffRecord: ITimeOff;
-	timeOffRequest: ITimeOff;
-	viewComponentName: ComponentEnum;
-	dataLayoutStyle = ComponentLayoutStyleEnum.TABLE;
-	componentLayoutStyleEnum = ComponentLayoutStyleEnum;
-	rows: Array<any> = [];
-	selectedStatus = StatusTypesEnum.ALL;
-	timeOffStatuses = Object.keys(StatusTypesEnum);
-	loading: boolean;
-	isRecordSelected: boolean = false;
-	displayHolidays: boolean = true;
-	showActions: boolean = false;
+export class TimeOffComponent extends PaginationFilterBaseComponent implements OnInit, OnDestroy {
+	public settingsSmartTable: object;
+	public selectedEmployeeId: ID;
+	public selectedDateRange: IDateRangePicker;
+	public sourceSmartTable: ServerDataSource;
+	public timeOffs: ITimeOff[] = [];
+	public selectedTimeOffRecord: ITimeOff;
+	public timeOffRequest: ITimeOff;
+	public PermissionsEnum = PermissionsEnum;
+	public viewComponentName: ComponentEnum;
+	public dataLayoutStyle = ComponentLayoutStyleEnum.TABLE;
+	public componentLayoutStyleEnum = ComponentLayoutStyleEnum;
+	public timeOffStatuses = Object.keys(StatusTypesEnum);
+	public loading: boolean;
+	public disableButton: boolean = true;
+	public displayHolidays: boolean = true;
+	public showActions: boolean = false;
+	public includeArchived: boolean = false;
+	public showFilter: boolean = false;
 	public organization: IOrganization;
-	timeoff$: Subject<any> = new Subject();
-	includeArchived: boolean = false;
-	showFilter: boolean = false;
-
-	timeOffTable: Ng2SmartTableComponent;
-	@ViewChild('timeOffTable') set content(content: Ng2SmartTableComponent) {
-		if (content) {
-			this.timeOffTable = content;
-			this.onChangedSource();
-		}
-	}
+	public timeOff$: Subject<any> = this.subject$;
+	private _refresh$: Subject<any> = new Subject();
+	/** Requests whose status change is still on its way to the server: another change waits for its answer. */
+	private readonly _statusChangesInFlight = new Set<ID>();
 
 	constructor(
-		private readonly router: Router,
-		private readonly dialogService: NbDialogService,
-		private readonly timeOffService: TimeOffService,
-		private readonly toastrService: ToastrService,
-		private readonly store: Store,
-		private readonly translate: TranslateService
+		readonly translateService: TranslateService,
+		private readonly _router: Router,
+		private readonly _dialogService: NbDialogService,
+		private readonly _timeOffService: TimeOffService,
+		private readonly _toastrService: ToastrService,
+		private readonly _store: Store,
+		private readonly _httpClient: HttpClient,
+		private readonly _route: ActivatedRoute,
+		private readonly _dateRangePickerBuilderService: DateRangePickerBuilderService,
+		private readonly _errorHandlingService: ErrorHandlingService
 	) {
-		super(translate);
+		super(translateService);
 		this.setView();
 	}
 
 	ngOnInit() {
 		this._loadSmartTableSettings();
 		this._applyTranslationOnSmartTable();
-
-		this.timeoff$
+		this.timeOff$
 			.pipe(
 				debounceTime(300),
-				tap(() => this.loading = true),
 				tap(() => this.getTimeOffs()),
 				tap(() => this.clearItem()),
 				untilDestroyed(this)
 			)
 			.subscribe();
-
-		const storeOrganization$ = this.store.selectedOrganization$;
-		const storeEmployee$ = this.store.selectedEmployee$;
-		const selectedDate$ = this.store.selectedDate$;
-	
-		combineLatest([storeOrganization$, storeEmployee$, selectedDate$])
+		this.pagination$
 			.pipe(
-				debounceTime(400),
-				filter(([organization]) => !!organization),
-				tap(([organization]) => (this.organization = organization)),
+				debounceTime(100),
 				distinctUntilChange(),
-				tap(([organization, employee, date]) => {
-					this.selectedDate = date;
+				tap(() => this.timeOff$.next(true)),
+				untilDestroyed(this)
+			)
+			.subscribe();
+		const storeOrganization$ = this._store.selectedOrganization$;
+		const selectedDateRange$ = this._dateRangePickerBuilderService.selectedDateRange$;
+		const storeEmployee$ = this._store.selectedEmployee$;
+		combineLatest([storeOrganization$, selectedDateRange$, storeEmployee$])
+			.pipe(
+				debounceTime(200),
+				distinctUntilChange(),
+				filter(([organization, dateRange]) => !!organization && !!dateRange),
+				tap(([organization, dateRange, employee]) => {
+					this.organization = organization;
+					this.selectedDateRange = dateRange;
 					this.selectedEmployeeId = employee ? employee.id : null;
 				}),
-				tap(() => this.timeoff$.next(true)),
+				tap(() => this._refresh$.next(true)),
+				tap(() => this.timeOff$.next(true)),
+				untilDestroyed(this)
+			)
+			.subscribe();
+		this._route.queryParamMap
+			.pipe(
+				filter((params) => !!params && params.get('openAddDialog') === 'true'),
+				debounceTime(1000),
+				tap(() => this.requestDaysOff()),
+				untilDestroyed(this)
+			)
+			.subscribe();
+		this._refresh$
+			.pipe(
+				filter(() => this._isGridLayout),
+				tap(() => this.refreshPagination()),
+				tap(() => (this.timeOffs = [])),
+				tap(() => this.getTimeOffs()),
 				untilDestroyed(this)
 			)
 			.subscribe();
@@ -111,183 +148,220 @@ export class TimeOffComponent
 
 	setView() {
 		this.viewComponentName = ComponentEnum.TIME_OFF;
-		this.store
+		this._store
 			.componentLayout$(this.viewComponentName)
 			.pipe(
 				distinctUntilChange(),
-				tap((componentLayout) => this.dataLayoutStyle = componentLayout),
+				tap((componentLayout) => (this.dataLayoutStyle = componentLayout)),
+				tap(() => this.refreshPagination()),
 				filter((componentLayout) => componentLayout === ComponentLayoutStyleEnum.CARDS_GRID),
+				tap(() => (this.timeOffs = [])),
+				tap(() => this.timeOff$.next(true)),
 				untilDestroyed(this)
 			)
 			.subscribe();
 	}
 
-	showAdditionalActions() {
-		this.showActions = !this.showActions;
-	}
-
-	changeDisplayHolidays(checked: boolean) {
-		this.displayHolidays = checked;
-		this.isRecordSelected = false;
-
-		if (this.displayHolidays) {
-			this.timeOffs = this.rows;
-			this.sourceSmartTable.load(this.rows);
-		} else {
-			const filtered = [...this.rows].filter(
-				(record: ITimeOff) => !record.isHoliday
-			);
-			this.timeOffs = filtered;
-			this.sourceSmartTable.load(filtered);
-		}
+	/**
+	 * Change display holidays
+	 *
+	 * @param isHoliday
+	 */
+	changeDisplayHolidays(isHoliday: boolean) {
+		this._refresh$.next(true);
+		this.timeOff$.next(true);
 	}
 
 	private _applyTranslationOnSmartTable() {
-		this.translate.onLangChange
+		this.translateService.onLangChange
 			.pipe(
 				tap(() => this._loadSmartTableSettings()),
 				untilDestroyed(this)
-			).subscribe();
+			)
+			.subscribe();
 	}
 
+	/**
+	 * On status change filter
+	 *
+	 * @param status
+	 */
 	detectStatusChange(status: StatusTypesEnum) {
-		let filtered: ITimeOff[] = [];
 		switch (status) {
 			case StatusTypesEnum.REQUESTED:
 			case StatusTypesEnum.APPROVED:
 			case StatusTypesEnum.DENIED:
-				filtered = [...this.rows].filter(
-					(record: ITimeOff) => record.status === status
-				);
-				this.timeOffs = filtered;
-				this.sourceSmartTable.load(filtered);
+				this.setFilter({ field: 'status', search: status });
 				break;
 			default:
-				filtered = this.rows;
+				this.setFilter({ field: 'status', search: '' });
 				break;
 		}
-
-		this.isRecordSelected = false;
-		this.timeOffs = filtered;
-		this.sourceSmartTable.load(filtered);
 	}
 
-	openTimeOffSettings() {
-		this.router.navigate(['/pages/employees/time-off/settings']);
-	}
-
-	selectRecord({ isSelected, data }) {
-		this.isRecordSelected = isSelected ? true : false;
+	/**
+	 * Select time off record
+	 *
+	 * @param param0
+	 */
+	selectTimeOff({ isSelected, data }) {
+		this.disableButton = !isSelected;
 		this.selectedTimeOffRecord = isSelected ? data : null;
 	}
 
+	/**
+	 * Approves the selected time off request.
+	 *
+	 * @param selectedItem
+	 */
 	approveDaysOff(selectedItem?: ITimeOff) {
 		if (selectedItem) {
-			this.selectRecord({
+			this.selectTimeOff({
 				isSelected: true,
 				data: selectedItem
 			});
 		}
+		if (this._statusChangesInFlight.has(this.selectedTimeOffRecord.id)) {
+			return;
+		}
 		if (this.selectedTimeOffRecord.status !== StatusTypesEnum.APPROVED) {
-			const requestId = this.selectedTimeOffRecord.id;
-			this.selectedTimeOffRecord.status = StatusTypesEnum.APPROVED;
-			this.timeOffService
-				.updateRequestStatus(requestId, 'approval')
-				.pipe(untilDestroyed(this), first())
-				.subscribe(
-					() => {
-						this.toastrService.success(
-							'TIME_OFF_PAGE.NOTIFICATIONS.STATUS_SET_APPROVED'
-						);
-						this.timeoff$.next(true);
-					},
-					() =>
-						this.toastrService.danger(
-							'TIME_OFF_PAGE.NOTIFICATIONS.ERR_SET_STATUS'
-						)
-				);
+			this._sendStatus(this.selectedTimeOffRecord, StatusTypesEnum.APPROVED, 'approval', () => {
+				this._toastrService.success('TIME_OFF_PAGE.NOTIFICATIONS.STATUS_SET_APPROVED');
+				this._refresh$.next(true);
+				this.timeOff$.next(true);
+			});
 		} else {
-			this.toastrService.success(
+			this._toastrService.success(
 				'TIME_OFF_PAGE.NOTIFICATIONS.APPROVED_NO_CHANGES',
 				'TIME_OFF_PAGE.NOTIFICATIONS.NO_CHANGES'
 			);
-			this.timeoff$.next(true);
+			this._refresh$.next(true);
+			this.timeOff$.next(true);
 		}
 	}
 
+	/**
+	 * Denies the selected time off request.
+	 *
+	 * @param selectedItem
+	 */
 	denyDaysOff(selectedItem?: ITimeOff) {
 		if (selectedItem) {
-			this.selectRecord({
+			this.selectTimeOff({
 				isSelected: true,
 				data: selectedItem
 			});
 		}
+		if (this._statusChangesInFlight.has(this.selectedTimeOffRecord.id)) {
+			return;
+		}
 		if (this.selectedTimeOffRecord.status !== StatusTypesEnum.DENIED) {
-			const requestId = this.selectedTimeOffRecord.id;
-			this.selectedTimeOffRecord.status = StatusTypesEnum.DENIED;
-			this.timeOffService
-				.updateRequestStatus(requestId, 'denied')
-				.pipe(untilDestroyed(this), first())
-				.subscribe(
-					() => {
-						this.toastrService.success(
-							'TIME_OFF_PAGE.NOTIFICATIONS.REQUEST_DENIED'
-						);
-						this.timeoff$.next(true);
-					},
-					() =>
-						this.toastrService.danger(
-							'TIME_OFF_PAGE.NOTIFICATIONS.ERR_SET_STATUS'
-						)
-				);
+			this._sendStatus(this.selectedTimeOffRecord, StatusTypesEnum.DENIED, 'denied', () => {
+				this._toastrService.success('TIME_OFF_PAGE.NOTIFICATIONS.REQUEST_DENIED');
+				this.timeOff$.next(true);
+			});
 		} else {
-			this.toastrService.success(
+			this._toastrService.success(
 				'TIME_OFF_PAGE.NOTIFICATIONS.DENIED_NO_CHANGES',
 				'TIME_OFF_PAGE.NOTIFICATIONS.NO_CHANGES'
 			);
-			this.timeoff$.next(true);
+			this._refresh$.next(true);
+			this.timeOff$.next(true);
 		}
 	}
 
+	/**
+	 * Sends a status change for one request, showing it on the row ahead of the answer. Only one change per request
+	 * is on its way at a time (Approve and Deny ignore the row until the answer is in), so the status a refusal puts
+	 * back is always the one the server confirmed, not another click's.
+	 *
+	 * @param record The row.
+	 * @param status The status asked for.
+	 * @param route The status route of the API.
+	 * @param onAccepted What to do once the server accepted it.
+	 */
+	private _sendStatus(
+		record: ITimeOff,
+		status: StatusTypesEnum,
+		route: 'approval' | 'denied',
+		onAccepted: () => void
+	) {
+		const { id: requestId, status: previousStatus } = record;
+		this._statusChangesInFlight.add(requestId);
+		record.status = status;
+		this._timeOffService
+			.updateRequestStatus(requestId, route)
+			.pipe(
+				untilDestroyed(this),
+				first(),
+				finalize(() => this._statusChangesInFlight.delete(requestId))
+			)
+			.subscribe({
+				next: onAccepted,
+				error: (error: HttpErrorResponse) => this._onStatusRefused(record, previousStatus, error)
+			});
+	}
+
+	/**
+	 * A status change the server refused: the row goes back to the status the server still holds, so a second
+	 * click asks the server again instead of reporting "no changes". A refusal the server explains (a 400, such as
+	 * an approval the employee's leave balance cannot cover, issue #10183) shows its reason; anything else keeps
+	 * the generic notice.
+	 *
+	 * @param record The row whose status was changed ahead of the answer.
+	 * @param previousStatus Its status before.
+	 * @param error The server's answer.
+	 */
+	private _onStatusRefused(record: ITimeOff, previousStatus: ITimeOff['status'], error: HttpErrorResponse) {
+		record.status = previousStatus;
+		if (error?.status === 400) {
+			this._toastrService.danger(error, 'TIME_OFF_PAGE.NOTIFICATIONS.ERR_SET_STATUS');
+		} else {
+			this._toastrService.danger('TIME_OFF_PAGE.NOTIFICATIONS.ERR_SET_STATUS');
+		}
+	}
+
+	/**
+	 * Deletes the selected time off request.
+	 *
+	 * @param selectedItem
+	 */
 	deleteRequest(selectedItem?: ITimeOff) {
 		if (selectedItem) {
-			this.selectRecord({
+			this.selectTimeOff({
 				isSelected: true,
 				data: selectedItem
 			});
 		}
-		this.dialogService
+		this._dialogService
 			.open(DeleteConfirmationComponent, {
 				context: {
-					recordType: this.getTranslation(
-						'TIME_OFF_PAGE.TIME_OFF_REQUEST'
-					)
+					recordType: this.getTranslation('TIME_OFF_PAGE.TIME_OFF_REQUEST')
 				}
 			})
 			.onClose.pipe(first())
 			.subscribe((res) => {
 				if (res) {
-					this.timeOffService
+					this._timeOffService
 						.deleteDaysOffRequest(this.selectedTimeOffRecord.id)
 						.pipe(untilDestroyed(this), first())
-						.subscribe(
-							() => {
-								this.toastrService.success(
-									'TIME_OFF_PAGE.NOTIFICATIONS.REQUEST_DELETED'
-								);
-								this.timeoff$.next(true);
+						.subscribe({
+							next: () => {
+								this._toastrService.success('TIME_OFF_PAGE.NOTIFICATIONS.REQUEST_DELETED');
+								this._refresh$.next(true);
+								this.timeOff$.next(true);
 							},
-							() =>
-								this.toastrService.danger(
-									'TIME_OFF_PAGE.NOTIFICATIONS.ERR_DELETE_REQUEST'
-								)
-						);
+							error: () => this._toastrService.danger('TIME_OFF_PAGE.NOTIFICATIONS.ERR_DELETE_REQUEST')
+						});
 				}
 			});
 	}
 
+	/**
+	 * Opens a dialog for requesting time off.
+	 */
 	requestDaysOff() {
-		this.dialogService
+		this._dialogService
 			.open(TimeOffRequestMutationComponent, {
 				context: { type: 'request' }
 			})
@@ -298,8 +372,12 @@ export class TimeOffComponent
 			});
 	}
 
+	/**
+	 * Adds holidays to the selected time off request.
+	 * Opens a dialog for adding holidays.
+	 */
 	addHolidays() {
-		this.dialogService
+		this._dialogService
 			.open(TimeOffHolidayMutationComponent)
 			.onClose.pipe(untilDestroyed(this), first())
 			.subscribe((res) => {
@@ -310,10 +388,14 @@ export class TimeOffComponent
 			});
 	}
 
+	private get _isGridLayout(): boolean {
+		return this.componentLayoutStyleEnum.CARDS_GRID === this.dataLayoutStyle;
+	}
+
 	updateTimeOffRecord() {
 		this._removeDocUrl();
 
-		this.dialogService
+		this._dialogService
 			.open(TimeOffRequestMutationComponent, {
 				context: { timeOff: this.selectedTimeOffRecord }
 			})
@@ -327,6 +409,9 @@ export class TimeOffComponent
 			});
 	}
 
+	/**
+	 * Archives the selected time off request.
+	 */
 	archive() {
 		const requestId = this.selectedTimeOffRecord.id;
 		this.selectedTimeOffRecord.isArchived = true;
@@ -334,261 +419,334 @@ export class TimeOffComponent
 		this._updateRecord(requestId);
 	}
 
+	/**
+	 * Change include archived
+	 *
+	 * @param $event
+	 */
 	changeIncludeArchived($event) {
-		this.includeArchived = $event;
-		this.timeoff$.next(true);
+		this._refresh$.next(true);
+		this.timeOff$.next(true);
 	}
 
-	showHideFilter() {
-		this.showFilter = !this.showFilter;
-	}
-
+	/**
+	 * Load smart table settings configuration
+	 *
+	 */
 	private _loadSmartTableSettings() {
+		// Get pagination settings
+		const pagination: IPaginationBase = this.getPagination();
+
+		// Set up smart table settings
 		this.settingsSmartTable = {
 			actions: false,
-			noDataMessage: this.getTranslation('SM_TABLE.NO_DATA'),
+			selectedRowIndex: -1,
+			pager: {
+				display: false,
+				perPage: pagination ? pagination.itemsPerPage : 10
+			},
+			noDataMessage: this.getTranslation('SM_TABLE.NO_DATA.TIME_OFF'),
 			columns: {
 				fullName: {
 					title: this.getTranslation('SM_TABLE.EMPLOYEE'),
 					type: 'custom',
-					renderComponent: AvatarComponent,
-					valuePrepareFunction: (
-						cell,
-						row: IEmployeeJobsStatisticsResponse
-					) => {
-						return {
-							name: row.fullName ? row.fullName : null,
-							src: row.imageUrl ? row.imageUrl : null,
-							id: (row.employees && row.employees.length === 1) ?
-								row.employees[0].id :
-								null
-						};
+					class: 'align-row',
+					renderComponent: PictureNameTagsComponent,
+					componentInitFunction: (instance: PictureNameTagsComponent, cell: Cell) => {
+						instance.rowData = cell.getRow().getData();
+						instance.value = cell.getValue();
 					},
-					class: 'align-row'
+					filter: {
+						type: 'custom',
+						component: InputFilterComponent
+					},
+					filterFunction: (value) => {
+						this.setFilter({
+							field: 'user.name',
+							search: value
+						});
+					}
 				},
-				description: {
+				extendedDescription: {
 					title: this.getTranslation('SM_TABLE.DESCRIPTION'),
-					type: 'html'
+					type: 'html',
+					filter: {
+						type: 'custom',
+						component: InputFilterComponent
+					},
+					filterFunction: (value) => {
+						this.setFilter({ field: 'description', search: value });
+					}
 				},
-				policyName: {
+				policy: {
 					title: this.getTranslation('SM_TABLE.POLICY'),
-					type: 'string',
-					class: 'text-center'
+					type: 'custom',
+					renderComponent: ApprovalPolicyComponent,
+					componentInitFunction: (instance: ApprovalPolicyComponent, cell: Cell) => {
+						instance.rowData = cell.getRow().getData();
+						instance.value = cell.getRawValue();
+					},
+					filter: {
+						type: 'custom',
+						component: InputFilterComponent
+					},
+					filterFunction: (value) => {
+						this.setFilter({ field: 'policy.name', search: value });
+					}
 				},
 				start: {
 					title: this.getTranslation('SM_TABLE.START'),
-					type: 'date',
-					filter: false,
-					valuePrepareFunction: (date) =>
-						new DatePipe('en-GB').transform(date, 'dd/MM/yyyy'),
-					class: 'text-center'
+					type: 'custom',
+					isFilterable: false,
+					renderComponent: DateViewComponent,
+					componentInitFunction: (instance: DateViewComponent, cell: Cell) => {
+						instance.value = cell.getValue();
+					}
 				},
 				end: {
 					title: this.getTranslation('SM_TABLE.END'),
-					type: 'date',
-					filter: false,
-					valuePrepareFunction: (date) =>
-						new DatePipe('en-GB').transform(date, 'dd/MM/yyyy'),
-					class: 'text-center'
+					type: 'custom',
+					isFilterable: false,
+					renderComponent: DateViewComponent,
+					componentInitFunction: (instance: DateViewComponent, cell: Cell) => {
+						instance.value = cell.getValue();
+					}
 				},
 				requestDate: {
 					title: this.getTranslation('SM_TABLE.REQUEST_DATE'),
-					type: 'date',
-					filter: false,
-					valuePrepareFunction: (date) =>
-						new DatePipe('en-GB').transform(date, 'dd/MM/yyyy'),
-					class: 'text-center'
+					type: 'custom',
+					isFilterable: false,
+					renderComponent: DateViewComponent,
+					componentInitFunction: (instance: DateViewComponent, cell: Cell) => {
+						instance.value = cell.getValue();
+					}
 				},
-				status: {
+				statusBadge: {
 					title: this.getTranslation('SM_TABLE.STATUS'),
 					type: 'custom',
-					class: 'text-center',
-					width: '200px',
+					width: '5%',
+					isFilterable: false,
 					renderComponent: StatusBadgeComponent,
-					filter: false,
-					valuePrepareFunction: (cell, row) => {
-						let badgeClass;
-						if (cell) {
-							badgeClass = ['approved'].includes(
-								cell.toLowerCase()
-							)
-								? 'success'
-								: ['requested'].includes(cell.toLowerCase())
-									? 'warning'
-									: 'danger';
-						}
-						return {
-							text: cell,
-							class: badgeClass
-						};
+					componentInitFunction: (instance: StatusBadgeComponent, cell: Cell) => {
+						instance.value = cell.getRawValue();
 					}
 				}
-			},
-			pager: {
-				display: true,
-				perPage: 8
 			}
 		};
 	}
 
-	private getTimeOffs() {
-		const { tenantId } = this.store.user;
-		const { id: organizationId } = this.organization;
+	/*
+	 * Register Smart Table Source Config
+	 */
+	setSmartTableSource() {
+		if (!this.organization) {
+			return;
+		}
 
-		this.timeOffService
-			.getAllTimeOffRecords(
-				[],
-				{
+		this.loading = true;
+
+		try {
+			const { id: organizationId, tenantId } = this.organization;
+			const { startDate, endDate } = getAdjustDateRangeFutureAllowed(this.selectedDateRange);
+
+			this.sourceSmartTable = new ServerDataSource(this._httpClient, {
+				endPoint: `${API_PREFIX}/time-off-request/pagination`,
+				relations: ['policy', 'document', 'employees.user'],
+				where: {
 					organizationId,
 					tenantId,
-					employeeId: this.selectedEmployeeId || null
+					isHoliday: !this.displayHolidays,
+					includeArchived: this.includeArchived,
+					startDate: toUTC(startDate).format('YYYY-MM-DD HH:mm'),
+					endDate: toUTC(endDate).format('YYYY-MM-DD HH:mm'),
+					...(this.selectedEmployeeId ? { employeeIds: [this.selectedEmployeeId] } : {}),
+					...(this.filters.where ? this.filters.where : {})
 				},
-				this.selectedDate || null
-			)
-			.pipe(
-				first(),
-				finalize(() => this.loading = false),
-				untilDestroyed(this)
-			)
-			.subscribe(({ items }) => {
-					this.rows = [];
-					items.forEach((timeOff: ITimeOff) => {
-						let employeeName: string;
-						let employeeImage: string;
-						let extendedDescription = '';
-
-						if (timeOff.employees.length !== 1) {
-							employeeName = this.getTranslation('TIME_OFF_PAGE.MULTIPLE_EMPLOYEES');
-							employeeImage = 'assets/images/avatars/people-outline.svg';
-						} else {
-							employeeName = `${timeOff.employees[0].fullName}`;
-							employeeImage = timeOff.employees[0].user.imageUrl;
-						}
-
-						if (timeOff.documentUrl) {
-							extendedDescription = `<a href=${
-								timeOff.documentUrl
-							} target="_blank">${this.getTranslation(
-								'TIME_OFF_PAGE.VIEW_REQUEST_DOCUMENT'
-							)}</a><br>${timeOff.description}`;
-						} else {
-							extendedDescription = timeOff.description;
-						}
-
-						if (!timeOff.isArchived || this.includeArchived) {
-							this.rows.push({
-								...timeOff,
-								fullName: employeeName,
-								imageUrl: employeeImage,
-								policyName: timeOff.policy.name,
-								description: extendedDescription
-							});
-						}
+				resultMap: (timeOff: ITimeOff) => {
+					return Object.assign({}, timeOff, this.mapTimeOffRequest(timeOff));
+				},
+				finalize: () => {
+					if (this._isGridLayout) this.timeOffs.push(...this.sourceSmartTable.getData());
+					this.setPagination({
+						...this.getPagination(),
+						totalItems: this.sourceSmartTable.count()
 					});
-					this.timeOffs = this.rows;
-					this.sourceSmartTable.load(this.rows);
-				},
-				() =>
-					this.toastrService.danger(
-						'TIME_OFF_PAGE.NOTIFICATIONS.ERR_LOAD_RECORDS'
-					)
-			);
-	}
-
-	private _createRecord() {
-		if (this.timeOffRequest) {
-			this.timeOffService
-				.createRequest(this.timeOffRequest)
-				.pipe(untilDestroyed(this), first())
-				.subscribe(
-					() => {
-						this.toastrService.success(
-							'TIME_OFF_PAGE.NOTIFICATIONS.RECORD_CREATED'
-						);
-						this.timeoff$.next(true);
-					},
-					() =>
-						this.toastrService.danger(
-							'TIME_OFF_PAGE.NOTIFICATIONS.ERR_CREATE_RECORD'
-						)
-				);
+					this.loading = false;
+				}
+			});
+		} catch (error) {
+			console.log('Error while retrieving time off requests: ', error);
+			this._errorHandlingService.handleError(error);
+		} finally {
+			this.loading = false;
 		}
 	}
 
-	private _updateRecord(id: string) {
-		this.timeOffService
-			.updateRequest(id, this.timeOffRequest)
-			.pipe(untilDestroyed(this), first())
-			.subscribe(
-				() => {
-					this.toastrService.success(
-						'TIME_OFF_PAGE.NOTIFICATIONS.REQUEST_UPDATED'
-					);
-					this.timeoff$.next(true);
-				},
-				() =>
-					this.toastrService.danger(
-						'TIME_OFF_PAGE.NOTIFICATIONS.ERR_UPDATE_RECORD'
+	/**
+	 * GET time off requests
+	 *
+	 * @returns
+	 */
+	private async getTimeOffs() {
+		if (!this.organization) {
+			return;
+		}
+		try {
+			// Set up the Smart Table source
+			this.setSmartTableSource();
+
+			// Get pagination settings
+			const { activePage, itemsPerPage } = this.getPagination();
+
+			// Set paging for the Smart Table source
+			this.sourceSmartTable.setPaging(activePage, itemsPerPage, false);
+
+			// Load additional data for grid layout, if active
+			this._loadGridLayoutData();
+		} catch (error) {
+			this._toastrService.danger(error, 'TIME_OFF_PAGE.NOTIFICATIONS.ERR_LOAD_RECORDS');
+		}
+	}
+
+	/**
+	 * Mapped Time Off Requests
+	 *
+	 * @param timeOff
+	 * @returns
+	 */
+	mapTimeOffRequest(timeOff: ITimeOff) {
+		let employeeName: string;
+		let employeeImage: string;
+		let extendedDescription: string;
+
+		if (timeOff.employees.length !== 1) {
+			employeeName = this.getTranslation('TIME_OFF_PAGE.MULTIPLE_EMPLOYEES');
+			employeeImage = 'assets/images/avatars/people-outline.svg';
+		} else {
+			employeeName = `${timeOff.employees[0].fullName}`;
+			employeeImage = timeOff.employees[0].user.imageUrl;
+		}
+		// The request's document link goes through the shared safe opener's check: http(s) only, quoted, and opened
+		// without access to this page.
+		const documentUrl = toHttpUrl(timeOff.documentUrl)?.href;
+		if (documentUrl) {
+			extendedDescription = `<a href="${escapeHtml(documentUrl)}" target="_blank" rel="noopener noreferrer">${escapeHtml(
+				this.getTranslation('TIME_OFF_PAGE.VIEW_REQUEST_DOCUMENT')
+			)}</a><br>${timeOff.description}`;
+		} else {
+			extendedDescription = timeOff.description;
+		}
+		return {
+			fullName: employeeName,
+			imageUrl: employeeImage,
+			extendedDescription: extendedDescription,
+			statusBadge: this.statusMapper(timeOff.status)
+		};
+	}
+
+	private async _loadGridLayoutData() {
+		if (this._isGridLayout) {
+			this.timeOffs = await this.sourceSmartTable.getElements()
+		};
+	}
+
+	private _createRecord() {
+		try {
+			if (this.timeOffRequest) {
+				this._timeOffService
+					.createRequest(this.timeOffRequest)
+					.pipe(
+						untilDestroyed(this),
+						first(),
+						tap(() => this._toastrService.success('TIME_OFF_PAGE.NOTIFICATIONS.RECORD_CREATED')),
+						tap(() =>
+							this._dateRangePickerBuilderService.refreshDateRangePicker(
+								moment(this.timeOffRequest.start)
+							)
+						),
+						finalize(() => {
+							this._refresh$.next(true);
+							this.timeOff$.next(true);
+						})
 					)
-			);
+					.subscribe();
+			}
+		} catch (error) {
+			this._toastrService.danger('TIME_OFF_PAGE.NOTIFICATIONS.ERR_CREATE_RECORD');
+		}
+	}
+
+	private _updateRecord(id: ID) {
+		try {
+			this._timeOffService
+				.updateRequest(id, this.timeOffRequest)
+				.pipe(
+					untilDestroyed(this),
+					first(),
+					tap(() => this._toastrService.success('TIME_OFF_PAGE.NOTIFICATIONS.REQUEST_UPDATED')),
+					tap(() =>
+						this._dateRangePickerBuilderService.refreshDateRangePicker(moment(this.timeOffRequest.start))
+					),
+					finalize(() => {
+						this._refresh$.next(true);
+						this.timeOff$.next(true);
+					})
+				)
+				.subscribe();
+		} catch (error) {
+			this._toastrService.danger('TIME_OFF_PAGE.NOTIFICATIONS.ERR_UPDATE_RECORD');
+		}
 	}
 
 	private _removeDocUrl() {
 		if (this.selectedTimeOffRecord.description) {
 			const index = this.selectedTimeOffRecord.description.lastIndexOf('>');
 			const nativeDescription = this.selectedTimeOffRecord.description;
-			this.selectedTimeOffRecord.description = nativeDescription.substr(
-				index + 1
-			);
+			this.selectedTimeOffRecord.description = nativeDescription.substring(index + 1);
 		}
-	}
-
-	/*
-	 * Table on changed source event
-	 */
-	onChangedSource() {
-		this.timeOffTable.source.onChangedSource
-			.pipe(
-				untilDestroyed(this),
-				tap(() => this.clearItem())
-			)
-			.subscribe();
 	}
 
 	/*
 	 * Clear selected item
 	 */
 	clearItem() {
-		this.selectRecord({
-			isSelected: false,
-			data: null
-		});
-		this.deselectAll();
-	}
-
-	/*
-	 * Deselect all table rows
-	 */
-	deselectAll() {
-		if (this.timeOffTable && this.timeOffTable.grid) {
-			this.timeOffTable.grid.dataSet['willSelect'] = 'false';
-			this.timeOffTable.grid.dataSet.deselectAll();
-		}
+		this.selectTimeOff({ isSelected: false, data: null });
 	}
 
 	/**
 	 * Navigate to employee edit section
-	 * 
-	 * @param row 
+	 *
+	 * @param row
 	 */
 	navigateToEmployee(row: ITimeOff) {
 		if (row?.employees.length > 0) {
-			this.router.navigate([
-				`/pages/employees/edit`,
-				row.employees[0].id
-			]);
+			// Extract the first employee from the employees array
+			const [employee] = row.employees;
+			this._router.navigate([`/pages/employees/edit`, employee.id]);
 		}
 	}
 
-	ngOnDestroy(): void { }
+	/**
+	 * Maps a status string to its corresponding badge class and returns an object
+	 * containing the original text and the computed class.
+	 *
+	 * @param {NullableString} value - The status string to map, which can be null or undefined.
+	 * @returns {{ text: NullableString, class: string }} An object containing the status text
+	 * and the associated badge class.
+	 */
+	private statusMapper(value: NullableString): { text: NullableString; class: string } {
+		const badgeClass = value
+			? {
+					[StatusTypesEnum.APPROVED]: 'success',
+					[StatusTypesEnum.REQUESTED]: 'warning'
+			  }[value.toUpperCase()] || 'danger'
+			: 'danger';
+
+		return {
+			text: value,
+			class: badgeClass
+		};
+	}
+
+	ngOnDestroy(): void {}
 }

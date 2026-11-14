@@ -8,4 +8,5 @@ export WAIT_HOSTS=$DB_HOST:$DB_PORT
 # in Docker Compose we should wait other services start
 ./wait
 
+echo 'Starting …'
 exec "$@"

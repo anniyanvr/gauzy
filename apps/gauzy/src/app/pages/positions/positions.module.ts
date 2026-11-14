@@ -1,45 +1,41 @@
 import { NgModule } from '@angular/core';
-import { ThemeModule } from '../../@theme/theme.module';
 import {
-	NbCardModule,
+	NbActionsModule,
 	NbButtonModule,
-	NbInputModule,
-	NbIconModule,
+	NbCardModule,
 	NbDialogModule,
-	NbActionsModule
+	NbIconModule,
+	NbInputModule,
+	NbTooltipModule
 } from '@nebular/theme';
-import { FormsModule } from '@angular/forms';
-import { TagsColorInputModule } from '../../@shared/tags/tags-color-input/tags-color-input.module';
-import { TableComponentsModule } from '../../@shared/table-components/table-components.module';
-import { OrganizationPositionsService } from '../../@core/services/organization-positions';
-import { SharedModule } from '../../@shared/shared.module';
+import { TranslatePipe } from '@ngx-translate/core';
+import {
+	SmartDataViewLayoutModule,
+	CardGridModule,
+	SharedModule,
+	TableComponentsModule,
+	TagsColorInputModule
+} from '@gauzy/ui-core/shared';
+import { OrganizationPositionsService } from '@gauzy/ui-core/core';
 import { PositionsRoutingModule } from './positions-routing.module';
 import { PositionsComponent } from './positions.component';
-import { CardGridModule } from '../../@shared/card-grid/card-grid.module';
-import { Ng2SmartTableModule } from 'ng2-smart-table';
-import { TranslateModule } from '../../@shared/translate/translate.module';
-import { HeaderTitleModule } from '../../@shared/components/header-title/header-title.module';
 
 @NgModule({
 	imports: [
-		SharedModule,
-		ThemeModule,
-		NbCardModule,
-		FormsModule,
-		NbButtonModule,
-		NbInputModule,
-		NbIconModule,
-		TagsColorInputModule,
 		NbActionsModule,
+		NbButtonModule,
+		NbCardModule,
+		NbDialogModule.forRoot(),
+		NbIconModule,
+		NbInputModule,
+		NbTooltipModule,
+		TranslatePipe,
+		SharedModule,
 		TableComponentsModule,
 		CardGridModule,
-		Ng2SmartTableModule,
 		PositionsRoutingModule,
 		TagsColorInputModule,
-		NbActionsModule,
-		NbDialogModule.forChild(),
-		TranslateModule,
-		HeaderTitleModule
+		SmartDataViewLayoutModule
 	],
 	declarations: [PositionsComponent],
 	providers: [OrganizationPositionsService]

@@ -1,21 +1,24 @@
 export const OrganizationTagsPage = {
-	addTagButtonCss: 'div.mb-3 > button[status="success"]',
-	closeDialogButtonCss: 'g[data-name="close"]',
+	addTagButtonCss: 'button[status="success"]:has-text("Add")',
+	closeDialogButtonCss: 'nb-card-header span.cancel i.fa-times',
 	tagNameInputCss: '#inputName',
 	tagColorInputCss: '#inputColor',
 	tagTenantCheckboxCss: 'span.custom-checkbox',
 	tagDescriptionCss: '#inputDescription',
-	cancelButtonCss: 'nb-card-footer.text-right > button[status="danger"]',
-	saveButtonCss: 'nb-card-footer.text-right > button[status="success"]',
+	cancelButtonCss: 'nb-card-footer.text-left > button[status="basic"]',
+	saveButtonCss: '.text-left [status="success"]',
 	gridButtonCss: 'div.layout-switch > button',
-	selectTableRowCss: 'table > tbody > tr.ng2-smart-row',
-	editTagButtonCss: 'div.mb-3 > button[status="info"]',
-	deleteTagButtonCss: 'div.mb-3 > button[status="danger"]',
+	selectTableRowCss: 'table > tbody > tr.angular2-smart-row',
+	editTagButtonCss: 'button.action.primary',
+	deleteTagButtonCss: 'button.action:has(nb-icon[icon="trash-2-outline"])',
 	confirmDeleteTagButtonCss: 'nb-card-footer > button[status="danger"]',
-	cancelDeleteTagButtonCss: 'nb-card-footer > button[status="info"]',
+	cancelDeleteTagButtonCss: 'nb-card-footer > button[status="basic"]',
 	toastrMessageCss: 'nb-toast.ng-trigger',
-	verifyTagCss: 'ngx-tags-color > div > nb-badge',
-	filterNameInputCss: '[placeholder="Name"]',
-	firstTableCellTagCss:
-		'tbody > tr.ng2-smart-row:first-of-type > td:first-of-type'
+	verifyTagCss: 'angular2-smart-table tbody',
+	// The Name column's filter input, addressed by COLUMN KEY (angular2-smart-table puts the key on the
+	// header cell) rather than by placeholder — the placeholder is the translated column title, so it
+	// stops matching as soon as a spec switches the UI language. The tags grid paginates at 10 and the
+	// suite accumulates tags, so every row assertion has to filter through this first.
+	filterNameInputCss: 'th.angular2-smart-th.name input',
+	firstTableCellTagCss: 'tbody > tr.angular2-smart-row:first-of-type > td:first-of-type'
 };

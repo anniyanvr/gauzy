@@ -1,5 +1,4 @@
 import { NgModule } from '@angular/core';
-import { ThemeModule } from '../../@theme/theme.module';
 import {
 	NbCardModule,
 	NbButtonModule,
@@ -7,52 +6,60 @@ import {
 	NbDatepickerModule,
 	NbIconModule,
 	NbDialogModule,
+	NbSelectModule,
 	NbSpinnerModule,
-	NbBadgeModule
+	NbBadgeModule,
+	NbTooltipModule
 } from '@nebular/theme';
-import { FormsModule, ReactiveFormsModule } from '@angular/forms';
+import { NgSelectModule } from '@ng-select/ng-select';
+import { NgxPermissionsModule } from 'ngx-permissions';
+import { TranslatePipe } from '@ngx-translate/core';
+import {
+	SmartDataViewLayoutModule,
+	CardGridModule,
+	IncomeMutationModule,
+	RecordViewModule,
+	SharedModule,
+	TableComponentsModule,
+	TableFiltersModule,
+	UserFormsModule,
+	FavoriteToggleModule
+} from '@gauzy/ui-core/shared';
 import { IncomeComponent } from './income.component';
 import { IncomeRoutingModule } from './income-routing.module';
-import { Ng2SmartTableModule } from 'ng2-smart-table';
-import { IncomeService } from '../../@core/services/income.service';
-import { NgSelectModule } from '@ng-select/ng-select';
-import { UserFormsModule } from '../../@shared/user/forms/user-forms.module';
-import { IncomeMutationModule } from '../../@shared/income/income-mutation/income-mutation.module';
-import { TableComponentsModule } from '../../@shared/table-components/table-components.module';
-import { CardGridModule } from '../../@shared/card-grid/card-grid.module';
-import { NgxPermissionsModule } from 'ngx-permissions';
-import { TranslateModule } from '../../@shared/translate/translate.module';
-import { HeaderTitleModule } from '../../@shared/components/header-title/header-title.module';
-import { PaginationModule } from '../../@shared/pagination/pagination.module';
-import { TableFiltersModule } from '../../@shared/table-filters/table-filters.module';
+import { IncomeViewPageComponent } from './income-view/income-view-page.component';
+// The income page draws its charts with the expense page's: the same bars and ring, in the revenue colour.
+import { ExpenseBarChartComponent } from '../expenses/expense-view/expense-charts/expense-bar-chart.component';
+import { ExpenseShareChartComponent } from '../expenses/expense-view/expense-charts/expense-share-chart.component';
 
 @NgModule({
 	imports: [
+		FavoriteToggleModule,
 		NbBadgeModule,
 		IncomeRoutingModule,
-		ThemeModule,
 		NbCardModule,
-		FormsModule,
-		ReactiveFormsModule,
 		NbButtonModule,
 		NbInputModule,
 		NbDatepickerModule,
 		NbIconModule,
-		Ng2SmartTableModule,
+		NbSelectModule,
+		NbTooltipModule,
 		NgSelectModule,
 		NbDialogModule.forChild(),
 		UserFormsModule,
 		IncomeMutationModule,
+		RecordViewModule,
 		TableComponentsModule,
 		CardGridModule,
-		TranslateModule,
+		TranslatePipe,
 		NbSpinnerModule,
 		NgxPermissionsModule.forChild(),
-		HeaderTitleModule,
-		PaginationModule,
-		TableFiltersModule
+		SmartDataViewLayoutModule,
+		TableFiltersModule,
+		SharedModule,
+		ExpenseBarChartComponent,
+		ExpenseShareChartComponent
 	],
-	declarations: [IncomeComponent],
-	providers: [IncomeService]
+	declarations: [IncomeComponent, IncomeViewPageComponent]
 })
 export class IncomeModule {}

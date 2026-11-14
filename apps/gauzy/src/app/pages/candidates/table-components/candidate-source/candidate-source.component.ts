@@ -1,17 +1,17 @@
-import { Component, Input } from '@angular/core';
-import { ViewCell } from 'ng2-smart-table';
+import { Component, Input, ChangeDetectionStrategy } from '@angular/core';
 
 @Component({
-	template: `
+    template: `
 		<div class="text-center">
 			<strong class="d-block">
 				{{ rowData.source?.name }}
 			</strong>
 		</div>
-	`
+	`,
+    changeDetection: ChangeDetectionStrategy.Eager,
+    standalone: false
 })
-export class CandidateSourceComponent implements ViewCell {
-	@Input()
-	rowData: any;
-	value: string | number;
+export class CandidateSourceComponent {
+	@Input() rowData: any;
+	@Input() value: string | number;
 }

@@ -1,274 +1,350 @@
-import { Component, OnInit, ViewChild, OnDestroy } from '@angular/core';
-import { Router, RouterEvent, NavigationEnd } from '@angular/router';
-import { TranslationBaseComponent } from '../../@shared/language-base/translation-base.component';
+import { Component, OnInit, OnDestroy, ChangeDetectionStrategy } from '@angular/core';
+import { Router, ActivatedRoute } from '@angular/router';
 import { TranslateService } from '@ngx-translate/core';
+import { LocalDataSource, Cell } from 'angular2-smart-table';
+import { combineLatest, firstValueFrom } from 'rxjs';
+import { filter, first, tap, debounceTime } from 'rxjs/operators';
+import { Subject } from 'rxjs';
+import { UntilDestroy, untilDestroyed } from '@ngneat/until-destroy';
+import { NbDialogService } from '@nebular/theme';
+import { pluck } from 'underscore';
 import {
-	IRequestApproval,
 	ComponentLayoutStyleEnum,
 	IOrganization,
-	IApprovalsData
+	IRequestApproval,
+	RequestApprovalStatusTypesEnum
 } from '@gauzy/contracts';
-import { RequestApprovalService } from '../../@core/services/request-approval.service';
-import { LocalDataSource, Ng2SmartTableComponent } from 'ng2-smart-table';
-import { filter, first, tap } from 'rxjs/operators';
-import { NbDialogService } from '@nebular/theme';
-import { Store } from '../../@core/services/store.service';
+import { RequestApprovalService, Store, ToastrService } from '@gauzy/ui-core/core';
+import { ComponentEnum, distinctUntilChange } from '@gauzy/ui-core/common';
+import {
+	PaginationFilterBaseComponent,
+	IPaginationBase,
+	IRecordViewSection,
+	PictureNameTagsComponent,
+	CreatedByUserComponent,
+	DateViewComponent,
+	EmployeeWithLinksComponent,
+	TaskTeamsComponent,
+	DeleteConfirmationComponent,
+	RequestApprovalMutationComponent,
+	StatusBadgeComponent
+} from '@gauzy/ui-core/shared';
 import { ApprovalPolicyComponent } from './table-components/approval-policy/approval-policy.component';
-import { RequestApprovalMutationComponent } from '../../@shared/approvals/approvals-mutation.component';
-import { RequestApprovalActionComponent } from './table-components/request-approval-action/request-approval-action.component';
-import { ComponentEnum } from '../../@core/constants/layout.constants';
-import { PictureNameTagsComponent } from '../../@shared/table-components/picture-name-tags/picture-name-tags.component';
-import { RequestApprovalStatusTypesEnum } from '@gauzy/contracts';
-import { StatusBadgeComponent } from '../../@shared/status-badge/status-badge.component';
-import { UntilDestroy, untilDestroyed } from '@ngneat/until-destroy';
-import { ToastrService } from '../../@core/services/toastr.service';
-import { EmployeeWithLinksComponent, TaskTeamsComponent } from '../../@shared/table-components';
-import { pluck } from 'underscore'
+import { buildApprovalViewSections } from './approval-record-view';
 
 @UntilDestroy({ checkProperties: true })
 @Component({
 	selector: 'ngx-approvals',
 	templateUrl: './approvals.component.html',
-	styleUrls: ['./approvals.component.scss']
+	styleUrls: ['./approvals.component.scss'],
+	changeDetection: ChangeDetectionStrategy.Eager,
+	standalone: false
 })
-export class ApprovalsComponent
-	extends TranslationBaseComponent
-	implements OnInit, OnDestroy {
+export class ApprovalsComponent extends PaginationFilterBaseComponent implements OnInit, OnDestroy {
 	public settingsSmartTable: object;
 	public loading: boolean;
 	public selectedRequestApproval: IRequestApproval;
-	public listApprovals: IApprovalsData[] = [];
 	public disableButton = true;
 	public smartTableSource = new LocalDataSource();
 	public hasEditPermission = false;
 	public selectedEmployeeId: string;
-	viewComponentName: ComponentEnum;
-	dataLayoutStyle = ComponentLayoutStyleEnum.TABLE;
-	componentLayoutStyleEnum = ComponentLayoutStyleEnum;
-	requestApprovalData: IRequestApproval[];
-	organization: IOrganization;
+	public viewComponentName: ComponentEnum;
+	public dataLayoutStyle = ComponentLayoutStyleEnum.TABLE;
+	public componentLayoutStyleEnum = ComponentLayoutStyleEnum;
+	public requestApprovalData: IRequestApproval[] = [];
+	public organization: IOrganization;
+	public _refresh$: Subject<any> = new Subject();
 
-	requestApprovalTable: Ng2SmartTableComponent;
-	@ViewChild('requestApprovalTable') set content(
-		content: Ng2SmartTableComponent
-	) {
-		if (content) {
-			this.requestApprovalTable = content;
-			this.onChangedSource();
-		}
-	}
+	/*
+	 * Read-only View: an approval request is a small record, so it opens in the
+	 * right-side drawer rather than on a page of its own.
+	 */
+	public viewedRequestApproval: IRequestApproval;
+	public viewSections: IRecordViewSection[] = [];
 
 	constructor(
 		readonly translateService: TranslateService,
 		private approvalRequestService: RequestApprovalService,
 		private store: Store,
-		private dialogService: NbDialogService,
+		private readonly dialogService: NbDialogService,
 		private toastrService: ToastrService,
-		private router: Router
+		private router: Router,
+		private readonly route: ActivatedRoute
 	) {
 		super(translateService);
-		this.setView();
 	}
 
 	ngOnInit() {
-		this.store.selectedEmployee$
+		this.subject$
 			.pipe(
-				filter((employee) => !!employee),
+				debounceTime(300),
+				tap(() => this.clearItem()),
+				tap(() => this.getApprovals()),
 				untilDestroyed(this)
 			)
-			.subscribe((employee) => {
-				if (employee && employee.id) {
+			.subscribe();
+		this.pagination$
+			.pipe(
+				debounceTime(100),
+				distinctUntilChange(),
+				tap(() => this.subject$.next(true)),
+				untilDestroyed(this)
+			)
+			.subscribe();
+		combineLatest([this.store.selectedEmployee$, this.store.selectedOrganization$])
+			.pipe(
+				debounceTime(300),
+				filter(([employee, organization]) => !!organization && !!employee),
+				distinctUntilChange(),
+				tap(([employee, organization]) => {
 					this.selectedEmployeeId = employee.id;
-					this.loadSettings();
-				}
-			});
-		this.store.selectedOrganization$
-			.pipe(
-				filter((organization) => !!organization),
+					this.organization = organization;
+				}),
+				tap(() => this._refresh$.next(true)),
+				tap(() => this.subject$.next(true)),
 				untilDestroyed(this)
 			)
-			.subscribe((org) => {
-				if (org) {
-					this.organization = org;
-					this.loadSettings();
-				}
-			});
-		this.router.events
-			.pipe(untilDestroyed(this))
-			.subscribe((event: RouterEvent) => {
-				if (event instanceof NavigationEnd) {
-					this.setView();
-				}
-			});
-		this.loadSmartTable();
+			.subscribe();
+		this.route.queryParamMap
+			.pipe(
+				filter((params) => !!params && params.get('openAddDialog') === 'true'),
+				debounceTime(1000),
+				tap(() => this.save(true)),
+				untilDestroyed(this)
+			)
+			.subscribe();
+		this._refresh$
+			.pipe(
+				filter(() => this.isGridLayout),
+				tap(() => this.refreshPagination()),
+				tap(() => (this.requestApprovalData = [])),
+				untilDestroyed(this)
+			)
+			.subscribe();
 		this._applyTranslationOnSmartTable();
+		this._loadSmartTableSettings();
+		this.setView();
 	}
 
 	setView() {
 		this.viewComponentName = ComponentEnum.APPROVALS;
 		this.store
 			.componentLayout$(this.viewComponentName)
-			.pipe(untilDestroyed(this))
-			.subscribe((componentLayout) => {
-				this.dataLayoutStyle = componentLayout;
-			});
-	}
-
-	/*
-	 * Table on changed source event
-	 */
-	onChangedSource() {
-		this.requestApprovalTable.source.onChangedSource
 			.pipe(
-				untilDestroyed(this),
-				tap(() => this.clearItem())
+				distinctUntilChange(),
+				tap((componentLayout) => (this.dataLayoutStyle = componentLayout)),
+				tap(() => this.refreshPagination()),
+				filter((componentLayout) => componentLayout === ComponentLayoutStyleEnum.CARDS_GRID),
+				tap(() => (this.requestApprovalData = [])),
+				tap(() => this.subject$.next(true)),
+				untilDestroyed(this)
 			)
 			.subscribe();
 	}
 
 	async selectRequestApproval({ isSelected, data }) {
+		this.selectedRequestApproval = null;
 		this.disableButton = !isSelected;
-		this.selectedRequestApproval = isSelected ? data : null;
+		setTimeout(() => {
+			this.selectedRequestApproval = isSelected ? data : null;
+		}, 50);
 	}
 
-	async loadSettings() {
+	async getApprovals() {
 		if (!this.organization) {
 			return;
 		}
 		this.loading = true;
-		const { tenantId } = this.store.user;
-		const { id: organizationId } = this.organization;
-		let items: any = [];
-		if (this.selectedEmployeeId) {
-			items = (
-				await this.approvalRequestService.getByEmployeeId(
-					this.selectedEmployeeId,
-					['requestApprovals'],
-					{ organizationId, tenantId }
-				)
-			).items;
-		} else {
-			items = (
-				await this.approvalRequestService.getAll(
-					['employeeApprovals', 'employeeApprovals.employee', 'employee.user', 'teamApprovals', 'teamApprovals.team', 'tags'],
-					{ organizationId, tenantId }
-				)
-			).items;
+		try {
+			const { tenantId } = this.store.user;
+			const { id: organizationId } = this.organization;
+			const { activePage, itemsPerPage } = this.getPagination();
+			const buffersItems: any[] = [];
+			let items: any = [];
+			if (this.selectedEmployeeId) {
+				items = (
+					await this.approvalRequestService.getByEmployeeId(this.selectedEmployeeId, ['requestApprovals'], {
+						organizationId,
+						tenantId
+					})
+				).items;
+			} else {
+				items = (
+					await this.approvalRequestService.getAll(
+						[
+							'employeeApprovals',
+							'employeeApprovals.employee',
+							'employeeApprovals.employee.user',
+							'teamApprovals',
+							'teamApprovals.team',
+							'tags',
+							'createdByUser'
+						],
+						{ organizationId, tenantId }
+					)
+				).items;
 
-			if (items.length > 0) {
-				items.filter((item) => {
-					item.employees = pluck(item.employeeApprovals, 'employee');
-					item.teams = pluck(item.teamApprovals, 'team');
-					return item;
-				});
+				if (items.length > 0) {
+					items.filter((item) => {
+						item.employees = pluck(item.employeeApprovals, 'employee');
+						item.teams = pluck(item.teamApprovals, 'team');
+						return item;
+					});
+				}
 			}
+			items.map((item: any) => {
+				buffersItems.push({
+					...item,
+					status: this.statusMapper(item)
+				});
+			});
+			this.smartTableSource.setPaging(activePage, itemsPerPage, false);
+			this.smartTableSource.load(buffersItems);
+			if (this.isGridLayout) this._loadGridLayoutData();
+			this.setPagination({
+				...this.getPagination(),
+				totalItems: this.smartTableSource.count()
+			});
+		} catch (error) {
+			console.error('Error while retrieving approvals', error);
+			this.toastrService.danger(error);
+		} finally {
+			this.loading = false;
 		}
-
-		this.loading = false;
-		this.requestApprovalData = items;
-		this.smartTableSource.load(items);
 	}
 
-	async loadSmartTable() {
+	private get isGridLayout(): boolean {
+		return this.dataLayoutStyle === ComponentLayoutStyleEnum.CARDS_GRID;
+	}
+
+	async _loadGridLayoutData() {
+		this.requestApprovalData.push(...(await this.smartTableSource.getElements()));
+	}
+
+	async _loadSmartTableSettings() {
+		const pagination: IPaginationBase = this.getPagination();
 		this.settingsSmartTable = {
 			actions: false,
+			pager: {
+				display: false,
+				perPage: pagination ? pagination.itemsPerPage : this.minItemPerPage
+			},
+			noDataMessage: this.getTranslation('SM_TABLE.NO_DATA.APPROVAL_REQUEST'),
 			columns: {
 				name: {
-					title: this.getTranslation(
-						'APPROVAL_REQUEST_PAGE.APPROVAL_REQUEST_NAME'
-					),
+					title: this.getTranslation('APPROVAL_REQUEST_PAGE.APPROVAL_REQUEST_NAME'),
 					type: 'custom',
-					renderComponent: PictureNameTagsComponent
+					renderComponent: PictureNameTagsComponent,
+					componentInitFunction: (instance: PictureNameTagsComponent, cell: Cell) => {
+						instance.rowData = cell.getRow().getData();
+						instance.value = cell.getValue();
+					}
 				},
 				min_count: {
-					title: this.getTranslation(
-						'APPROVAL_REQUEST_PAGE.APPROVAL_REQUEST_MIN_COUNT'
-					),
+					title: this.getTranslation('APPROVAL_REQUEST_PAGE.APPROVAL_REQUEST_MIN_COUNT'),
 					type: 'number',
-					filter: false
+					isFilterable: false
 				},
 				approvalPolicy: {
-					title: this.getTranslation(
-						'APPROVAL_REQUEST_PAGE.APPROVAL_REQUEST_APPROVAL_POLICY'
-					),
+					title: this.getTranslation('APPROVAL_REQUEST_PAGE.APPROVAL_REQUEST_APPROVAL_POLICY'),
 					type: 'custom',
+					isFilterable: false,
 					renderComponent: ApprovalPolicyComponent,
-					filter: false
+					componentInitFunction: (instance: ApprovalPolicyComponent, cell: Cell) => {
+						instance.value = cell.getRawValue();
+					}
 				},
-				createdByName: {
-					title: this.getTranslation(
-						'APPROVAL_REQUEST_PAGE.CREATED_BY'
-					),
-					type: 'string',
-					filter: false
+				createdByUser: {
+					title: this.getTranslation('APPROVAL_REQUEST_PAGE.CREATED_BY'),
+					type: 'custom',
+					isFilterable: false,
+					renderComponent: CreatedByUserComponent<IRequestApproval>,
+					componentInitFunction: (instance: CreatedByUserComponent<IRequestApproval>, cell: Cell) => {
+						instance.rowData = cell.getRow().getData();
+					}
+				},
+				createdAt: {
+					title: this.getTranslation('APPROVAL_REQUEST_PAGE.CREATED_AT'),
+					type: 'custom',
+					isFilterable: false,
+					renderComponent: DateViewComponent,
+					componentInitFunction: (instance: DateViewComponent, cell: Cell) => {
+						instance.rowData = cell.getRow().getData();
+						instance.value = cell.getValue();
+					}
 				},
 				employees: {
 					title: this.getTranslation('APPROVAL_REQUEST_PAGE.EMPLOYEES'),
 					type: 'custom',
-					filter: false,
-					renderComponent: EmployeeWithLinksComponent
+					isFilterable: false,
+					renderComponent: EmployeeWithLinksComponent,
+					componentInitFunction: (instance: EmployeeWithLinksComponent, cell: Cell) => {
+						instance.rowData = cell.getRow().getData();
+						instance.value = cell.getRawValue();
+					}
 				},
 				teams: {
 					title: this.getTranslation('APPROVAL_REQUEST_PAGE.TEAMS'),
 					type: 'custom',
-					filter: false,
+					isFilterable: false,
 					renderComponent: TaskTeamsComponent,
+					componentInitFunction: (instance: TaskTeamsComponent, cell: Cell) => {
+						instance.value = cell.getRawValue();
+					}
 				},
 				status: {
-					title: this.getTranslation(
-						'APPROVAL_REQUEST_PAGE.APPROVAL_REQUEST_STATUS'
-					),
+					title: this.getTranslation('APPROVAL_REQUEST_PAGE.APPROVAL_REQUEST_STATUS'),
 					type: 'custom',
+					width: '5%',
+					isFilterable: false,
 					renderComponent: StatusBadgeComponent,
-					valuePrepareFunction: (cell, row) => {
-						switch (cell) {
-							case RequestApprovalStatusTypesEnum.APPROVED:
-								cell = this.getTranslation(
-									'APPROVAL_REQUEST_PAGE.APPROVED'
-								);
-								break;
-							case RequestApprovalStatusTypesEnum.REFUSED:
-								cell = this.getTranslation(
-									'APPROVAL_REQUEST_PAGE.REFUSED'
-								);
-								break;
-							default:
-								cell = this.getTranslation(
-									'APPROVAL_REQUEST_PAGE.REQUESTED'
-								);
-								break;
-						}
-						const badgeClass = ['approved'].includes(
-							cell.toLowerCase()
-						)
-							? 'success'
-							: ['requested'].includes(cell.toLowerCase())
-								? 'warning'
-								: 'danger';
-						return {
-							text: cell,
-							class: badgeClass
-						};
-					},
-					filter: false
-				},
-				actions: {
-					title: this.getTranslation(
-						'APPROVAL_REQUEST_PAGE.APPROVAL_REQUEST_ACTIONS'
-					),
-					type: 'custom',
-					renderComponent: RequestApprovalActionComponent,
-					onComponentInitFunction: (instance) => {
-						instance.updateResult
-							.pipe(untilDestroyed(this))
-							.subscribe((params) => {
-								this.handleEvent(params);
-							});
-					},
-					filter: false
+					componentInitFunction: (instance: StatusBadgeComponent, cell: Cell) => {
+						instance.value = cell.getValue();
+					}
 				}
 			}
 		};
+	}
+
+	/**
+	 * Maps a status value to its corresponding text, value, and CSS class.
+	 *
+	 * @param row - The row containing the status property.
+	 * @returns An object with text, value, and class properties.
+	 */
+	statusMapper(row: any): { text: string; value: any; class: string } {
+		let value;
+
+		// Map status values to their corresponding text
+		switch (row.status) {
+			case RequestApprovalStatusTypesEnum.APPROVED:
+				value = this.getTranslation('APPROVAL_REQUEST_PAGE.APPROVED');
+				break;
+			case RequestApprovalStatusTypesEnum.REFUSED:
+				value = this.getTranslation('APPROVAL_REQUEST_PAGE.REFUSED');
+				break;
+			default:
+				value = this.getTranslation('APPROVAL_REQUEST_PAGE.REQUESTED');
+				break;
+		}
+
+		// Determine the CSS class based on the mapped status text
+		const badgeClass = ['approved'].includes(value.toLowerCase())
+			? 'success'
+			: ['requested'].includes(value.toLowerCase())
+			? 'warning'
+			: 'danger';
+
+		// Return an object with text, value, and class properties
+		return {
+			text: value,
+			value: row.status,
+			class: badgeClass
+		};
+	}
+
+	onUpdateResult(params) {
+		this.handleEvent(params);
 	}
 
 	approval(rowData) {
@@ -278,6 +354,7 @@ export class ApprovalsComponent
 		};
 		this.handleEvent(params);
 	}
+
 	refuse(rowData) {
 		const params = {
 			isApproval: false,
@@ -291,40 +368,52 @@ export class ApprovalsComponent
 			return;
 		}
 		if (params.isApproval) {
-			const request = await this.approvalRequestService.approvalRequestByAdmin(
-				params.data.id
-			);
+			const request = await this.approvalRequestService.approvalRequestByAdmin(params.data.id);
 			if (request) {
-				this.toastrService.success(
-					'APPROVAL_REQUEST_PAGE.APPROVAL_SUCCESS',
-					{ name: params.data.name }
-				);
+				this.toastrService.success('APPROVAL_REQUEST_PAGE.APPROVAL_SUCCESS', { name: params.data.name });
 			}
 		} else {
-			const request = await this.approvalRequestService.refuseRequestByAdmin(
-				params.data.id
-			);
+			const request = await this.approvalRequestService.refuseRequestByAdmin(params.data.id);
 			if (request) {
-				this.toastrService.success(
-					'APPROVAL_REQUEST_PAGE.REFUSE_SUCCESS',
-					{ name: params.data.name }
-				);
+				this.toastrService.success('APPROVAL_REQUEST_PAGE.REFUSE_SUCCESS', { name: params.data.name });
 			}
 		}
-		this.clearItem();
-		this.loadSettings();
+		this._refresh$.next(true);
+		this.subject$.next(true);
 	}
 
 	_applyTranslationOnSmartTable() {
-		this.translateService.onLangChange
-			.pipe(untilDestroyed(this))
-			.subscribe(() => {
-				this.loadSmartTable();
-			});
+		this.translateService.onLangChange.pipe(untilDestroyed(this)).subscribe(() => {
+			this._refresh$.next(true);
+			this.subject$.next(true);
+		});
 	}
 
 	manageApprovalPolicy() {
 		this.router.navigate(['/pages/organization/approval-policy']);
+	}
+
+	/**
+	 * Opens the read-only View of an approval request in the right-side drawer.
+	 *
+	 * @param selectedItem - Row the action was invoked from, when it came from the grid.
+	 */
+	view(selectedItem?: IRequestApproval): void {
+		if (selectedItem) {
+			this.selectRequestApproval({ isSelected: true, data: selectedItem });
+		}
+
+		const requestApproval = selectedItem ?? this.selectedRequestApproval;
+		if (!requestApproval) {
+			return;
+		}
+
+		this.viewSections = buildApprovalViewSections();
+		this.viewedRequestApproval = requestApproval;
+	}
+
+	closeView(): void {
+		this.viewedRequestApproval = null;
 	}
 
 	async save(isCreate: boolean, selectedItem?: IRequestApproval) {
@@ -345,7 +434,8 @@ export class ApprovalsComponent
 		} else {
 			dialog = this.dialogService.open(RequestApprovalMutationComponent);
 		}
-		const requestApproval = await dialog.onClose.pipe(first()).toPromise();
+
+		const requestApproval: any = await firstValueFrom(dialog.onClose.pipe(first()));
 		if (requestApproval) {
 			this.toastrService.success(
 				isCreate
@@ -353,9 +443,9 @@ export class ApprovalsComponent
 					: 'APPROVAL_REQUEST_PAGE.APPROVAL_REQUEST_UPDATED',
 				{ name: requestApproval.name }
 			);
+			this._refresh$.next(true);
+			this.subject$.next(true);
 		}
-		this.clearItem();
-		this.loadSettings();
 	}
 
 	async delete(selectedItem?: IRequestApproval) {
@@ -365,39 +455,31 @@ export class ApprovalsComponent
 				data: selectedItem
 			});
 		}
-		const isSuccess = await this.approvalRequestService.delete(
-			this.selectedRequestApproval.id
-		);
-		if (isSuccess) {
-			this.toastrService.success(
-				'APPROVAL_REQUEST_PAGE.APPROVAL_REQUEST_DELETED',
-				{ name: this.selectedRequestApproval.name }
-			);
+		const result = await firstValueFrom(this.dialogService.open(DeleteConfirmationComponent).onClose);
+		if (result) {
+			const isSuccess = await this.approvalRequestService.delete(this.selectedRequestApproval.id);
+			if (isSuccess) {
+				this.toastrService.success('APPROVAL_REQUEST_PAGE.APPROVAL_REQUEST_DELETED', {
+					name: this.selectedRequestApproval.name
+				});
+				this._refresh$.next(true);
+				this.subject$.next(true);
+			}
 		}
-		this.clearItem();
-		this.loadSettings();
 	}
 
 	/*
 	 * Clear selected item
 	 */
 	clearItem() {
+		// The list is about to be reloaded, so whatever the drawer is showing is
+		// about to go stale — close it rather than leave a detached record open.
+		this.closeView();
 		this.selectRequestApproval({
 			isSelected: false,
 			data: null
 		});
-		this.deselectAll();
 	}
 
-	/*
-	 * Deselect all table rows
-	 */
-	deselectAll() {
-		if (this.requestApprovalTable && this.requestApprovalTable.grid) {
-			this.requestApprovalTable.grid.dataSet['willSelect'] = 'false';
-			this.requestApprovalTable.grid.dataSet.deselectAll();
-		}
-	}
-
-	ngOnDestroy() { }
+	ngOnDestroy() {}
 }

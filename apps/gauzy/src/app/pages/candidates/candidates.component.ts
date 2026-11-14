@@ -1,224 +1,223 @@
-import { Component, OnDestroy, OnInit, ViewChild } from '@angular/core';
+import { Component, OnDestroy, OnInit, ChangeDetectionStrategy } from '@angular/core';
 import {
 	InvitationTypeEnum,
 	ComponentLayoutStyleEnum,
 	IOrganization,
-	ICandidateViewModel
+	ICandidateViewModel,
+	ICandidate,
+	CandidateStatusEnum,
+	BaseEntityEnum,
+	IFavorite
 } from '@gauzy/contracts';
 import { TranslateService } from '@ngx-translate/core';
-import { LocalDataSource, Ng2SmartTableComponent } from 'ng2-smart-table';
+import { HttpClient } from '@angular/common/http';
+import { Cell } from 'angular2-smart-table';
 import { filter, tap, debounceTime } from 'rxjs/operators';
-import { firstValueFrom } from 'rxjs';
-import { Store } from '../../@core/services/store.service';
-import { TranslationBaseComponent } from '../../@shared/language-base/translation-base.component';
-import { CandidateStatusComponent } from './table-components/candidate-status/candidate-status.component';
-import { CandidatesService } from '../../@core/services/candidates.service';
-import { CandidateMutationComponent } from '../../@shared/candidate/candidate-mutation/candidate-mutation.component';
+import { firstValueFrom, Subject } from 'rxjs';
 import { NbDialogService } from '@nebular/theme';
-import { InviteMutationComponent } from '../../@shared/invite/invite-mutation/invite-mutation.component';
-import {
-	Router,
-	ActivatedRoute,
-	RouterEvent,
-	NavigationEnd
-} from '@angular/router';
-import { ErrorHandlingService } from '../../@core/services/error-handling.service';
-import { PictureNameTagsComponent } from '../../@shared/table-components/picture-name-tags/picture-name-tags.component';
-import { CandidateSourceComponent } from './table-components/candidate-source/candidate-source.component';
-import { ArchiveConfirmationComponent } from '../../@shared/user/forms/archive-confirmation/archive-confirmation.component';
-import { CandidateActionConfirmationComponent } from '../../@shared/user/forms/candidate-action-confirmation/candidate-action-confirmation.component';
-import { ComponentEnum } from '../../@core/constants/layout.constants';
+import { Router, ActivatedRoute } from '@angular/router';
 import { UntilDestroy, untilDestroyed } from '@ngneat/until-destroy';
-import { ToastrService } from '../../@core/services/toastr.service';
+import { API_PREFIX, ComponentEnum, distinctUntilChange, getEntityDisplayName } from '@gauzy/ui-core/common';
+import {
+	CandidatesService,
+	ErrorHandlingService,
+	ServerDataSource,
+	Store,
+	ToastrService,
+	GenericFavoriteService
+} from '@gauzy/ui-core/core';
+import {
+	PaginationFilterBaseComponent,
+	IPaginationBase,
+	PictureNameTagsComponent,
+	DateViewComponent,
+	TagsOnlyComponent,
+	ArchiveConfirmationComponent,
+	CandidateActionConfirmationComponent,
+	InviteMutationComponent,
+	InputFilterComponent,
+	CandidateMutationComponent
+} from '@gauzy/ui-core/shared';
+import { CandidateStatusComponent, CandidateSourceComponent } from './table-components';
 
 @UntilDestroy({ checkProperties: true })
 @Component({
 	templateUrl: './candidates.component.html',
-	styleUrls: ['./candidates.component.scss']
+	styleUrls: ['./candidates.component.scss'],
+	changeDetection: ChangeDetectionStrategy.Eager,
+	standalone: false
 })
-export class CandidatesComponent
-	extends TranslationBaseComponent
-	implements OnInit, OnDestroy {
-	organizationName: string;
+export class CandidatesComponent extends PaginationFilterBaseComponent implements OnInit, OnDestroy {
+	includeArchived: boolean = false;
+	loading: boolean = false;
+	organizationInvitesAllowed: boolean = false;
+	disableButton: boolean = true;
 	settingsSmartTable: object;
-	sourceSmartTable = new LocalDataSource();
+	sourceSmartTable: ServerDataSource;
 	selectedCandidate: ICandidateViewModel;
-	selectedOrganizationId: string;
-	candidateName = 'Candidate';
-	includeArchived = false;
-	loading = true;
-	organizationInvitesAllowed = false;
 	viewComponentName: ComponentEnum;
-	disableButton = true;
 	dataLayoutStyle = ComponentLayoutStyleEnum.TABLE;
-	candidateData: ICandidateViewModel[];
-	selectedOrganization: IOrganization;
-
-	candidatesTable: Ng2SmartTableComponent;
-	@ViewChild('candidatesTable') set content(content: Ng2SmartTableComponent) {
-		if (content) {
-			this.candidatesTable = content;
-			this.onChangedSource();
-		}
-	}
+	componentLayoutStyleEnum = ComponentLayoutStyleEnum;
+	candidateStatusEnum = CandidateStatusEnum;
+	candidates: ICandidateViewModel[] = [];
+	public organization: IOrganization;
+	public candidates$: Subject<any> = this.subject$;
+	private _refresh$: Subject<any> = new Subject();
+	public favoriteCandidates: IFavorite[] = [];
 
 	constructor(
-		private candidatesService: CandidatesService,
-		private dialogService: NbDialogService,
-		private toastrService: ToastrService,
-		private store: Store,
-		private router: Router,
-		private route: ActivatedRoute,
-		private translate: TranslateService,
-		private errorHandler: ErrorHandlingService
+		private readonly candidatesService: CandidatesService,
+		private readonly dialogService: NbDialogService,
+		private readonly toastrService: ToastrService,
+		private readonly store: Store,
+		private readonly router: Router,
+		private readonly route: ActivatedRoute,
+		public readonly translateService: TranslateService,
+		private readonly errorHandler: ErrorHandlingService,
+		private readonly http: HttpClient,
+		private readonly genericFavoriteService: GenericFavoriteService
 	) {
-		super(translate);
+		super(translateService);
 		this.setView();
 	}
 
 	ngOnInit() {
-		this.store.selectedOrganization$
-			.pipe(
-				filter((organization) => !!organization),
-				untilDestroyed(this)
-			)
-			.subscribe((organization) => {
-				if (organization) {
-					this.selectedOrganization = organization;
-					this.selectedOrganizationId = organization.id;
-					this.organizationInvitesAllowed =
-						organization.invitesAllowed;
-					this.loadPage();
-				}
-			});
-		this.route.queryParamMap
-			.pipe(
-				filter((params) => !!params),
-				debounceTime(1000),
-				untilDestroyed(this)
-			)
-			.subscribe((params) => {
-				if (params.get('openAddDialog') === 'true') {
-					this.add();
-				}
-			});
-		this.router.events
-			.pipe(untilDestroyed(this))
-			.subscribe((event: RouterEvent) => {
-				if (event instanceof NavigationEnd) {
-					this.setView();
-				}
-			});
 		this._loadSmartTableSettings();
 		this._applyTranslationOnSmartTable();
-	}
-
-	goTo(page: string) {
-		this.router.navigate([`/pages/employees/candidates/${page}`]);
-	}
-
-	setView() {
-		this.viewComponentName = ComponentEnum.CANDIDATES;
-		this.store
-			.componentLayout$(this.viewComponentName)
-			.pipe(untilDestroyed(this))
-			.subscribe((componentLayout) => {
-				this.dataLayoutStyle = componentLayout;
-			});
-	}
-
-	/*
-	 * Table on changed source event
-	 */
-	onChangedSource() {
-		this.candidatesTable.source.onChangedSource
+		this.candidates$
 			.pipe(
-				untilDestroyed(this),
-				tap(() => this.clearItem())
+				debounceTime(100),
+				tap(() => this._clearItem()),
+				tap(() => this.getCandidates()),
+				untilDestroyed(this)
+			)
+			.subscribe();
+		this.pagination$
+			.pipe(
+				distinctUntilChange(),
+				tap(() => this.candidates$.next(true)),
+				untilDestroyed(this)
+			)
+			.subscribe();
+		this.store.selectedOrganization$
+			.pipe(
+				distinctUntilChange(),
+				filter((organization: IOrganization) => !!organization),
+				tap((organization: IOrganization) => (this.organization = organization)),
+				tap(({ invitesAllowed }: IOrganization) => (this.organizationInvitesAllowed = invitesAllowed)),
+				tap(() => this._refresh$.next(true)),
+				tap(() => this.candidates$.next(true)),
+				tap(() => this.loadFavoriteCandidates()),
+				untilDestroyed(this)
+			)
+			.subscribe();
+		this.route.queryParamMap
+			.pipe(
+				filter((params) => !!params && params.get('openAddDialog') === 'true'),
+				debounceTime(1000),
+				tap(() => this.add()),
+				untilDestroyed(this)
+			)
+			.subscribe();
+		this._refresh$
+			.pipe(
+				filter(() => this._isGridLayout),
+				tap(() => this.refreshPagination()),
+				tap(() => (this.candidates = [])),
+				untilDestroyed(this)
 			)
 			.subscribe();
 	}
 
-	selectCandidateTmp({ isSelected, data }) {
+	/**
+	 *
+	 * @param page
+	 */
+	goTo(page: string) {
+		this.router.navigate([`/pages/employees/candidates/${page}`]);
+	}
+
+	/**
+	 *
+	 */
+	setView() {
+		this.viewComponentName = ComponentEnum.CANDIDATES;
+		this.store
+			.componentLayout$(this.viewComponentName)
+			.pipe(
+				distinctUntilChange(),
+				tap((componentLayout) => (this.dataLayoutStyle = componentLayout)),
+				tap(() => this.refreshPagination()),
+				filter((componentLayout) => componentLayout === ComponentLayoutStyleEnum.CARDS_GRID),
+				tap(() => (this.candidates = [])),
+				tap(() => this.candidates$.next(true)),
+				untilDestroyed(this)
+			)
+			.subscribe();
+	}
+
+	/**
+	 *
+	 * @param param0
+	 */
+	selectCandidate({ isSelected, data }) {
 		this.disableButton = !isSelected;
 		this.selectedCandidate = isSelected ? data : null;
-		if (this.selectedCandidate) {
-			const checkName = this.selectedCandidate.fullName.trim();
-			this.candidateName = checkName ? checkName : 'Candidate';
-		}
 	}
+
+	/**
+	 *
+	 */
 	async add() {
-		const dialog = this.dialogService.open(CandidateMutationComponent);
-		const response = await firstValueFrom(dialog.onClose);
+		try {
+			const { name } = this.organization;
+			const dialog = this.dialogService.open(CandidateMutationComponent);
+			const candidates: ICandidate[] = await firstValueFrom(dialog.onClose);
 
-		if (response) {
-			response.map((data) => {
-				if (data.user.firstName || data.user.lastName) {
-					this.candidateName =
-						data.user.firstName + ' ' + data.user.lastName;
-				}
-				this.toastrService.success('TOASTR.MESSAGE.CANDIDATE_CREATED', {
-					name: this.candidateName.trim(),
-					organization: data.organization.name
-				});
-			});
-
-			this.loadPage();
-		}
-	}
-	edit(selectedItem?: ICandidateViewModel) {
-		if (selectedItem) {
-			this.selectCandidateTmp({
-				isSelected: true,
-				data: selectedItem
-			});
-		}
-		this.router.navigate([
-			'/pages/employees/candidates/edit/' +
-			this.selectedCandidate.id +
-			'/profile'
-		]);
-	}
-	async archive(selectedItem?: ICandidateViewModel) {
-		if (selectedItem) {
-			this.selectCandidateTmp({
-				isSelected: true,
-				data: selectedItem
-			});
-		}
-		this.dialogService
-			.open(ArchiveConfirmationComponent, {
-				context: {
-					recordType:
-						this.selectedCandidate.fullName +
-						' ' +
-						this.getTranslation(
-							'FORM.ARCHIVE_CONFIRMATION.CANDIDATE'
-						)
-				}
-			})
-			.onClose.pipe(untilDestroyed(this))
-			.subscribe(async (result) => {
-				if (result) {
-					try {
-						await this.candidatesService.setCandidateAsArchived(
-							this.selectedCandidate.id
-						);
-
-						this.toastrService.success(
-							'TOASTR.MESSAGE.CANDIDATE_ARCHIVED',
-							{
-								name: this.candidateName
-							}
-						);
-
-						this.loadPage();
-					} catch (error) {
-						this.errorHandler.handleError(error);
+			if (candidates) {
+				for await (const candidate of candidates) {
+					if (candidate.user) {
+						const { firstName, lastName } = candidate.user;
+						let fullName = 'Candidate';
+						if (firstName || lastName) {
+							fullName = `${firstName} ${lastName}`;
+						}
+						this.toastrService.success('TOASTR.MESSAGE.CANDIDATE_CREATED', {
+							name: fullName,
+							organization: name
+						});
 					}
 				}
-			});
+				this.candidates$.next(true);
+			}
+		} catch (error) {
+			console.log('Error, while creating bulk candidate', error);
+		}
 	}
+
+	/**
+	 *
+	 * @param selectedItem
+	 * @returns
+	 */
+	edit(selectedItem?: ICandidateViewModel) {
+		if (selectedItem) {
+			this.selectCandidate({
+				isSelected: true,
+				data: selectedItem
+			});
+		}
+		if (!this.selectedCandidate) {
+			return;
+		}
+
+		const candidateId = this.selectedCandidate.id;
+		this.router.navigate(['/pages/employees/candidates/edit', candidateId, 'profile']);
+	}
+
+	/**
+	 *
+	 */
 	async invite() {
 		const dialog = this.dialogService.open(InviteMutationComponent, {
 			context: {
@@ -227,193 +226,403 @@ export class CandidatesComponent
 		});
 		await firstValueFrom(dialog.onClose);
 	}
+
+	/**
+	 *
+	 */
 	manageInvites() {
 		this.router.navigate(['/pages/employees/candidates/invites']);
 	}
+
+	/**
+	 *
+	 */
 	manageInterviews() {
 		this.router.navigate(['/pages/employees/candidates/interviews']);
 	}
 
-	private async loadPage() {
-		const { tenantId } = this.store.user;
-		const { items } = await firstValueFrom(this.candidatesService
-			.getAll(['user', 'source', 'tags'], {
-				organizationId: this.selectedOrganizationId,
-				tenantId
-			}));
-
-		let candidatesVm = [];
-		const result = [];
-		for (const candidate of items) {
-			result.push({
-				fullName: `${candidate.user.firstName} ${candidate.user.lastName}`,
-				email: candidate.user.email,
-				id: candidate.id,
-				source: candidate.source,
-				rating: candidate.ratings,
-				status: candidate.status,
-				isArchived: candidate.isArchived,
-				imageUrl: candidate.user.imageUrl,
-				tags: candidate.tags
-			});
+	/**
+	 *
+	 * @returns
+	 */
+	private setSmartTableSource() {
+		if (!this.organization) {
+			return;
 		}
 
-		if (!this.includeArchived) {
-			result.forEach((candidate) => {
-				if (!candidate.isArchived) {
-					candidatesVm.push(candidate);
-				}
-			});
-		} else {
-			candidatesVm = result;
-		}
+		this.loading = true;
+		const { id: organizationId, tenantId } = this.organization;
 
-		this.candidateData = candidatesVm;
-		this.sourceSmartTable.load(candidatesVm);
-		const { name } = this.store.selectedOrganization;
-		this.organizationName = name;
-		this.loading = false;
+		this.sourceSmartTable = new ServerDataSource(this.http, {
+			endPoint: API_PREFIX + '/candidate/pagination',
+			relations: ['user', 'source', 'tags'],
+			where: {
+				organizationId,
+				tenantId,
+				isArchived: !this.includeArchived,
+				...(this.filters.where ? this.filters.where : {})
+			},
+			resultMap: (candidate: ICandidate) => {
+				return Object.assign({}, candidate, {
+					fullName: candidate.user.name,
+					email: candidate.user.email,
+					id: candidate.id,
+					source: candidate.source,
+					rating: candidate.ratings,
+					status: candidate.status,
+					isArchived: candidate.isArchived,
+					imageUrl: candidate.user.imageUrl,
+					tags: candidate.tags,
+					appliedDate: candidate.appliedDate,
+					hiredDate: candidate.hiredDate,
+					rejectDate: candidate.rejectDate
+				});
+			},
+			finalize: () => {
+				if (this._isGridLayout) this.candidates.push(...this.sourceSmartTable.getData());
+				this.setPagination({
+					...this.getPagination(),
+					totalItems: this.sourceSmartTable.count()
+				});
+				this.loading = false;
+			}
+		});
 	}
 
+	/**
+	 *
+	 */
+	private get _isGridLayout(): boolean {
+		return this.dataLayoutStyle === ComponentLayoutStyleEnum.CARDS_GRID;
+	}
+
+	/**
+	 * GET all candidates lists
+	 *
+	 * @returns
+	 */
+	private async getCandidates() {
+		if (!this.organization) {
+			return;
+		}
+		try {
+			this.setSmartTableSource();
+			const { activePage, itemsPerPage } = this.getPagination();
+			this.sourceSmartTable.setPaging(activePage, itemsPerPage, false);
+
+			if (this._isGridLayout) this._loadCardLayoutData();
+		} catch (error) {
+			this.toastrService.danger(error, this.getTranslation('TOASTR.TITLE.ERROR'));
+		}
+	}
+
+	/**
+	 * GET CARD Layout candidates lists
+	 */
+	private async _loadCardLayoutData() {
+		try {
+			await this.sourceSmartTable.getElements();
+		} catch (error) {
+			this.toastrService.danger(error, this.getTranslation('TOASTR.TITLE.ERROR'));
+		}
+	}
+
+	/**
+	 * Load smart tables settings configurations
+	 */
 	private _loadSmartTableSettings() {
+		const pagination: IPaginationBase = this.getPagination();
 		this.settingsSmartTable = {
 			actions: false,
+			selectedRowIndex: -1,
+			pager: {
+				display: false,
+				perPage: pagination ? pagination.itemsPerPage : 10
+			},
+			noDataMessage: this.getTranslation('SM_TABLE.NO_DATA.CANDIDATE'),
 			columns: {
 				fullName: {
 					title: this.getTranslation('SM_TABLE.FULL_NAME'),
 					type: 'custom',
+					class: 'align-row',
 					renderComponent: PictureNameTagsComponent,
-					class: 'align-row'
+					componentInitFunction: (instance: PictureNameTagsComponent, cell: Cell) => {
+						instance.rowData = cell.getRow().getData();
+						instance.value = cell.getValue();
+					},
+					filter: {
+						type: 'custom',
+						component: InputFilterComponent
+					},
+					filterFunction: (value: string) => {
+						this.setFilter({ field: 'user.name', search: value });
+					}
 				},
 				email: {
 					title: this.getTranslation('SM_TABLE.EMAIL'),
 					type: 'email',
-					class: 'email-column'
+					class: 'email-column',
+					filter: {
+						type: 'custom',
+						component: InputFilterComponent
+					},
+					filterFunction: (value) => {
+						this.setFilter({ field: 'user.email', search: value });
+					}
 				},
 				source: {
 					title: this.getTranslation('SM_TABLE.SOURCE'),
 					type: 'custom',
 					class: 'text-center',
 					width: '200px',
+					isFilterable: false,
 					renderComponent: CandidateSourceComponent,
-					filter: false
+					componentInitFunction: (instance: CandidateSourceComponent, cell: Cell) => {
+						instance.rowData = cell.getRow().getData();
+					}
 				},
-
+				appliedDate: {
+					title: this.getTranslation('SM_TABLE.APPLIED_DATE'),
+					type: 'custom',
+					isFilterable: false,
+					renderComponent: DateViewComponent,
+					componentInitFunction: (instance: DateViewComponent, cell: Cell) => {
+						instance.value = cell.getValue();
+					}
+				},
+				hiredDate: {
+					title: this.getTranslation('SM_TABLE.HIRED_DATE'),
+					type: 'custom',
+					isFilterable: false,
+					renderComponent: DateViewComponent,
+					componentInitFunction: (instance: DateViewComponent, cell: Cell) => {
+						instance.value = cell.getValue();
+					}
+				},
+				rejectDate: {
+					title: this.getTranslation('SM_TABLE.REJECTED_DATE'),
+					type: 'custom',
+					isFilterable: false,
+					renderComponent: DateViewComponent,
+					componentInitFunction: (instance: DateViewComponent, cell: Cell) => {
+						instance.value = cell.getValue();
+					}
+				},
+				tags: {
+					title: this.getTranslation('SM_TABLE.TAGS'),
+					type: 'custom',
+					width: '5%',
+					isFilterable: false,
+					renderComponent: TagsOnlyComponent,
+					componentInitFunction: (instance: TagsOnlyComponent, cell: Cell) => {
+						instance.rowData = cell.getRow().getData();
+						instance.value = cell.getValue();
+					}
+				},
 				status: {
 					title: this.getTranslation('SM_TABLE.STATUS'),
 					type: 'custom',
 					class: 'text-center',
-					width: '200px',
+					width: '5%',
+					isFilterable: false,
 					renderComponent: CandidateStatusComponent,
-					filter: false
+					componentInitFunction: (instance: CandidateStatusComponent, cell: Cell) => {
+						instance.rowData = cell.getRow().getData();
+						instance.value = cell.getValue();
+					}
 				}
-			},
-			pager: {
-				display: true,
-				perPage: 8
 			}
 		};
 	}
 
+	/**
+	 *
+	 * @param checked
+	 */
 	changeIncludeArchived(checked: boolean) {
 		this.includeArchived = checked;
-		this.loadPage();
+		this.candidates$.next(true);
 	}
+
+	/**
+	 * Archive a candidate with confirmation.
+	 * @param selectedItem - The candidate to be archive.
+	 */
+	async archive(selectedItem?: ICandidateViewModel) {
+		if (selectedItem) {
+			this.selectCandidate({ isSelected: true, data: selectedItem });
+		}
+
+		// Open a confirmation dialog for the hiring action.
+		const dialogRef = this.dialogService.open(ArchiveConfirmationComponent, {
+			context: {
+				recordType:
+					this.selectedCandidate.fullName + ' ' + this.getTranslation('FORM.ARCHIVE_CONFIRMATION.CANDIDATE')
+			}
+		});
+
+		dialogRef.onClose
+			.pipe(
+				untilDestroyed(this) // Ensures the observable is properly managed to prevent memory leaks.
+			)
+			.subscribe(async (result) => {
+				if (!result) return; // If the dialog is closed without confirmation, exit the function.
+
+				try {
+					const { id: organizationId, tenantId } = this.organization;
+					const { id, fullName } = this.selectedCandidate;
+
+					await this.candidatesService.setCandidateAsArchived(id, {
+						organizationId,
+						tenantId
+					}); // Set the candidate as Archived.
+
+					this.toastrService.success('TOASTR.MESSAGE.CANDIDATE_ARCHIVED', { name: fullName });
+				} catch (error) {
+					// Handle any errors that occur during the process.
+
+					this.errorHandler.handleError(error);
+				} finally {
+					// Refresh the candidate list and update the UI.
+
+					this._refresh$.next(true);
+					this.candidates$.next(true);
+				}
+			});
+	}
+
+	/**
+	 * Rejects a candidate with confirmation.
+	 * @param selectedItem - The candidate to be rejected.
+	 */
 	async reject(selectedItem?: ICandidateViewModel) {
 		if (selectedItem) {
-			this.selectCandidateTmp({
-				isSelected: true,
-				data: selectedItem
-			});
+			this.selectCandidate({ isSelected: true, data: selectedItem });
 		}
-		this.dialogService
-			.open(CandidateActionConfirmationComponent, {
-				context: {
-					recordType: this.selectedCandidate.fullName,
-					isReject: true
-				}
-			})
-			.onClose.pipe(untilDestroyed(this))
-			.subscribe(async (result) => {
-				if (result) {
-					try {
-						await this.candidatesService.setCandidateAsRejected(
-							this.selectedCandidate.id
-						);
 
-						this.toastrService.success(
-							'TOASTR.MESSAGE.CANDIDATE_REJECTED',
-							{
-								name: this.candidateName
-							}
-						);
-						this.loadPage();
-						this.clearItem();
-					} catch (error) {
-						this.errorHandler.handleError(error);
-					}
-				}
-			});
-	}
-	async hire(selectedItem?: ICandidateViewModel) {
-		if (selectedItem) {
-			this.selectCandidateTmp({
-				isSelected: true,
-				data: selectedItem
-			});
-		}
-		this.dialogService
-			.open(CandidateActionConfirmationComponent, {
-				context: {
-					recordType: this.selectedCandidate.fullName,
-					isReject: false
-				}
-			})
-			.onClose.pipe(untilDestroyed(this))
-			.subscribe(async (result) => {
-				if (result) {
-					try {
-						await this.candidatesService.setCandidateAsHired(
-							this.selectedCandidate.id
-						);
-
-						this.toastrService.success(
-							'TOASTR.MESSAGE.CANDIDATE_HIRED',
-							{
-								name: this.candidateName
-							}
-						);
-						this.loadPage();
-						this.clearItem();
-					} catch (error) {
-						this.errorHandler.handleError(error);
-					}
-				}
-			});
-	}
-	private _applyTranslationOnSmartTable() {
-		this.translate.onLangChange.pipe(untilDestroyed(this)).subscribe(() => {
-			this._loadSmartTableSettings();
+		// Open a confirmation dialog for the hiring action.
+		const dialogRef = this.dialogService.open(CandidateActionConfirmationComponent, {
+			context: {
+				recordType: this.selectedCandidate.fullName,
+				isReject: true
+			}
 		});
+
+		// Handle the dialog close event.
+		dialogRef.onClose
+			.pipe(
+				untilDestroyed(this) // Ensures the observable is properly managed to prevent memory leaks.
+			)
+			.subscribe(async (result) => {
+				if (!result) return; // If the dialog is closed without confirmation, exit the function.
+
+				try {
+					const { id, fullName } = this.selectedCandidate;
+					await this.candidatesService.setCandidateAsRejected(id); // Set the candidate status to 'rejected'.
+
+					// Show a success message using the toastr service.
+					this.toastrService.success('TOASTR.MESSAGE.CANDIDATE_REJECTED', { name: fullName });
+				} catch (error) {
+					// Handle any errors that occur during the process.
+					this.errorHandler.handleError(error);
+				} finally {
+					// Refresh the candidate list and update the UI.
+					this._refresh$.next(true);
+					this.candidates$.next(true);
+				}
+			});
 	}
+
+	/**
+	 * Initiates the hiring process for a selected candidate.
+	 * Opens a confirmation dialog, and if confirmed, sets the candidate status to 'hired'.
+	 *
+	 * @param selectedItem - Optional candidate data to be selected and processed.
+	 */
+	async hire(selectedItem?: ICandidateViewModel): Promise<void> {
+		// If a specific candidate is passed, select it.
+		if (selectedItem) {
+			this.selectCandidate({ isSelected: true, data: selectedItem });
+		}
+
+		// Open a confirmation dialog for the hiring action.
+		const dialogRef = this.dialogService.open(CandidateActionConfirmationComponent, {
+			context: {
+				recordType: this.selectedCandidate.fullName,
+				isReject: false
+			}
+		});
+
+		// Handle the dialog close event.
+		dialogRef.onClose
+			.pipe(
+				untilDestroyed(this) // Ensures the observable is properly managed to prevent memory leaks.
+			)
+			.subscribe(async (result) => {
+				if (!result) return; // If the dialog is closed without confirmation, exit the function.
+
+				try {
+					const { id, fullName } = this.selectedCandidate;
+					await this.candidatesService.setCandidateAsHired(id); // Set the candidate status to 'hired'.
+
+					// Show a success message using the toastr service.
+					this.toastrService.success('TOASTR.MESSAGE.CANDIDATE_HIRED', { name: fullName });
+				} catch (error) {
+					// Handle any errors that occur during the process.
+					this.errorHandler.handleError(error);
+				} finally {
+					// Refresh the candidate list and update the UI.
+					this._refresh$.next(true);
+					this.candidates$.next(true);
+				}
+			});
+	}
+
+	private _applyTranslationOnSmartTable() {
+		this.translateService.onLangChange
+			.pipe(
+				tap(() => this._loadSmartTableSettings()),
+				untilDestroyed(this)
+			)
+			.subscribe();
+	}
+
 	/*
 	 * Clear selected item
 	 */
-	clearItem() {
-		this.selectCandidateTmp({
+	private _clearItem() {
+		this.selectCandidate({
 			isSelected: false,
 			data: null
 		});
-		this.deselectAll();
 	}
-	/*
-	 * Deselect all table rows
+
+	/**
+	 * Loads the list of favorite candidates for the current user or all for admin using the generic service.
 	 */
-	deselectAll() {
-		if (this.candidatesTable && this.candidatesTable.grid) {
-			this.candidatesTable.grid.dataSet['willSelect'] = 'false';
-			this.candidatesTable.grid.dataSet.deselectAll();
+	async loadFavoriteCandidates() {
+		try {
+			this.favoriteCandidates = await this.genericFavoriteService.loadFavorites(
+				BaseEntityEnum.Candidate,
+				this.organization,
+				this.store.user?.employee?.id
+			);
+		} catch (error) {
+			this.errorHandler.handleError(error);
 		}
 	}
-	ngOnDestroy() { }
+
+	/**
+	 * Handle candidate favorite toggle event from the new component
+	 */
+	onCandidateFavoriteToggled(_event: { isFavorite: boolean; favorite?: IFavorite }): void {
+		// Reload favorites to keep the list in sync
+		this.loadFavoriteCandidates();
+	}
+
+	getCandidateDisplayName(candidate: ICandidate): string {
+		return getEntityDisplayName(candidate);
+	}
+
+	ngOnDestroy() {}
 }

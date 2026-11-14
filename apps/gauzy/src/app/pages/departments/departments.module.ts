@@ -1,5 +1,4 @@
 import { NgModule } from '@angular/core';
-import { FormsModule, ReactiveFormsModule } from '@angular/forms';
 import {
 	NbButtonModule,
 	NbCardModule,
@@ -11,32 +10,31 @@ import {
 	NbSpinnerModule
 } from '@nebular/theme';
 import { NgSelectModule } from '@ng-select/ng-select';
-import { ThemeModule } from '../../@theme/theme.module';
-import { SharedModule } from '../../@shared/shared.module';
-import { FileUploaderModule } from '../../@shared/file-uploader-input/file-uploader-input.module';
-import { EntityWithMembersModule } from '../../@shared/entity-with-members-card/entity-with-members-card.module';
-import { TagsColorInputModule } from '../../@shared/tags/tags-color-input/tags-color-input.module';
-import { EmployeeMultiSelectModule } from '../../@shared/employee/employee-multi-select/employee-multi-select.module';
+import { NgxPermissionsModule } from 'ngx-permissions';
+import { OrganizationDepartmentsService } from '@gauzy/ui-core/core';
+import { TranslatePipe } from '@ngx-translate/core';
+import {
+	SmartDataViewLayoutModule,
+	CardGridModule,
+	EmployeeMultiSelectModule,
+	EntityWithMembersModule,
+	FileUploaderModule,
+	SharedModule,
+	TableComponentsModule,
+	TagsColorInputModule
+} from '@gauzy/ui-core/shared';
 import { DepartmentsComponent } from './departments.component';
 import { DepartmentsRoutingModule } from './departments-routing.module';
 import { DepartmentsMutationComponent } from './departments-mutation/departments-mutation.component';
-import { OrganizationDepartmentsService } from '../../@core/services/organization-departments.service';
-import { CardGridModule } from '../../@shared/card-grid/card-grid.module';
-import { Ng2SmartTableModule } from 'ng2-smart-table';
-import { TranslateModule } from '../../@shared/translate/translate.module';
-import { HeaderTitleModule } from '../../@shared/components/header-title/header-title.module';
 
 const COMPONENTS = [DepartmentsComponent, DepartmentsMutationComponent];
 
 @NgModule({
 	imports: [
 		SharedModule,
-		ThemeModule,
 		DepartmentsRoutingModule,
 		NbCardModule,
-		FormsModule,
 		NbDialogModule,
-		ReactiveFormsModule,
 		NbButtonModule,
 		NbInputModule,
 		NbSelectModule,
@@ -46,13 +44,14 @@ const COMPONENTS = [DepartmentsComponent, DepartmentsMutationComponent];
 		FileUploaderModule,
 		NgSelectModule,
 		CardGridModule,
-		Ng2SmartTableModule,
 		EntityWithMembersModule,
 		TagsColorInputModule,
 		EmployeeMultiSelectModule,
 		NbSpinnerModule,
-		TranslateModule,
-		HeaderTitleModule
+		TranslatePipe,
+		NgxPermissionsModule.forChild(),
+		SmartDataViewLayoutModule,
+		TableComponentsModule
 	],
 	declarations: [...COMPONENTS],
 	providers: [OrganizationDepartmentsService]

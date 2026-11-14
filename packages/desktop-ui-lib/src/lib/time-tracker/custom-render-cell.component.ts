@@ -1,29 +1,50 @@
-import { Component, Input, OnInit } from '@angular/core';
-
-import { ViewCell } from 'ng2-smart-table';
+import { Component, Input, OnInit, ChangeDetectionStrategy } from '@angular/core';
+import { NbIconModule } from '@nebular/theme';
 
 @Component({
-  template: `
-    <div>
-        <nb-icon icon="arrow-right" class="icon-process" *ngIf="isSelected"></nb-icon>
-        {{renderValue}}
-    </div>
-  `,
-  styleUrls: ['./time-tracker.component.scss'],
+    selector: 'ga-custom-render-selector',
+    template: `
+		<div class="d-flex align-items-center">
+		  @if (isSelected) {
+		    <nb-icon
+		      class="running-task"
+		      status="primary"
+		      icon="arrow-right-outline"
+		    ></nb-icon>
+		  }
+		  {{ rowData.taskNumber + ' ' + rowData.title }}
+		</div>
+		`,
+    styleUrls: ['./time-tracker.component.scss'],
+    changeDetection: ChangeDetectionStrategy.Eager,
+    imports: [NbIconModule]
 })
-export class CustomRenderComponent implements ViewCell, OnInit {
+export class CustomRenderComponent implements OnInit {
+	isSelected: boolean = false;
 
-  renderValue: string;
+	@Input() value: string | number;
+	@Input() rowData: any;
 
-  @Input() value: string | number;
-  @Input() rowData: any;
-  isSelected: boolean = false;
+	ngOnInit() {
+		if (this.rowData.isSelected) {
+			this.isSelected = true;
+		}
+	}
+}
 
-  ngOnInit() {
-    this.renderValue = this.value.toString();
-    if (this.rowData.isSelected) {
-        this.isSelected = true;
-    }
-  }
+@Component({
+    selector: 'ga-custom-description-selector',
+    template: `
+		<span class="hidden-long-text">
+			{{ value.toString() }}
+		</span>
+	`,
+    styleUrls: ['./time-tracker.component.scss'],
+    changeDetection: ChangeDetectionStrategy.Eager,
+    standalone: false
+})
+export class CustomDescriptionComponent {
 
+	@Input() value: string | number;
+	@Input() rowData: any;
 }

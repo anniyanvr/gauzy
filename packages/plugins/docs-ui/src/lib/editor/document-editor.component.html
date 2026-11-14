@@ -1,0 +1,37 @@
+<div class="gz-document-editor" [class.gz-document-editor--readonly]="!editable">
+	<!-- Live session (docs-collaboration T18): who else is on the page, and whether this editor writes -->
+	@if (liveState) {
+		<div class="gz-live-bar" role="status" aria-live="polite" [class.gz-live-bar--on]="liveState.phase === 'live'">
+			<span class="gz-live-dot" aria-hidden="true"></span>
+			<span class="gz-live-text">{{ liveStatusText }}</span>
+			@for (person of liveState.editors; track person.clientId) {
+				<span class="gz-live-avatar" [style.background]="person.color" [attr.title]="person.name">{{
+					(person.name || '?').charAt(0)
+				}}</span>
+			}
+		</div>
+	}
+	<!-- ProseMirror mounts here -->
+	<div #editorHost class="gz-editor-mount"></div>
+
+	<!-- Selection / table / empty-line chrome (registered as editor plugins once the editor exists) -->
+	@if (editor) {
+		<gz-text-bubble-menu [editor]="editor" (commentRequested)="requestComment($event)"></gz-text-bubble-menu>
+		<gz-table-bubble-menu [editor]="editor"></gz-table-bubble-menu>
+		<gz-floating-block-menu [editor]="editor"></gz-floating-block-menu>
+	}
+
+	<!-- Hidden picker feeding the upload pipeline (slash image/attachment commands).
+  `aria-hidden` keeps it out of the accessibility tree — the label is a static
+  fallback only (this standalone component does not import `TranslateModule`). -->
+	<input
+		#fileInput
+		id="gz-editor-file-input"
+		type="file"
+		multiple
+		class="gz-editor-file-input"
+		tabindex="-1"
+		aria-hidden="true"
+		aria-label="Upload files"
+	/>
+</div>

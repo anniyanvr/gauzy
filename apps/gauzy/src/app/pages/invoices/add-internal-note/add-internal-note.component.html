@@ -1,36 +1,35 @@
 <nb-card class="add-internal-note">
 	<nb-card-header>
-		<h5>
+		<h5 class="title">
 			{{ 'INVOICES_PAGE.INTERNAL_NOTE.ADD_INTERNAL_NOTE' | translate }}
 		</h5>
+		<button type="button" class="cancel" [attr.aria-label]="'BUTTONS.CLOSE' | translate" (click)="cancel()">
+			<i class="fas fa-times" aria-hidden="true"></i>
+		</button>
 	</nb-card-header>
 	<nb-card-body>
-		<form [formGroup]="form" *ngIf="form">
-			<div class="row">
-				<div class="form-group col-12">
-					<label for="note" class="label">{{
-						'INVOICES_PAGE.INTERNAL_NOTE.NOTE' | translate
-					}}</label>
-					<textarea
-						nbInput
-						placeholder="{{
-							'INVOICES_PAGE.INTERNAL_NOTE.ADD_NOTE' | translate
-						}}"
-						id="note"
-						formControlName="internalNote"
-						class="internal-note-input"
-						fullWidth
-					></textarea>
-				</div>
-			</div>
+		@if (form) {
+		<form [formGroup]="form">
+			<label for="note" class="label">{{ 'INVOICES_PAGE.INTERNAL_NOTE.NOTE' | translate }}</label>
+			<textarea
+				nbInput
+				placeholder="{{ 'INVOICES_PAGE.INTERNAL_NOTE.ADD_NOTE' | translate }}"
+				id="note"
+				formControlName="internalNote"
+				class="internal-note-input"
+				fullWidth
+			></textarea>
 		</form>
+		}
 	</nb-card-body>
-	<nb-card-footer class="text-right">
-		<button status="danger" class="mr-3" nbButton (click)="cancel()">
+	<nb-card-footer class="text-left">
+		<button nbButton ghost status="basic" size="small" (click)="cancel()">
 			{{ 'BUTTONS.CANCEL' | translate }}
 		</button>
-		<button *ngIf="form" (click)="addNote()" status="success" nbButton>
+		@if (form) {
+		<button (click)="addNote()" status="success" nbButton size="small">
 			{{ 'BUTTONS.SAVE' | translate }}
 		</button>
+		}
 	</nb-card-footer>
 </nb-card>

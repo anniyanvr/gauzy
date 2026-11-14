@@ -1,81 +1,104 @@
-import { Component, OnInit, OnDestroy, AfterViewInit } from '@angular/core';
-import { NgxPermissionsService } from 'ngx-permissions';
-import { UntilDestroy, untilDestroyed } from '@ngneat/until-destroy';
+import { Component, OnInit, OnDestroy, ChangeDetectionStrategy } from '@angular/core';
+import { ActivatedRoute } from '@angular/router';
 import { TranslateService } from '@ngx-translate/core';
-import { tap } from 'rxjs/operators';
 import { PermissionsEnum } from '@gauzy/contracts';
-import { TranslationBaseComponent } from './../../../../@shared/language-base';
+import { PageTabRegistryService, PageTabsetPageId } from '@gauzy/ui-core/core';
+import { TranslationBaseComponent } from '@gauzy/ui-core/i18n';
 
-@UntilDestroy({ checkProperties: true })
 @Component({
-	selector: 'ngx-layout',
+	selector: 'ngx-timesheet-layout',
 	templateUrl: './layout.component.html',
-	styleUrls: ['./layout.component.scss']
+	styleUrls: ['./layout.component.scss'],
+	changeDetection: ChangeDetectionStrategy.Eager,
+	standalone: false
 })
-export class LayoutComponent
-	extends TranslationBaseComponent
-	implements AfterViewInit, OnInit, OnDestroy {
-	
-	tabs: any[] = [];
+export class TimesheetLayoutComponent extends TranslationBaseComponent implements OnInit, OnDestroy {
+	public tabsetId: PageTabsetPageId = this._route.snapshot.data.tabsetId; // The identifier for the tabset
 
 	constructor(
-		private readonly ngxPermissionsService: NgxPermissionsService,
-		public readonly translateService: TranslateService
+		public readonly translateService: TranslateService,
+		private readonly _route: ActivatedRoute,
+		private readonly _pageTabRegistryService: PageTabRegistryService
 	) {
 		super(translateService);
 	}
 
-	ngOnInit() {
-		this.ngxPermissionsService.permissions$
-			.pipe(
-				tap(() => this._createContextTabs()),
-				untilDestroyed(this)
-			)
-			.subscribe();
-	}
-
-	ngAfterViewInit() {
-		this._applyTranslationOnChange();
-	}
-
-	private _createContextTabs() {
-		this.tabs = [
-			{
-				title: this.getTranslation('TIMESHEET.DAILY'),
-				route: '/pages/employees/timesheets/daily'
-			},
-			{
-				title: this.getTranslation('TIMESHEET.WEEKLY'),
-				route: '/pages/employees/timesheets/weekly'
-			},
-			{
-				title: this.getTranslation('TIMESHEET.CALENDAR'),
-				route: '/pages/employees/timesheets/calendar'
-			}
-		];
-		this.ngxPermissionsService
-			.hasPermission(PermissionsEnum.CAN_APPROVE_TIMESHEET)
-			.then((hasPermission) => {
-				if (hasPermission) {
-					this.tabs.push({
-						title: this.getTranslation('TIMESHEET.APPROVALS'),
-						route: '/pages/employees/timesheets/approvals'
-					});
-				}
-			});
+	ngOnInit(): void {
+		// Register the page tabs
+		this.registerPageTabs();
 	}
 
 	/**
-	 * Translate context menus
+	 * Registers page tabs for the timesheet module.
+	 * Ensures that tabs are registered only once.
+	 *
+	 * @returns {void}
 	 */
-	 private _applyTranslationOnChange() {
-		this.translateService.onLangChange
-			.pipe(
-				tap(() => this._createContextTabs()),
-				untilDestroyed(this)
-			)
-			.subscribe();
+	registerPageTabs(): void {
+		// Register the daily timesheet tab
+		this._pageTabRegistryService.registerPageTab({
+			tabsetId: this.tabsetId, // The identifier for the tabset
+			tabId: 'daily', // The identifier for the tab
+			tabsetType: 'route', // The type of tabset to use
+			route: '/pages/employees/timesheets/daily', // The route for the tab
+			tabTitle: () => this.getTranslation('TIMESHEET.DAILY'), // The title for the tab
+			responsive: true, // Whether the tab is responsive
+			activeLinkOptions: { exact: false }, // The options for the active link
+			order: 1, // The order of the tab
+			permissions: [
+				PermissionsEnum.TIME_TRACKER,
+				PermissionsEnum.ALL_ORG_EDIT,
+				PermissionsEnum.TIME_TRACKING_DASHBOARD
+			] // The permissions required to view the daily timesheet
+		});
+
+		// Register the weekly timesheet tab
+		this._pageTabRegistryService.registerPageTab({
+			tabsetId: this.tabsetId, // The identifier for the tabset
+			tabId: 'weekly', // The identifier for the tab
+			tabsetType: 'route', // The type of tabset to use
+			route: '/pages/employees/timesheets/weekly', // The route for the tab
+			tabTitle: () => this.getTranslation('TIMESHEET.WEEKLY'), // The title for the tab
+			responsive: true, // Whether the tab is responsive
+			activeLinkOptions: { exact: false }, // The options for the active link
+			order: 2, // The order of the tab
+			permissions: [
+				PermissionsEnum.TIME_TRACKER,
+				PermissionsEnum.ALL_ORG_EDIT,
+				PermissionsEnum.TIME_TRACKING_DASHBOARD
+			] // The permissions required to view the weekly timesheet
+		});
+
+		// Register the calendar timesheet tab
+		this._pageTabRegistryService.registerPageTab({
+			tabsetId: this.tabsetId, // The identifier for the tabset
+			tabId: 'calendar', // The identifier for the tab
+			tabsetType: 'route', // The type of tabset to use
+			route: '/pages/employees/timesheets/calendar', // The route for the tab
+			tabTitle: () => this.getTranslation('TIMESHEET.CALENDAR'), // The title for the tab
+			responsive: true, // Whether the tab is responsive
+			activeLinkOptions: { exact: false }, // The options for the active link
+			order: 3, // The order of the tab
+			permissions: [
+				PermissionsEnum.TIME_TRACKER,
+				PermissionsEnum.ALL_ORG_EDIT,
+				PermissionsEnum.TIME_TRACKING_DASHBOARD
+			] // The permissions required to view the calendar timesheet
+		});
+
+		// Register the approvals tab
+		this._pageTabRegistryService.registerPageTab({
+			tabsetId: this.tabsetId, // The identifier for the tabset
+			tabId: 'approvals', // The identifier for the tab
+			tabsetType: 'route', // The type of tabset to use
+			route: '/pages/employees/timesheets/approvals', // The route for the tab
+			tabTitle: () => this.getTranslation('TIMESHEET.APPROVALS'), // The title for the tab
+			responsive: true, // Whether the tab is responsive
+			activeLinkOptions: { exact: false }, // The options for the active link
+			order: 4, // The order of the tab
+			permissions: [PermissionsEnum.CAN_APPROVE_TIMESHEET]
+		});
 	}
 
-	ngOnDestroy() {}
+	ngOnDestroy(): void {}
 }

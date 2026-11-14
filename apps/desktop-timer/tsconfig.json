@@ -1,17 +1,36 @@
 {
 	"compilerOptions": {
-		"outDir": "../../dist/apps/desktop-timer",
-		"sourceMap": true,
-		"declaration": false,
-		"moduleResolution": "node",
-		"emitDecoratorMetadata": true,
-		"experimentalDecorators": true,
-		"downlevelIteration": true,
-		"esModuleInterop": true,
-		"module": "commonjs",
-		"target": "es2016",
-		"typeRoots": ["../../node_modules/@types"]
+		"target": "es2022",
+		"useDefineForClassFields": false,
+		"forceConsistentCasingInFileNames": true,
+		"strict": false,
+		"noImplicitOverride": false,
+		"noPropertyAccessFromIndexSignature": false,
+		"noImplicitReturns": false,
+		"noFallthroughCasesInSwitch": false,
+		"skipLibCheck": true,
+		"types": ["node", "google.maps"],
+		"module": "preserve",
+		"moduleResolution": "bundler"
 	},
-	"files": ["global.d.ts"],
-	"include": ["src/index.ts", "src/preload"]
+	"files": [],
+	"include": [],
+	"references": [
+		{
+			"path": "./tsconfig.editor.json"
+		},
+		{
+			"path": "./tsconfig.app.json"
+		},
+		{
+			"path": "./tsconfig.spec.json"
+		}
+	],
+	"extends": "../../tsconfig.json",
+	"angularCompilerOptions": {
+		"enableI18nLegacyMessageIdFormat": false,
+		"strictInjectionParameters": false,
+		"strictInputAccessModifiers": false,
+		"strictTemplates": false
+	}
 }

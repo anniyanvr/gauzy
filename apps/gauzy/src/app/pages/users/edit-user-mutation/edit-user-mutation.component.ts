@@ -1,46 +1,34 @@
-import {
-	Component,
-	EventEmitter,
-	Input,
-	OnInit,
-	Output,
-	ViewChild
-} from '@angular/core';
-import { FormBuilder, FormGroup } from '@angular/forms';
+import { Component, EventEmitter, Input, OnInit, Output, ViewChild, ChangeDetectionStrategy } from '@angular/core';
+import { UntypedFormBuilder, UntypedFormGroup } from '@angular/forms';
 import { IOrganization, IUserOrganization, RolesEnum } from '@gauzy/contracts';
-import { UsersOrganizationsService } from '../../../@core/services/users-organizations.service';
-import { TranslationBaseComponent } from '../../../@shared/language-base/translation-base.component';
 import { TranslateService } from '@ngx-translate/core';
-import { Store } from '../../../@core/services/store.service';
-import { BasicInfoFormComponent } from '../../../@shared/user/forms/basic-info/basic-info-form.component';
+import { TranslationBaseComponent } from '@gauzy/ui-core/i18n';
+import { Store, UsersOrganizationsService } from '@gauzy/ui-core/core';
+import { BasicInfoFormComponent } from '@gauzy/ui-core/shared';
 
 @Component({
-	selector: 'ga-edit-user-mutation',
-	templateUrl: './edit-user-mutation.component.html'
+    selector: 'ga-edit-user-mutation',
+    templateUrl: './edit-user-mutation.component.html',
+    styleUrls: ['./edit-user-mutation.component.scss'],
+    changeDetection: ChangeDetectionStrategy.Eager,
+    standalone: false
 })
-export class EditUserMutationComponent
-	extends TranslationBaseComponent
-	implements OnInit {
-	@ViewChild('userBasicInfo')
-	userBasicInfo: BasicInfoFormComponent;
-	@Input()
-	userOrganization: IUserOrganization;
-	@Input()
-	organization: IOrganization;
+export class EditUserMutationComponent extends TranslationBaseComponent implements OnInit {
+	@ViewChild('userBasicInfo') userBasicInfo: BasicInfoFormComponent;
+	@Input() userOrganization: IUserOrganization;
+	@Input() organization: IOrganization;
 
-	@Output()
-	canceled = new EventEmitter();
-	@Output()
-	addOrEditUser = new EventEmitter();
+	@Output() canceled = new EventEmitter();
+	@Output() addOrEditUser = new EventEmitter();
 
-	form: FormGroup;
+	form: UntypedFormGroup;
 	users: string[];
 	selectedUsersIds: string[];
 	selectedOrganizationId: string;
 	disableButton = true;
 
 	constructor(
-		private readonly fb: FormBuilder,
+		private readonly fb: UntypedFormBuilder,
 		private usersOrganizationsService: UsersOrganizationsService,
 		readonly translateService: TranslateService,
 		private readonly store: Store
@@ -63,23 +51,13 @@ export class EditUserMutationComponent
 		const { tenantId } = this.store.user;
 		const { id: organizationId } = this.store.selectedOrganization;
 
-		const { items } = await this.usersOrganizationsService.getAll(
-			['user', 'user.role', 'user.tags'],
-			{ tenantId }
-		);
+		const { items } = await this.usersOrganizationsService.getAll(['user', 'user.role', 'user.tags'], { tenantId });
 
 		const usersVm = [];
-		const existedUsers = items
-			.filter((item) => item.organizationId === organizationId)
-			.map((item) => item.userId);
+		const existedUsers = items.filter((item) => item.organizationId === organizationId).map((item) => item.userId);
 
-		for (const orgUser of items.filter(
-			(item) => !existedUsers.includes(item.userId)
-		)) {
-			if (
-				orgUser.isActive &&
-				orgUser.user.role.name !== RolesEnum.EMPLOYEE
-			) {
+		for (const orgUser of items.filter((item) => !existedUsers.includes(item.userId))) {
+			if (orgUser.isActive && orgUser.user.role.name !== RolesEnum.EMPLOYEE) {
 				usersVm.push({
 					firstName: orgUser.user.firstName || '',
 					lastName: orgUser.user.lastName || '',
@@ -93,8 +71,7 @@ export class EditUserMutationComponent
 		}
 
 		const distinct = usersVm.reduce(
-			(acc, curr) =>
-				acc.some((user) => user.id === curr.id) ? acc : [...acc, curr],
+			(acc, curr) => (acc.some((user) => user.id === curr.id) ? acc : [...acc, curr]),
 			[]
 		);
 
@@ -103,10 +80,10 @@ export class EditUserMutationComponent
 
 	onUsersSelected(users: string[]) {
 		this.selectedUsersIds = users;
-		
-		if(this.selectedUsersIds.length > 0){
-			this.disableButton =  false;
-		}else{
+
+		if (this.selectedUsersIds.length > 0) {
+			this.disableButton = false;
+		} else {
 			this.disableButton = true;
 		}
 	}

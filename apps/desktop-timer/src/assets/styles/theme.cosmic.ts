@@ -66,8 +66,7 @@ export const COSMIC_THEME = {
 		traffic: {
 			tooltipBg: theme.bg,
 			tooltipBorderColor: theme.border2,
-			tooltipExtraCss:
-				'box-shadow: 0px 2px 46px 0 rgba(50, 50, 89); border-radius: 10px; padding: 4px 16px;',
+			tooltipExtraCss: 'box-shadow: 0px 2px 46px 0 rgba(50, 50, 89); border-radius: 10px; padding: 4px 16px;',
 			tooltipTextColor: theme.fgText,
 			tooltipFontWeight: 'normal',
 
@@ -171,16 +170,6 @@ export const COSMIC_THEME = {
 			chartLineBottomShadowColor: theme.primary,
 
 			chartInnerLineColor: theme.bg2
-		},
-
-		echarts: {
-			bg: theme.bg,
-			textColor: theme.fgText,
-			axisLineColor: theme.fgText,
-			splitLineColor: theme.separator,
-			itemHoverShadowColor: 'rgba(0, 0, 0, 0.5)',
-			tooltipBackgroundColor: theme.primary,
-			areaOpacity: '1'
 		},
 
 		chartjs: {

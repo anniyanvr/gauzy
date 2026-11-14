@@ -1,351 +1,548 @@
-import { Component, OnInit, ViewChild, OnDestroy } from '@angular/core';
-import { DatePipe } from '@angular/common';
-import { Router, NavigationEnd, RouterEvent } from '@angular/router';
+import { Component, OnInit, OnDestroy, ChangeDetectionStrategy } from '@angular/core';
+import { HttpClient } from '@angular/common/http';
 import { TranslateService } from '@ngx-translate/core';
 import {
 	IEquipmentSharing,
 	ComponentLayoutStyleEnum,
 	ISelectedEquipmentSharing,
-	PermissionsEnum
+	PermissionsEnum,
+	RequestApprovalStatusTypesEnum,
+	IOrganization,
+	EquipmentSharingStatusEnum
 } from '@gauzy/contracts';
-import { LocalDataSource, Ng2SmartTableComponent } from 'ng2-smart-table';
-import { FormGroup } from '@angular/forms';
+import { Cell } from 'angular2-smart-table';
 import { NbDialogService } from '@nebular/theme';
-import { switchMap, tap } from 'rxjs/operators';
-import { UntilDestroy, untilDestroyed } from '@ngneat/until-destroy';
-import { TranslationBaseComponent } from '../../@shared/language-base';
-import { EquipmentSharingMutationComponent } from '../../@shared/equipment-sharing';
-import { DeleteConfirmationComponent } from '../../@shared/user/forms';
-import {
-	EquipmentSharingActionComponent,
-	EquipmentSharingStatusComponent,
-	EquipmentSharingPolicyComponent
-} from './table-components';
-import { EmployeesService, EquipmentSharingService, Store, ToastrService } from '../../@core/services';
 import { combineLatest, Subject, firstValueFrom } from 'rxjs';
-import { ComponentEnum } from '../../@core/constants';
+import { debounceTime, filter, tap } from 'rxjs/operators';
+import { UntilDestroy, untilDestroyed } from '@ngneat/until-destroy';
+import {
+	EquipmentSharingService,
+	ErrorHandlingService,
+	ServerDataSource,
+	Store,
+	ToastrService
+} from '@gauzy/ui-core/core';
+import { API_PREFIX, ComponentEnum, distinctUntilChange, isEntityVersionConflict } from '@gauzy/ui-core/common';
+import {
+	CreatedByUserComponent,
+	DateViewComponent,
+	DeleteConfirmationComponent,
+	EquipmentSharingMutationComponent,
+	IPaginationBase,
+	PaginationFilterBaseComponent,
+	StatusBadgeComponent
+} from '@gauzy/ui-core/shared';
+import { EquipmentSharingPolicyTableComponent } from './table-components';
 
 @UntilDestroy({ checkProperties: true })
 @Component({
-	templateUrl: './equipment-sharing.component.html',
-	styleUrls: ['./equipment-sharing.component.scss']
+    templateUrl: './equipment-sharing.component.html',
+    styleUrls: ['./equipment-sharing.component.scss'],
+    changeDetection: ChangeDetectionStrategy.Eager,
+    standalone: false
 })
-export class EquipmentSharingComponent
-	extends TranslationBaseComponent
-	implements OnInit, OnDestroy {
+export class EquipmentSharingComponent extends PaginationFilterBaseComponent implements OnInit, OnDestroy {
+	loading: boolean = false;
+	disableButton: boolean = true;
 
 	settingsSmartTable: object;
-	loading: boolean;
+	smartTableSource: ServerDataSource;
 	selectedEquipmentSharing: IEquipmentSharing;
-	smartTableSource = new LocalDataSource();
-	form: FormGroup;
-	disableButton = true;
-	selectedEmployeeUserId: string;
-	ngDestroy$ = new Subject<void>();
-	selectedOrgId: string;
-	equipmentsData: IEquipmentSharing[];
+	equipments: IEquipmentSharing[] = [];
+
+	PermissionsEnum = PermissionsEnum;
+	RequestApprovalStatusTypesEnum = RequestApprovalStatusTypesEnum;
 	viewComponentName: ComponentEnum;
 	dataLayoutStyle = ComponentLayoutStyleEnum.TABLE;
+	componentLayoutStyleEnum = ComponentLayoutStyleEnum;
 
-	equipmentSharingTable: Ng2SmartTableComponent;
-	@ViewChild('equipmentSharingTable') set content(
-		content: Ng2SmartTableComponent
-	) {
-		if (content) {
-			this.equipmentSharingTable = content;
-			this.onChangedSource();
-		}
-	}
+	equipmentSharing$: Subject<boolean> = this.subject$;
+	public organization: IOrganization;
+	public selectedEmployeeId: string;
+	private _refresh$: Subject<any> = new Subject();
 
 	constructor(
 		public readonly translateService: TranslateService,
 		private readonly equipmentSharingService: EquipmentSharingService,
 		private readonly dialogService: NbDialogService,
+		private readonly http: HttpClient,
 		private readonly toastrService: ToastrService,
-		private readonly employeesService: EmployeesService,
-		private readonly store: Store,
-		private readonly router: Router
+		private readonly errorHandlingService: ErrorHandlingService,
+		private readonly store: Store
 	) {
 		super(translateService);
 		this.setView();
 	}
 
 	ngOnInit(): void {
-		this.loadSmartTable();
+		this._loadSmartTableSettings();
 		this._applyTranslationOnSmartTable();
-
-		combineLatest([
-			this.store.user$,
-			this.store.selectedEmployee$,
-			this.store.selectedOrganization$
-		])
-			.pipe(
-				untilDestroyed(this),
-				switchMap(
-					async ([currentUser, selectedEmployee, selectedOrg]) => {
-						if (currentUser.employee) {
-							this.selectedEmployeeUserId = currentUser.id;
-						} else {
-							if (!this.hasPermission) return;
-
-							await this.loadEmployeeUser(selectedEmployee?.id);
-							this.selectedOrgId = selectedOrg.id;
-						}
-					}
-				)
-			)
-			.subscribe(() => {
-				this.loadSettings();
-			});
-
-		this.router.events
-			.pipe(untilDestroyed(this))
-			.subscribe((event: RouterEvent) => {
-				if (event instanceof NavigationEnd) {
-					this.setView();
-				}
-			});
 	}
+
+	ngAfterViewInit(): void {
+		this.equipmentSharing$
+			.pipe(
+				debounceTime(100),
+				tap(() => this.clearItem()),
+				tap(() => this.getEquipmentSharings()),
+				untilDestroyed(this)
+			)
+			.subscribe();
+		const storeUser$ = this.store.user$;
+		const storeOrganization$ = this.store.selectedOrganization$;
+		const storeEmployee$ = this.store.selectedEmployee$;
+		combineLatest([storeUser$, storeOrganization$, storeEmployee$])
+			.pipe(
+				debounceTime(300),
+				filter(([user, organization]) => !!user && !!organization),
+				distinctUntilChange(),
+				tap(([, organization, employee]) => {
+					this.organization = organization;
+					// Follow the header employee selector, like every other grid. Preferring the current
+					// user's own employee record pinned the grid to that employee while the selector still
+					// read "All Employees" — and the permission gate already lives in the selector, which
+					// only offers "All Employees" to users with CHANGE_SELECTED_EMPLOYEE.
+					this.selectedEmployeeId = employee ? employee.id : null;
+				}),
+				tap(() => this._refresh$.next(true)),
+				tap(() => this.equipmentSharing$.next(true)),
+				untilDestroyed(this)
+			)
+			.subscribe();
+
+		this.pagination$
+			.pipe(
+				distinctUntilChange(),
+				tap(() => this.equipmentSharing$.next(true)),
+				untilDestroyed(this)
+			)
+			.subscribe();
+
+		this._refresh$
+			.pipe(
+				filter(() => this.dataLayoutStyle === ComponentLayoutStyleEnum.CARDS_GRID),
+				tap(() => this.refreshPagination()),
+				tap(() => (this.equipments = [])),
+				untilDestroyed(this)
+			)
+			.subscribe();
+	}
+
+	ngOnDestroy() {}
 
 	setView() {
 		this.viewComponentName = ComponentEnum.EQUIPMENT_SHARING;
 		this.store
 			.componentLayout$(this.viewComponentName)
-			.pipe(untilDestroyed(this))
-			.subscribe((componentLayout) => {
-				this.dataLayoutStyle = componentLayout;
-			});
-	}
-
-	/*
-	 * Table on changed source event
-	 */
-	onChangedSource() {
-		this.equipmentSharingTable.source.onChangedSource
 			.pipe(
-				untilDestroyed(this),
-				tap(() => this.clearItem())
+				distinctUntilChange(),
+				tap((componentLayout) => (this.dataLayoutStyle = componentLayout)),
+				tap(() => this.refreshPagination()),
+				filter((componentLayout) => componentLayout === ComponentLayoutStyleEnum.CARDS_GRID),
+				tap(() => (this.equipments = [])),
+				tap(() => this.equipmentSharing$.next(true)),
+				untilDestroyed(this)
 			)
 			.subscribe();
 	}
 
-	async loadSmartTable() {
+	private _loadSmartTableSettings() {
+		const pagination: IPaginationBase = this.getPagination();
 		this.settingsSmartTable = {
 			actions: false,
+			selectedRowIndex: -1,
+			pager: {
+				display: false,
+				perPage: pagination ? pagination.itemsPerPage : 10
+			},
+			noDataMessage: this.getTranslation('SM_TABLE.NO_DATA.EQUIPMENT_SHARING'),
 			columns: {
 				name: {
-					title: this.getTranslation(
-						'EQUIPMENT_SHARING_PAGE.EQUIPMENT_NAME'
-					),
+					title: this.getTranslation('EQUIPMENT_SHARING_PAGE.EQUIPMENT_NAME'),
 					type: 'string'
 				},
 				equipmentSharingPolicy: {
-					title: this.getTranslation(
-						'EQUIPMENT_SHARING_PAGE.EQUIPMENT_SHARING_POLICY'
-					),
+					title: this.getTranslation('EQUIPMENT_SHARING_PAGE.EQUIPMENT_SHARING_POLICY'),
 					type: 'custom',
-					renderComponent: EquipmentSharingPolicyComponent,
-					filter: false
+					isFilterable: false,
+					renderComponent: EquipmentSharingPolicyTableComponent,
+					componentInitFunction: (instance: EquipmentSharingPolicyTableComponent, cell: Cell) => {
+						instance.value = cell.getRawValue();
+					}
 				},
 				shareRequestDay: {
-					title: this.getTranslation(
-						'EQUIPMENT_SHARING_PAGE.SHARE_REQUEST_DATE'
-					),
-					type: 'date',
-					valuePrepareFunction: this._formatDate
+					title: this.getTranslation('EQUIPMENT_SHARING_PAGE.SHARE_REQUEST_DATE'),
+					type: 'custom',
+					isFilterable: false,
+					renderComponent: DateViewComponent,
+					componentInitFunction: (instance: DateViewComponent, cell: Cell) => {
+						instance.value = cell.getValue();
+					}
 				},
 				shareStartDay: {
-					title: this.getTranslation(
-						'EQUIPMENT_SHARING_PAGE.SHARE_START_DATE'
-					),
-					type: 'date',
-					valuePrepareFunction: this._formatDate,
-					filter: false
+					title: this.getTranslation('EQUIPMENT_SHARING_PAGE.SHARE_START_DATE'),
+					type: 'custom',
+					isFilterable: false,
+					renderComponent: DateViewComponent,
+					componentInitFunction: (instance: DateViewComponent, cell: Cell) => {
+						instance.value = cell.getValue();
+					}
 				},
 				shareEndDay: {
-					title: this.getTranslation(
-						'EQUIPMENT_SHARING_PAGE.SHARE_END_DATE'
-					),
-					type: 'date',
-					valuePrepareFunction: this._formatDate,
-					filter: false
+					title: this.getTranslation('EQUIPMENT_SHARING_PAGE.SHARE_END_DATE'),
+					type: 'custom',
+					isFilterable: false,
+					renderComponent: DateViewComponent,
+					componentInitFunction: (instance: DateViewComponent, cell: Cell) => {
+						instance.value = cell.getValue();
+					}
 				},
-				createdByName: {
-					title: this.getTranslation(
-						'EQUIPMENT_SHARING_PAGE.CREATED_BY'
-					),
-					type: 'string'
+				createdByUser: {
+					title: this.getTranslation('EQUIPMENT_SHARING_PAGE.CREATED_BY'),
+					type: 'custom',
+					isFilterable: false,
+					renderComponent: CreatedByUserComponent<IEquipmentSharing>,
+					componentInitFunction: (instance: CreatedByUserComponent<IEquipmentSharing>, cell: Cell) => {
+						instance.rowData = cell.getRow().getData();
+					}
 				},
-				status: {
+				sharingStatus: {
 					title: this.getTranslation('EQUIPMENT_SHARING_PAGE.STATUS'),
 					type: 'custom',
-					renderComponent: EquipmentSharingStatusComponent,
-					filter: false
-				},
-				actions: {
-					title: this.getTranslation(
-						'EQUIPMENT_SHARING_PAGE.ACTIONS'
-					),
-					type: 'custom',
-					renderComponent: EquipmentSharingActionComponent,
-					onComponentInitFunction: (instance) => {
-						instance.updateResult
-							.pipe(untilDestroyed(this))
-							.subscribe((eventUpdate) => {
-								this.handleEvent(eventUpdate);
-							});
-					},
-					filter: false
+					width: '5%',
+					isFilterable: false,
+					renderComponent: StatusBadgeComponent,
+					componentInitFunction: (instance: StatusBadgeComponent, cell: Cell) => {
+						instance.value = cell.getRawValue();
+					}
 				}
 			}
 		};
 	}
 
-	approval(rowData) {
-		const params = {
-			isApproval: true,
-			data: rowData
-		};
-		this.handleEvent(params);
-	}
-	refuse(rowData) {
-		const params = {
-			isApproval: false,
-			data: rowData
-		};
-		this.handleEvent(params);
-	}
+	/**
+	 * Determines whether the "Approved" button for equipment sharing should be shown.
+	 *
+	 * @param equipmentSharing - The equipment sharing to check.
+	 * @returns True if the "Approved" button should be shown, false otherwise.
+	 */
+	showApprovedButton(equipmentSharing: IEquipmentSharing): boolean {
+		// Check if equipmentSharing is truthy and has a valid status
+		if (equipmentSharing && equipmentSharing.status) {
+			const validStatuses: RequestApprovalStatusTypesEnum[] = [
+				RequestApprovalStatusTypesEnum.REFUSED,
+				RequestApprovalStatusTypesEnum.REQUESTED
+			];
 
-	async handleEvent(params) {
-		if (params.isApproval) {
-			const request = await this.equipmentSharingService.approval(
-				params.data.id
-			);
-			if (request) {
-				this.toastrService.success(
-					'EQUIPMENT_SHARING_PAGE.APPROVAL_SUCCESS',
-					{
-						name: params.data.name
-					}
-				);
-			}
-		} else {
-			const request = await this.equipmentSharingService.refuse(
-				params.data.id
-			);
-			if (request) {
-				this.toastrService.success(
-					'EQUIPMENT_SHARING_PAGE.REFUSE_SUCCESS',
-					{
-						name: params.data.name
-					}
-				);
-			}
+			// Return true if the status is included in the valid statuses
+			return validStatuses.includes(equipmentSharing.status);
 		}
-		this.loadSettings();
-		this.clearItem();
+
+		// Return false if equipmentSharing is falsy or has an invalid status
+		return false;
 	}
 
-	async save(isCreate: boolean, selectedItem?: IEquipmentSharing) {
-		let dialog;
+	/**
+	 * Determines whether the "Refuse" button for equipment sharing should be shown.
+	 *
+	 * @param equipmentSharing - The equipment sharing to check.
+	 * @returns True if the "Refuse" button should be shown, false otherwise.
+	 */
+	showRefuseButton(equipmentSharing: IEquipmentSharing): boolean {
+		// Check if equipmentSharing is truthy and has a valid status
+		if (equipmentSharing && equipmentSharing.status) {
+			const validStatuses: RequestApprovalStatusTypesEnum[] = [
+				RequestApprovalStatusTypesEnum.APPROVED,
+				RequestApprovalStatusTypesEnum.REQUESTED
+			];
+
+			// Return true if the status is included in the valid statuses
+			return validStatuses.includes(equipmentSharing.status);
+		}
+
+		// Return false if equipmentSharing is falsy or has an invalid status
+		return false;
+	}
+
+	/**
+	 * Approves the specified equipment sharing.
+	 * Checks if the organization exists and if the approve button should be shown.
+	 * If conditions are met, sends an approval request to the service and displays a success message.
+	 * Finally, triggers a refresh of data and updates the equipment sharing observable.
+	 * @param equipmentSharing - The equipment sharing to be approved.
+	 */
+	async approval(equipmentSharing: IEquipmentSharing): Promise<void> {
+		// Check if the organization exists
+		if (!this.organization) {
+			return;
+		}
+
+		try {
+			// Check if the approve button should be shown for the equipment sharing
+			if (this.showApprovedButton(equipmentSharing)) {
+				// Send an approval request to the service
+				const request = await this.equipmentSharingService.approval(equipmentSharing.id);
+
+				// If the approval is successful, display a success message
+				if (request) {
+					this.toastrService.success('EQUIPMENT_SHARING_PAGE.APPROVAL_SUCCESS', {
+						name: equipmentSharing.name
+					});
+				}
+			}
+		} catch (error) {
+			// Handle any errors that occur during the approval process
+			this.handleDecisionError(error);
+		} finally {
+			// Trigger a refresh of data and update the equipment sharing observable
+			this._refresh$.next(true);
+			this.equipmentSharing$.next(true);
+		}
+	}
+
+	/**
+	 * Refuses the specified equipment sharing.
+	 * Checks if the organization exists and if the refuse button should be shown.
+	 * If conditions are met, sends a refusal request to the service and displays a success message.
+	 * Finally, triggers a refresh of data and updates the equipment sharing observable.
+	 * @param equipmentSharing - The equipment sharing to be refused.
+	 */
+	async refuse(equipmentSharing: IEquipmentSharing): Promise<void> {
+		// Check if the organization exists
+		if (!this.organization) {
+			return;
+		}
+
+		try {
+			// Check if the refuse button should be shown for the equipment sharing
+			if (this.showRefuseButton(equipmentSharing)) {
+				// Send a refusal request to the service
+				const request = await this.equipmentSharingService.refuse(equipmentSharing.id);
+
+				// If the refusal is successful, display a success message
+				if (request) {
+					this.toastrService.success('EQUIPMENT_SHARING_PAGE.APPROVAL_SUCCESS', {
+						name: equipmentSharing.name
+					});
+				}
+			}
+		} catch (error) {
+			// Handle any errors that occur during the saving process
+			this.handleDecisionError(error);
+		} finally {
+			// Trigger a refresh of data and update the equipment sharing observable
+			this._refresh$.next(true);
+			this.equipmentSharing$.next(true);
+		}
+	}
+
+	/**
+	 * Reports a failed approve / refuse.
+	 *
+	 * The server decides a sharing only at the version it reads (ever-co/ever-gauzy#11384), so a decision that loses
+	 * the race with another decision or an edit is answered `409 ENTITY_VERSION_CONFLICT`. That is not an error of the
+	 * user's: they are told the request changed, and the list, which the caller reloads, shows what it is now. Any
+	 * other failure is shown as before.
+	 *
+	 * @param error - What the request rejected with.
+	 */
+	private handleDecisionError(error: unknown): void {
+		if (isEntityVersionConflict(error)) {
+			this.toastrService.warning('EQUIPMENT_SHARING_PAGE.MESSAGES.CHANGED_BY_SOMEONE_ELSE');
+			return;
+		}
+		this.errorHandlingService.handleError(error);
+	}
+
+	/**
+	 * Saves the equipment sharing data.
+	 * If isCreate is true, it opens a dialog for creating a new equipment sharing.
+	 * If selectedItem is provided, it selects the equipment sharing for editing.
+	 * After the dialog is closed, it displays a success message if the equipment sharing is saved.
+	 * Finally, it triggers a refresh of data and updates the equipment sharing observable.
+	 * @param isCreate - A boolean indicating whether to create a new equipment sharing.
+	 * @param selectedItem - The equipment sharing to be edited.
+	 */
+	async save(isCreate: boolean, selectedItem?: IEquipmentSharing): Promise<void> {
+		// If selectedItem is provided, select the equipment sharing
 		if (selectedItem) {
 			this.selectEquipmentSharing({
 				isSelected: true,
 				data: selectedItem
 			});
 		}
-		if (!isCreate) {
-			dialog = this.dialogService.open(
-				EquipmentSharingMutationComponent,
-				{
-					context: { equipmentSharing: this.selectedEquipmentSharing }
-				}
-			);
-		} else {
-			dialog = this.dialogService.open(EquipmentSharingMutationComponent);
-		}
 
-		const equipmentSharing = await firstValueFrom(dialog.onClose);
-		if (equipmentSharing) {
-			this.toastrService.success('EQUIPMENT_SHARING_PAGE.REQUEST_SAVED');
+		try {
+			let dialog;
+
+			// Open a dialog for creating or editing equipment sharing
+			if (!isCreate) {
+				dialog = this.dialogService.open(EquipmentSharingMutationComponent, {
+					context: {
+						equipmentSharing: this.selectedEquipmentSharing
+					}
+				});
+			} else {
+				dialog = this.dialogService.open(EquipmentSharingMutationComponent);
+			}
+
+			// Wait for the dialog to close and get the equipment sharing data
+			const equipmentSharing = await firstValueFrom(dialog.onClose);
+
+			// If equipment sharing is saved, display a success message
+			if (equipmentSharing) {
+				this.toastrService.success('EQUIPMENT_SHARING_PAGE.REQUEST_SAVED');
+			}
+		} catch (error) {
+			// Handle any errors that occur during the saving process
+			this.errorHandlingService.handleError(error);
+		} finally {
+			// Trigger a refresh of data and update the equipment sharing observable
+			this._refresh$.next(true);
+			this.equipmentSharing$.next(true);
 		}
-		this.loadSettings();
-		this.clearItem();
 	}
 
-	async delete(selectedItem?: IEquipmentSharing) {
+	/**
+	 * Deletes the selected equipment sharing.
+	 * If a selectedItem is provided, it selects the equipment sharing and opens a confirmation dialog.
+	 * If the user confirms the deletion, the equipment sharing is deleted, and a success message is displayed.
+	 * Finally, it triggers a refresh of data and updates the equipment sharing observable.
+	 * @param selectedItem - The equipment sharing to be deleted.
+	 */
+	async delete(selectedItem?: IEquipmentSharing): Promise<void> {
+		// If a selectedItem is provided, select the equipment sharing
 		if (selectedItem) {
 			this.selectEquipmentSharing({
 				isSelected: true,
 				data: selectedItem
 			});
 		}
-		const result = await firstValueFrom(
-			this.dialogService
-				.open(DeleteConfirmationComponent)
-				.onClose);
 
-		if (result) {
-			await this.equipmentSharingService.delete(
-				this.selectedEquipmentSharing.id
-			);
-			this.loadSettings();
-			this.clearItem();
-			this.toastrService.success(
-				'EQUIPMENT_SHARING_PAGE.REQUEST_DELETED'
-			);
+		try {
+			// Open a confirmation dialog and await the result
+			const result = await firstValueFrom(this.dialogService.open(DeleteConfirmationComponent).onClose);
+
+			// If the user confirms the deletion, proceed with the deletion
+			if (result) {
+				await this.equipmentSharingService.delete(this.selectedEquipmentSharing.id);
+				// Display a success message
+				this.toastrService.success('EQUIPMENT_SHARING_PAGE.REQUEST_DELETED');
+			}
+		} catch (error) {
+			// Handle any errors that occur during the saving process
+			this.errorHandlingService.handleError(error);
+		} finally {
+			// Trigger a refresh of data and update the equipment sharing observable
+			this._refresh$.next(true);
+			this.equipmentSharing$.next(true);
 		}
 	}
 
-	async selectEquipmentSharing({
-		isSelected,
-		data
-	}: ISelectedEquipmentSharing) {
+	/**
+	 * Handles the selection of equipment sharing.
+	 * Updates the selectedEquipmentSharing property based on the provided isSelected and data parameters.
+	 * @param isSelected - A boolean indicating whether the equipment sharing is selected.
+	 * @param data - The equipment sharing data.
+	 */
+	async selectEquipmentSharing({ isSelected, data }: ISelectedEquipmentSharing): Promise<void> {
+		// Update the disableButton property based on the selection status
 		this.disableButton = !isSelected;
+
+		// Update the selectedEquipmentSharing property if the equipment sharing is selected, otherwise set it to null
 		this.selectedEquipmentSharing = isSelected ? data : null;
 	}
 
-	async loadSettings() {
+	/**
+	 * Registers and configures the Smart Table source for equipment sharing.
+	 * Sets up the ServerDataSource with relevant parameters, including the endpoint, where clause, and result mapping.
+	 * Updates pagination and loading state accordingly.
+	 */
+	setSmartTableSource(): void {
+		// Check if organization context is available
+		if (!this.organization) {
+			return;
+		}
+
+		// Set loading state to true while fetching data
 		this.loading = true;
-		let equipmentItems = [];
-		if (this.selectedEmployeeUserId) {
-			equipmentItems = await this.equipmentSharingService.getByAuthorUserId(
-				this.selectedEmployeeUserId
-			);
-		} else {
-			if (this.selectedOrgId) {
-				equipmentItems = await this.equipmentSharingService.getByOrganizationId(
-					this.selectedOrgId
-				);
+
+		// Destructure properties for clarity
+		const { id: organizationId, tenantId } = this.organization;
+
+		// Prepare request object with organization and tenant details
+		// (the endpoint filters on `employeeIds`; a singular `employeeId` is ignored server-side)
+		const request: any = { organizationId, tenantId };
+
+		// Create a new ServerDataSource for Smart Table
+		this.smartTableSource = new ServerDataSource(this.http, {
+			endPoint: `${API_PREFIX}/equipment-sharing/pagination`,
+			where: {
+				...request,
+				...(this.selectedEmployeeId ? { employeeIds: [this.selectedEmployeeId] } : {}),
+				...this.filters.where
+			},
+			resultMap: (sharing: IEquipmentSharing) => ({
+				...sharing,
+				sharingStatus: this.statusMapper(sharing),
+				name: sharing.equipment ? sharing.equipment.name : sharing.name
+			}),
+			// Finalize callback to handle post-processing
+			finalize: () => {
+				// If the data layout style is cards grid, push data to the equipments array
+				if (this.dataLayoutStyle === ComponentLayoutStyleEnum.CARDS_GRID) {
+					this.equipments.push(...this.smartTableSource.getData());
+				}
+
+				// Update pagination based on the count of items in the source
+				this.setPagination({
+					...this.getPagination(),
+					totalItems: this.smartTableSource.count()
+				});
+
+				// Set loading state to false once data fetching is complete
+				this.loading = false;
 			}
-		}
-		this.loading = false;
-		this.equipmentsData = equipmentItems.map((equipmentSharing) => {
-			return {
-				...equipmentSharing,
-				name: equipmentSharing.equipment
-					? equipmentSharing.equipment.name
-					: ''
-			};
 		});
-
-		this.smartTableSource.load(this.equipmentsData);
 	}
 
-	_formatDate(date): string {
-		if (date) {
-			return new DatePipe('en').transform(date, 'dd/MM/yyyy');
+	/**
+	 * Fetches and displays equipment sharing data.
+	 * Sets up the Smart Table source, configures pagination, and retrieves elements for the specified data layout style.
+	 */
+	async getEquipmentSharings(): Promise<void> {
+		// Check if organization context is available
+		if (!this.organization) {
+			return;
 		}
 
-		return null;
+		try {
+			// Set up the Smart Table source
+			this.setSmartTableSource();
+
+			// Get pagination details
+			const { activePage, itemsPerPage } = this.getPagination();
+
+			// Set paging for the Smart Table source
+			this.smartTableSource.setPaging(activePage, itemsPerPage, false);
+
+			// If the data layout style is cards grid, retrieve elements
+			if (this.dataLayoutStyle === ComponentLayoutStyleEnum.CARDS_GRID) {
+				await this.smartTableSource.getElements();
+			}
+		} catch (error) {
+			// Handle errors by displaying a danger toast
+			this.toastrService.danger(error);
+		}
 	}
 
-	_applyTranslationOnSmartTable() {
+	private _applyTranslationOnSmartTable() {
 		this.translateService.onLangChange
-			.pipe(untilDestroyed(this))
-			.subscribe(() => {
-				this.loadSmartTable();
-			});
+			.pipe(
+				tap(() => this._loadSmartTableSettings()),
+				untilDestroyed(this)
+			)
+			.subscribe();
 	}
 
 	/*
@@ -356,44 +553,38 @@ export class EquipmentSharingComponent
 			isSelected: false,
 			data: null
 		});
-		this.deselectAll();
 	}
-	/*
-	 * Deselect all table rows
+
+	/**
+	 * Maps equipment sharing status to display text, value, and badge class.
+	 * @param row - The equipment sharing data.
+	 * @returns An object containing text, value, and class properties.
 	 */
-	deselectAll() {
-		if (this.equipmentSharingTable && this.equipmentSharingTable.grid) {
-			this.equipmentSharingTable.grid.dataSet['willSelect'] = 'false';
-			this.equipmentSharingTable.grid.dataSet.deselectAll();
+	statusMapper(row: IEquipmentSharing): { text: string; value: number; class: string } {
+		let value: string;
+		let badgeClass: string;
+
+		// Map status values to corresponding display text, value, and badge class
+		switch (row.status) {
+			case RequestApprovalStatusTypesEnum.APPROVED:
+				value = EquipmentSharingStatusEnum.APPROVED;
+				badgeClass = 'success';
+				break;
+			case RequestApprovalStatusTypesEnum.REFUSED:
+				value = EquipmentSharingStatusEnum.REFUSED;
+				badgeClass = 'danger';
+				break;
+			default:
+				value = EquipmentSharingStatusEnum.REQUESTED;
+				badgeClass = 'warning';
+				break;
 		}
-	}
 
-	ngOnDestroy() { }
-
-	manageApprovalPolicy() {
-		this.router.navigate(['/pages/organization/equipment-sharing-policy']);
-	}
-
-	hasPermission() {
-		return this.store.hasPermission(
-			PermissionsEnum.ORG_EQUIPMENT_SHARING_VIEW
-		);
-	}
-
-	async loadEmployeeUser(employeeId: string) {
-		this.selectedEmployeeUserId = null;
-
-		if (!employeeId) return;
-
-		await this.employeesService
-			.getEmployeeById(employeeId, [])
-			.then((res) => {
-				if (res && res.userId) {
-					this.selectedEmployeeUserId = res.userId;
-				}
-			})
-			.catch((err) => {
-				this.toastrService.danger('Could not load employee');
-			});
+		// Return an object with text, value, and class properties
+		return {
+			text: value,
+			value: row.status,
+			class: badgeClass
+		};
 	}
 }

@@ -1,11 +1,12 @@
 import { NgModule } from '@angular/core';
 import { CommonModule } from '@angular/common';
 import { NbButtonModule, NbCardModule, NbIconModule, NbSpinnerModule } from '@nebular/theme';
+import { NgxPermissionsModule } from 'ngx-permissions';
+import { TranslatePipe } from '@ngx-translate/core';
+import { DialogsModule, SharedModule } from '@gauzy/ui-core/shared';
 import { ImportExportRoutingModule } from './import-export-routing.module';
 import { ImportExportComponent } from './import-export.component';
-import { TranslateModule } from '../../@shared/translate/translate.module';
-import { NgxPermissionsModule } from 'ngx-permissions';
-import { DialogsModule } from '../../@shared/dialogs';
+import { ExternalRedirectComponent } from './external-redirect/external-redirect.component';
 
 @NgModule({
 	imports: [
@@ -17,9 +18,10 @@ import { DialogsModule } from '../../@shared/dialogs';
 		NbIconModule,
 		NbSpinnerModule,
 		NgxPermissionsModule.forChild(),
-		TranslateModule
+		SharedModule,
+		TranslatePipe
 	],
-	declarations: [ImportExportComponent],
+	declarations: [ImportExportComponent, ExternalRedirectComponent],
 	providers: []
 })
 export class ImportExportModule {}

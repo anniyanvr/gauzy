@@ -1,39 +1,36 @@
-import { Component, OnInit, TemplateRef, ViewChild } from '@angular/core';
+import { Component, OnInit, TemplateRef, ViewChild, ChangeDetectionStrategy } from '@angular/core';
 import { Router } from '@angular/router';
 import { HttpClient } from '@angular/common/http';
 import { TranslateService } from '@ngx-translate/core';
 import { UntilDestroy, untilDestroyed } from '@ngneat/until-destroy';
 import { debounceTime, filter, tap } from 'rxjs/operators';
-import { Subject, firstValueFrom, combineLatest } from 'rxjs';
-import { Ng2SmartTableComponent } from 'ng2-smart-table';
+import { Subject, firstValueFrom } from 'rxjs';
+import { Cell } from 'angular2-smart-table';
 import { NbDialogService } from '@nebular/theme';
-import { distinctUntilChange } from '@gauzy/common-angular';
+import { IMerchant, IOrganization, ComponentLayoutStyleEnum, IWarehouse } from '@gauzy/contracts';
+import { API_PREFIX, ComponentEnum, distinctUntilChange } from '@gauzy/ui-core/common';
+import { MerchantService, ServerDataSource, Store, ToastrService } from '@gauzy/ui-core/core';
 import {
-	IMerchant,
-	IOrganization,
-	ComponentLayoutStyleEnum,
-	IContact,
-	IWarehouse
-} from '@gauzy/contracts';
-import { API_PREFIX, ComponentEnum } from './../../../../../@core/constants';
-import { MerchantService, Store, ToastrService } from '../../../../../@core/services';
-import { EnabledStatusComponent, ItemImgTagsComponent } from '../../table-components';
-import { PaginationFilterBaseComponent } from './../../../../../@shared/pagination/pagination-filter-base.component';
-import { ServerDataSource } from './../../../../../@core/utils/smart-table/server.data-source';
-import { DeleteConfirmationComponent } from './../../../../../@shared/user/forms';
+	DeleteConfirmationComponent,
+	IPaginationBase,
+	IRecordViewSection,
+	InputFilterComponent,
+	PaginationFilterBaseComponent
+} from '@gauzy/ui-core/shared';
+import { ContactRowComponent, EnabledStatusComponent, ItemImgTagsComponent } from '../../inventory-table-components';
+import { buildMerchantViewSections } from '../merchant-record-view';
 
 @UntilDestroy({ checkProperties: true })
 @Component({
-	selector: 'ga-merchant-table',
-	templateUrl: './merchant-table.component.html',
-	styleUrls: ['./merchant-table.component.scss']
+    selector: 'ga-merchant-table',
+    templateUrl: './merchant-table.component.html',
+    styleUrls: ['./merchant-table.component.scss'],
+    changeDetection: ChangeDetectionStrategy.Eager,
+    standalone: false
 })
-export class MerchantTableComponent
-	extends PaginationFilterBaseComponent
-	implements OnInit {
-
+export class MerchantTableComponent extends PaginationFilterBaseComponent implements OnInit {
 	settingsSmartTable: object;
-	loading: boolean;
+	loading: boolean = false;
 	selectedMerchant: IMerchant;
 	smartTableSource: ServerDataSource;
 	merchants: IMerchant[] = [];
@@ -42,21 +39,22 @@ export class MerchantTableComponent
 	dataLayoutStyle = ComponentLayoutStyleEnum.TABLE;
 	componentLayoutStyleEnum = ComponentLayoutStyleEnum;
 
+	/*
+	 * Read-only View: a merchant is a small record, so it opens in the
+	 * right-side drawer rather than on a page of its own.
+	 */
+	viewedMerchant: IMerchant;
+	viewSections: IRecordViewSection[] = [];
+
 	public organization: IOrganization;
 	merchants$: Subject<any> = this.subject$;
-
-	merchantsTable: Ng2SmartTableComponent;
-	@ViewChild('merchantsTable') set content(content: Ng2SmartTableComponent) {
-		if (content) {
-			this.merchantsTable = content;
-			this.onChangedSource();
-		}
-	}
+	private _refresh$: Subject<any> = new Subject();
 
 	/*
-	* Actions Buttons directive 
-	*/
-	@ViewChild('actionButtons', { static: true }) actionButtons: TemplateRef<any>;
+	 * Actions Buttons directive
+	 */
+	@ViewChild('actionButtons', { static: true })
+	actionButtons: TemplateRef<any>;
 
 	constructor(
 		public readonly translateService: TranslateService,
@@ -80,21 +78,36 @@ export class MerchantTableComponent
 		this.merchants$
 			.pipe(
 				debounceTime(300),
-				tap(() => this.loading = true),
-				tap(() => this.getMerchants()),
 				tap(() => this.clearItem()),
+				tap(() => this.getMerchants()),
 				untilDestroyed(this)
 			)
 			.subscribe();
-
-		const storeOrganization$ = this.store.selectedOrganization$;
-		combineLatest([storeOrganization$])
+		this.pagination$
 			.pipe(
-				debounceTime(300),
-				filter(([organization]) => !!organization),
-				tap(([organization]) => (this.organization = organization)),
+				debounceTime(100),
 				distinctUntilChange(),
 				tap(() => this.merchants$.next(true)),
+				untilDestroyed(this)
+			)
+			.subscribe();
+		const storeOrganization$ = this.store.selectedOrganization$;
+		storeOrganization$
+			.pipe(
+				debounceTime(300),
+				distinctUntilChange(),
+				filter((organization: IOrganization) => !!organization),
+				tap((organization: IOrganization) => (this.organization = organization)),
+				tap(() => this._refresh$.next(true)),
+				tap(() => this.merchants$.next(true)),
+				untilDestroyed(this)
+			)
+			.subscribe();
+		this._refresh$
+			.pipe(
+				filter(() => this.dataLayoutStyle === ComponentLayoutStyleEnum.CARDS_GRID),
+				tap(() => this.refreshPagination()),
+				tap(() => (this.merchants = [])),
 				untilDestroyed(this)
 			)
 			.subscribe();
@@ -106,9 +119,10 @@ export class MerchantTableComponent
 			.componentLayout$(this.viewComponentName)
 			.pipe(
 				distinctUntilChange(),
-				tap((componentLayout) => this.dataLayoutStyle = componentLayout),
-				filter((componentLayout) => componentLayout === ComponentLayoutStyleEnum.CARDS_GRID),
+				tap((componentLayout) => (this.dataLayoutStyle = componentLayout)),
 				tap(() => this.refreshPagination()),
+				filter((componentLayout) => componentLayout === ComponentLayoutStyleEnum.CARDS_GRID),
+				tap(() => (this.merchants = [])),
 				tap(() => this.merchants$.next(true)),
 				untilDestroyed(this)
 			)
@@ -116,56 +130,73 @@ export class MerchantTableComponent
 	}
 
 	async _loadSmartTableSettings() {
+		const pagination: IPaginationBase = this.getPagination();
 		this.settingsSmartTable = {
 			actions: false,
+			editable: true,
+			selectedRowIndex: -1,
 			pager: {
-				perPage: this.pagination.itemsPerPage
+				display: false,
+				perPage: pagination ? pagination.itemsPerPage : 10
 			},
+			noDataMessage: this.getTranslation('SM_TABLE.NO_DATA.MERCHANT'),
 			columns: {
 				name: {
 					title: this.getTranslation('INVENTORY_PAGE.NAME'),
 					type: 'custom',
-					renderComponent: ItemImgTagsComponent
+					renderComponent: ItemImgTagsComponent,
+					componentInitFunction: (instance: ItemImgTagsComponent, cell: Cell) => {
+						instance.rowData = cell.getRow().getData();
+						instance.value = cell.getValue();
+					},
+					filter: {
+						type: 'custom',
+						component: InputFilterComponent
+					},
+					filterFunction: (name: string) => {
+						this.setFilter({ field: 'name', search: name });
+					}
 				},
 				code: {
 					title: this.getTranslation('INVENTORY_PAGE.CODE'),
 					type: 'string',
+					filter: {
+						type: 'custom',
+						component: InputFilterComponent
+					},
+					filterFunction: (code: string) => {
+						this.setFilter({ field: 'code', search: code });
+					}
 				},
 				contact: {
 					title: this.getTranslation('INVENTORY_PAGE.CONTACT'),
-					type: 'string',
-					valuePrepareFunction: (contact: IContact, row) => {
-
-						if (!contact) return '-';
-
-						return `${this.getTranslation(
-							'INVENTORY_PAGE.COUNTRY'
-						)}: ${contact.country || '-'}, ${this.getTranslation(
-							'INVENTORY_PAGE.CITY'
-						)}:${contact.city || '-'}, ${this.getTranslation(
-							'INVENTORY_PAGE.ADDRESS'
-						)}: ${contact.address || '-'}, ${this.getTranslation(
-							'INVENTORY_PAGE.ADDRESS'
-						)} 2: ${contact.address2 || '-'}`;
+					type: 'custom',
+					isFilterable: false,
+					renderComponent: ContactRowComponent,
+					componentInitFunction: (instance: ContactRowComponent, cell: Cell) => {
+						instance.rowData = cell.getRow().getData();
+						instance.value = cell.getRawValue();
 					}
 				},
 				description: {
 					title: this.getTranslation('INVENTORY_PAGE.DESCRIPTION'),
 					type: 'string',
-					filter: false,
-					valuePrepareFunction: (description: string) => {
-						return description
-							? description.slice(0, 15) + '...'
-							: '';
-					}
+					isFilterable: false,
+					valuePrepareFunction: (value: string) => (value ? value.slice(0, 15) + '...' : '')
 				},
 				active: {
 					title: this.getTranslation('INVENTORY_PAGE.ACTIVE'),
 					type: 'custom',
-					renderComponent: EnabledStatusComponent
+					width: '5%',
+					isFilterable: false,
+					renderComponent: EnabledStatusComponent,
+					componentInitFunction: (instance: EnabledStatusComponent, cell: Cell) => {
+						instance.rowData = cell.getRow().getData();
+						instance.value = cell.getValue();
+					}
 				}
 			}
-		}
+		};
 	}
 
 	private _applyTranslationOnSmartTable() {
@@ -178,9 +209,33 @@ export class MerchantTableComponent
 	}
 
 	onAddStoreClick() {
-		this.router.navigate([
-			'/pages/organization/inventory/merchants/create'
-		]);
+		this.router.navigate(['/pages/organization/inventory/merchants/create']);
+	}
+
+	/**
+	 * Opens the read-only View of a merchant in the right-side drawer.
+	 *
+	 * @param selectedItem - Row the action was invoked from, when it came from the grid.
+	 */
+	onViewStore(selectedItem?: IMerchant) {
+		if (selectedItem) {
+			this.selectStore({
+				isSelected: true,
+				data: selectedItem
+			});
+		}
+
+		const merchant = selectedItem ?? this.selectedMerchant;
+		if (!merchant) {
+			return;
+		}
+
+		this.viewSections = buildMerchantViewSections(merchant);
+		this.viewedMerchant = merchant;
+	}
+
+	closeView(): void {
+		this.viewedMerchant = null;
 	}
 
 	onEditStore(selectedItem?: IMerchant) {
@@ -191,22 +246,7 @@ export class MerchantTableComponent
 			});
 		}
 
-		this.router.navigate([
-			`/pages/organization/inventory/merchants/edit`,
-			this.selectedMerchant.id
-		]);
-	}
-
-	/*
-	 * Table on changed source event
-	 */
-	onChangedSource() {
-		this.merchantsTable.source.onChangedSource
-			.pipe(
-				untilDestroyed(this),
-				tap(() => this.clearItem())
-			)
-			.subscribe();
+		this.router.navigate([`/pages/organization/inventory/merchants/edit`, this.selectedMerchant.id]);
 	}
 
 	async onDelete(selectedItem?: IMerchant) {
@@ -220,16 +260,12 @@ export class MerchantTableComponent
 			return;
 		}
 
-		const dialog = await firstValueFrom(
-			this.dialogService
-				.open(DeleteConfirmationComponent)
-				.onClose
-		);
+		const dialog = await firstValueFrom(this.dialogService.open(DeleteConfirmationComponent).onClose);
 
 		if (dialog) {
 			await this.merchantService
 				.delete(this.selectedMerchant.id)
-				.then(res => {
+				.then((res) => {
 					if (res && res['affected'] == 1) {
 						const { name } = this.selectedMerchant;
 						this.toastrService.success('INVENTORY_PAGE.MERCHANT_DELETED_SUCCESSFULLY', {
@@ -238,50 +274,66 @@ export class MerchantTableComponent
 					}
 				})
 				.finally(() => {
+					this._refresh$.next(true);
 					this.merchants$.next(true);
 				});
 		}
 	}
 
 	/*
-	* Register Smart Table Source Config 
-	*/
+	 * Register Smart Table Source Config
+	 */
 	setSmartTableSource() {
-		const { tenantId } = this.store.user;
-		const { id: organizationId } = this.organization;
+		if (!this.organization) {
+			return;
+		}
+		try {
+			this.loading = true;
 
-		this.smartTableSource = new ServerDataSource(this.http, {
-			endPoint: `${API_PREFIX}/merchants/pagination`,
-			relations: ['logo', 'contact', 'tags', 'warehouses'],
-			where: {
-				...{ organizationId, tenantId },
-				...this.filters.where
-			},
-			resultMap: (warehouse: IWarehouse) => {
-				return Object.assign({}, warehouse);
-			},
-			finalize: () => {
-				this.loading = false;
-			}
-		});
+			const { tenantId } = this.store.user;
+			const { id: organizationId } = this.organization;
+
+			this.smartTableSource = new ServerDataSource(this.http, {
+				endPoint: `${API_PREFIX}/merchants/pagination`,
+				relations: ['logo', 'contact', 'tags', 'warehouses'],
+				where: {
+					organizationId,
+					tenantId,
+					...(this.filters.where ? this.filters.where : {})
+				},
+				resultMap: (warehouse: IWarehouse) => {
+					return Object.assign({}, warehouse);
+				},
+				finalize: () => {
+					if (this.dataLayoutStyle === ComponentLayoutStyleEnum.CARDS_GRID) {
+						this.merchants.push(...this.smartTableSource.getData());
+					}
+					this.setPagination({
+						...this.getPagination(),
+						totalItems: this.smartTableSource.count()
+					});
+					this.loading = false;
+				}
+			});
+		} catch (error) {
+			this.loading = false;
+			this.toastrService.danger(error);
+		}
 	}
 
 	/**
 	 * GET merchants smart table source
 	 */
 	private async getMerchants() {
+		if (!this.organization) {
+			return;
+		}
 		try {
 			this.setSmartTableSource();
+			const { activePage, itemsPerPage } = this.getPagination();
+			this.smartTableSource.setPaging(activePage, itemsPerPage, false);
 			if (this.dataLayoutStyle === ComponentLayoutStyleEnum.CARDS_GRID) {
-
-				// Initiate GRID view pagination
-				const { activePage, itemsPerPage } = this.pagination;
-				this.smartTableSource.setPaging(activePage, itemsPerPage, false);
-
 				await this.smartTableSource.getElements();
-				this.merchants = this.smartTableSource.getData();
-
-				this.pagination['totalItems'] = this.smartTableSource.count();
 			}
 		} catch (error) {
 			this.toastrService.danger(error);
@@ -297,20 +349,12 @@ export class MerchantTableComponent
 	 * Clear selected item
 	 */
 	clearItem() {
+		// The list is about to be reloaded, so whatever the drawer is showing is
+		// about to go stale — close it rather than leave a detached record open.
+		this.closeView();
 		this.selectStore({
 			isSelected: false,
 			data: null
 		});
-		this.deselectAll();
-	}
-
-	/*
-	 * Deselect all table rows
-	 */
-	deselectAll() {
-		if (this.merchantsTable && this.merchantsTable.grid) {
-			this.merchantsTable.grid.dataSet['willSelect'] = 'false';
-			this.merchantsTable.grid.dataSet.deselectAll();
-		}
 	}
 }

@@ -1,17 +1,16 @@
-export const GoalstimeFramePage = {
+export const GoalsTimeFramePage = {
 	gridButtonCss: 'div.layout-switch > button',
 	tabButtonCss: 'ul.tabset > li.tab',
 	titleInputCss: '#time-frame-title',
 	startDateInputCss: '#start-date',
 	endDateInputCss: '#end-date',
-	addTimeFrameButtonCss: 'nb-tab[tabid="timeframe"] > div.mb-3 > button[status="success"]',
-	selectTableRowCss: 'table > tbody > tr.ng2-smart-row',
-	saveTimeFrameButtonCss:
-		'nb-card-footer.text-right > button[status="success"]',
-	editButtonCss: 'nb-tab[tabid="timeframe"] > div.mb-3 > button[status="info"]',
-	deleteButtonCss: 'nb-tab[tabid="timeframe"] > div.mb-3 > button[status="danger"]',
+	addTimeFrameButtonCss: '.gauzy-button-container button[status="success"]',
+	selectTableRowCss: 'angular2-smart-table table tbody tr',
+	saveTimeFrameButtonCss: 'nb-card-footer > button[status="success"]',
+	editButtonCss: '.gauzy-button-container button.action.primary',
+	deleteButtonCss: '.gauzy-button-container button.action:has(nb-icon[status="danger"])',
 	confirmDeleteButtonCss: 'nb-card-footer > button[status="success"]',
 	verifyTimeFrameCss: 'div.ng-star-inserted',
-	verifyEmpytTableCss: 'tr.ng-star-inserted > td',
+	verifyEmptyTableCss: 'tr.ng-star-inserted > td',
 	toastrMessageCss: 'nb-toast.ng-trigger'
 };

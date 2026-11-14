@@ -1,1 +1,0 @@
-export * from './expense-category-first-or-create.command';

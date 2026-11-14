@@ -1,102 +1,110 @@
-import { Component, OnDestroy, OnInit } from '@angular/core';
-import { ActivatedRoute, Router } from '@angular/router';
+import { AfterViewInit, Component, OnDestroy, OnInit, ChangeDetectionStrategy } from '@angular/core';
+import { ActivatedRoute, Data, Router, UrlSerializer } from '@angular/router';
+import { Location } from '@angular/common';
 import { IOrganization, PermissionsEnum } from '@gauzy/contracts';
-import { filter } from 'rxjs/operators';
-import { firstValueFrom } from 'rxjs';
+import { debounceTime } from 'rxjs';
+import { filter, map, tap } from 'rxjs/operators';
 import { TranslateService } from '@ngx-translate/core';
 import { UntilDestroy, untilDestroyed } from '@ngneat/until-destroy';
-import {
-	EmployeesService,
-	OrganizationsService,
-	Store
-} from '../../../@core/services';
-import { TranslationBaseComponent } from '../../../@shared/language-base/translation-base.component';
+import { distinctUntilChange } from '@gauzy/ui-core/common';
+import { TranslationBaseComponent } from '@gauzy/ui-core/i18n';
+import { Store } from '@gauzy/ui-core/core';
 
 @UntilDestroy({ checkProperties: true })
 @Component({
-	templateUrl: './edit-organization.component.html',
-	styleUrls: [
-		'./edit-organization.component.scss',
-		'../../dashboard/dashboard.component.scss'
-	]
+    templateUrl: './edit-organization.component.html',
+    styleUrls: ['./edit-organization.component.scss', '../../dashboard/dashboard.component.scss'],
+    changeDetection: ChangeDetectionStrategy.Eager,
+    standalone: false
 })
-export class EditOrganizationComponent
-	extends TranslationBaseComponent
-	implements OnInit, OnDestroy {
-	selectedOrg: IOrganization;
-	selectedOrgFromHeader: IOrganization;
-	employeesCount: number;
-	params: any;
+export class EditOrganizationComponent extends TranslationBaseComponent implements AfterViewInit, OnInit, OnDestroy {
+	public organization: IOrganization;
+	public logoFailed = false;
+
+	get logoUrl(): string {
+		return this.organization?.image?.fullUrl || this.organization?.imageUrl;
+	}
 
 	constructor(
-		private router: Router,
-		private route: ActivatedRoute,
-		private organizationsService: OrganizationsService,
-		private employeesService: EmployeesService,
-		private store: Store,
-		readonly translateService: TranslateService
+		private readonly router: Router,
+		private readonly route: ActivatedRoute,
+		private readonly store: Store,
+		public readonly translateService: TranslateService,
+		private readonly _urlSerializer: UrlSerializer,
+		private readonly _location: Location
 	) {
 		super(translateService);
 	}
 
-	async ngOnInit() {
-		this.route.params.pipe(untilDestroyed(this)).subscribe((params) => {
-			if (params.id) {
-				firstValueFrom(
-					this.organizationsService.getById(params.id, null, ['tags'])
-				).then((organization) => {
-					this.setSelectedOrg(organization);
-				});
-			}
-		});
-
-		this.store.selectedOrganization$
+	ngOnInit(): void {
+		this.route.data
 			.pipe(
-				filter((organization) => !!organization),
+				debounceTime(100),
+				distinctUntilChange(),
+				filter((data: Data) => !!data && !!data.organization),
+				map(({ organization }) => organization),
+				tap((organization: IOrganization) => this.setOrganization(organization)),
 				untilDestroyed(this)
 			)
-			.subscribe((organization) => {
-				this.setSelectedOrg(organization);
-			});
+			.subscribe();
+		this.store.selectedOrganization$
+			.pipe(
+				distinctUntilChange(),
+				filter((organization: IOrganization) => !!organization),
+				tap((organization: IOrganization) => this.setOrganization(organization)),
+				untilDestroyed(this)
+			)
+			.subscribe();
 	}
 
-	setSelectedOrg(selectedOrg) {
-		this.store.selectedEmployee = null;
-		this.selectedOrg = selectedOrg;
-		this.store.selectedOrganization = this.selectedOrg;
-		this.store.organizationId = this.selectedOrg.id;
-		this.selectedOrgFromHeader = this.selectedOrg;
+	ngAfterViewInit(): void {
+		this.store.selectedOrganization$
+			.pipe(
+				filter((organization: IOrganization) => !!organization),
+				debounceTime(200),
+				distinctUntilChange(),
+				tap((organization: IOrganization) => {
+					this.router.navigate([
+						'/pages/organizations/edit',
+						organization.id,
+						this.route.firstChild.snapshot.routeConfig.path
+					]);
+				}),
+				untilDestroyed(this)
+			)
+			.subscribe();
 	}
 
-	canEditPublicPage() {
-		return this.store.hasPermission(PermissionsEnum.PUBLIC_PAGE_EDIT);
+	/**
+	 * Adopt an organization and give its logo a fresh chance at loading — otherwise
+	 * one broken image would leave the placeholder in place for every organization
+	 * selected afterwards.
+	 *
+	 * @param organization
+	 */
+	private setOrganization(organization: IOrganization): void {
+		this.organization = organization;
+		this.logoFailed = false;
 	}
 
-	// Converts the route into a string that can be used
-	// with the window.open() function
+	/**
+	 * Create URL tree for organization edit public page
+	 *
+	 * @returns
+	 */
 	editPublicPage() {
-		const url = this.router.serializeUrl(
-			this.router.createUrlTree([
-				`/share/organization/${this.selectedOrg.profile_link}`
-			])
-		);
-		if(window.location.hash) {
-			window.open('#' + url, '_blank');
-		} else {
-			window.open(url, '_blank');
+		if (!this.organization || !this.store.hasPermission(PermissionsEnum.PUBLIC_PAGE_EDIT)) {
+			return;
 		}
+		const { id, profile_link } = this.organization;
+
+		// The call to Location.prepareExternalUrl is the key thing here.
+		let tree = this.router.createUrlTree([`/share/organization/${profile_link}/${id}`]);
+
+		// As far as I can tell you don't really need the UrlSerializer.
+		const externalUrl = this._location.prepareExternalUrl(this._urlSerializer.serialize(tree));
+		window.open(externalUrl, '_blank');
 	}
 
-	ngOnDestroy() {}
-
-	private async loadEmployeesCount() {
-		const { tenantId } = this.store.user;
-		const { total } = await firstValueFrom(
-			this.employeesService.getAll([], {
-				organizationId: this.selectedOrg.id,
-				tenantId
-			})
-		);
-		this.employeesCount = total;
-	}
+	ngOnDestroy(): void {}
 }

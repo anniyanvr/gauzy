@@ -1,28 +1,27 @@
 import { NgModule } from '@angular/core';
+import { CommonModule } from '@angular/common';
 import { NbMenuModule, NbToastrModule, NbSpinnerModule, NbIconModule } from '@nebular/theme';
 import { FeatureToggleModule as NgxFeatureToggleModule } from 'ngx-feature-toggle';
-
-import { ThemeModule } from '../@theme/theme.module';
+import { AuthService, CommonNavModule, RoleGuard } from '@gauzy/ui-core/core';
+import { MiscellaneousModule } from '@gauzy/ui-core/shared';
+import { ThemeModule } from '@gauzy/ui-core/theme';
 import { PagesComponent } from './pages.component';
 import { PagesRoutingModule } from './pages-routing.module';
-import { MiscellaneousModule } from './miscellaneous/miscellaneous.module';
-import { AuthService } from '../@core/services/auth.service';
-import { RoleGuard } from '../@core/guards';
-import { TranslateModule } from '../@shared/translate/translate.module';
 
 @NgModule({
 	imports: [
-		PagesRoutingModule,
+		CommonModule,
 		NbMenuModule,
-		NbToastrModule.forRoot(),
+		NbToastrModule,
 		NbSpinnerModule,
 		NbIconModule,
 		NgxFeatureToggleModule,
+		PagesRoutingModule,
 		ThemeModule,
-		MiscellaneousModule,
-		TranslateModule
+		CommonNavModule,
+		MiscellaneousModule
 	],
 	declarations: [PagesComponent],
 	providers: [AuthService, RoleGuard]
 })
-export class PagesModule { }
+export class PagesModule {}

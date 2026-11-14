@@ -1,28 +1,22 @@
-import { Component } from '@angular/core';
-import { TranslationBaseComponent } from '../../../@shared/language-base/translation-base.component';
+import { Component, ChangeDetectionStrategy } from '@angular/core';
+import { TranslationBaseComponent } from '@gauzy/ui-core/i18n';
 import { OnInit } from '@angular/core';
-import {
-	IInvoice,
-	InvoiceStatusTypesEnum,
-	IInvoiceItem
-} from '@gauzy/contracts';
+import { IInvoice, InvoiceStatusTypesEnum, IInvoiceItem } from '@gauzy/contracts';
 import { TranslateService } from '@ngx-translate/core';
-import { FormGroup, FormBuilder, Validators } from '@angular/forms';
+import { UntypedFormGroup, UntypedFormBuilder, Validators } from '@angular/forms';
 import { NbDialogRef } from '@nebular/theme';
-import { InvoicesService } from '../../../@core/services/invoices.service';
-import { Store } from '../../../@core/services/store.service';
-import { InvoiceEstimateHistoryService } from '../../../@core/services/invoice-estimate-history.service';
-import { ToastrService } from '../../../@core/services/toastr.service';
+import { InvoiceEstimateHistoryService, InvoicesService, Store, ToastrService } from '@gauzy/ui-core/core';
 
 @Component({
-	selector: 'ga-invoice-email',
-	templateUrl: './invoice-email-mutation.component.html'
+    selector: 'ga-invoice-email',
+    templateUrl: './invoice-email-mutation.component.html',
+    styleUrls: ['./invoice-email-mutation.component.scss'],
+    changeDetection: ChangeDetectionStrategy.Eager,
+    standalone: false
 })
-export class InvoiceEmailMutationComponent
-	extends TranslationBaseComponent
-	implements OnInit {
+export class InvoiceEmailMutationComponent extends TranslationBaseComponent implements OnInit {
 	invoice: IInvoice;
-	form: FormGroup;
+	form: UntypedFormGroup;
 	isEstimate: boolean;
 	invoiceItems: IInvoiceItem[];
 	createdInvoice: IInvoice;
@@ -30,7 +24,7 @@ export class InvoiceEmailMutationComponent
 	constructor(
 		public readonly translateService: TranslateService,
 		protected readonly dialogRef: NbDialogRef<InvoiceEmailMutationComponent>,
-		private readonly fb: FormBuilder,
+		private readonly fb: UntypedFormBuilder,
 		private readonly toastrService: ToastrService,
 		private readonly invoiceService: InvoicesService,
 		private readonly store: Store,
@@ -64,7 +58,7 @@ export class InvoiceEmailMutationComponent
 		);
 
 		if (this.invoice.id) {
-			await this.invoiceService.update(this.invoice.id, {
+			await this.invoiceService.updateAction(this.invoice.id, {
 				status: InvoiceStatusTypesEnum.SENT
 			});
 		}
@@ -88,9 +82,7 @@ export class InvoiceEmailMutationComponent
 						name: this.form.value.email
 				  }),
 			invoice: this.createdInvoice ? this.createdInvoice : this.invoice,
-			invoiceId: this.createdInvoice
-				? this.createdInvoice.id
-				: this.invoice.id,
+			invoiceId: this.createdInvoice ? this.createdInvoice.id : this.invoice.id,
 			user: this.store.user,
 			userId: this.store.userId,
 			organization: this.invoice.fromOrganization,

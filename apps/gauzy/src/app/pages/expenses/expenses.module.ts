@@ -1,61 +1,86 @@
 import { NgModule } from '@angular/core';
-import { ThemeModule } from '../../@theme/theme.module';
 import {
-	NbCardModule,
-	NbButtonModule,
-	NbInputModule,
-	NbIconModule,
-	NbDialogModule,
-	NbSpinnerModule,
+	NbActionsModule,
 	NbBadgeModule,
-	NbActionsModule
+	NbButtonModule,
+	NbCardModule,
+	NbDialogModule,
+	NbIconModule,
+	NbInputModule,
+	NbSelectModule,
+	NbSpinnerModule,
+	NbTooltipModule
 } from '@nebular/theme';
-import { FormsModule } from '@angular/forms';
+import { InfiniteScrollDirective } from 'ngx-infinite-scroll';
+import { NgxPermissionsModule } from 'ngx-permissions';
+import { TranslatePipe } from '@ngx-translate/core';
+import { ExpenseCategoriesStoreService, OrganizationExpenseCategoriesService } from '@gauzy/ui-core/core';
+import {
+	SmartDataViewLayoutModule,
+	CardGridModule,
+	ExpensesMutationModule,
+	RecordViewModule,
+	SharedModule,
+	TableComponentsModule,
+	TagsColorInputModule,
+	UserFormsModule,
+	FavoriteToggleModule
+} from '@gauzy/ui-core/shared';
 import { ExpensesRoutingModule } from './expenses-routing.module';
 import { ExpensesComponent } from './expenses.component';
-import { Ng2SmartTableModule } from 'ng2-smart-table';
-import { ExpensesMutationModule } from '../../@shared/expenses/expenses-mutation/expenses-mutation.module';
-import { UserFormsModule } from '../../@shared/user/forms/user-forms.module';
-import { TableComponentsModule } from '../../@shared/table-components/table-components.module';
-import { CardGridModule } from '../../@shared/card-grid/card-grid.module';
-import { SharedModule } from '../../@shared/shared.module';
 import { ExpenseCategoriesComponent } from './expense-categories/expense-categories.component';
-import { ExpenseCategoriesStoreService, OrganizationExpenseCategoriesService } from '../../@core/services';
-import { TagsColorInputModule } from '../../@shared/tags/tags-color-input/tags-color-input.module';
-import { NgxPermissionsModule } from 'ngx-permissions';
-import { TranslateModule } from '../../@shared/translate/translate.module';
-import { HeaderTitleModule } from '../../@shared/components/header-title/header-title.module';
-import { PaginationModule } from '../../@shared/pagination/pagination.module';
+import { ExpenseCategoryMutationComponent } from './expense-categories/expense-category-mutation/expense-category-mutation.component';
+import { ExpenseViewPageComponent } from './expense-view/expense-view-page.component';
+import { ExpenseBarChartComponent } from './expense-view/expense-charts/expense-bar-chart.component';
+import { ExpenseShareChartComponent } from './expense-view/expense-charts/expense-share-chart.component';
+
+// Nebular Modules
+const NB_MODULES = [
+	NbActionsModule,
+	NbBadgeModule,
+	NbButtonModule,
+	NbCardModule,
+	NbDialogModule.forChild(),
+	NbIconModule,
+	NbInputModule,
+	NbSelectModule,
+	NbSpinnerModule,
+	NbTooltipModule
+];
+
+// Standalone Modules
+const STANDALONE_MODULES = [
+	InfiniteScrollDirective, // Standalone directive must be imported, not declared
+	// The expense page's charts
+	ExpenseBarChartComponent,
+	ExpenseShareChartComponent
+];
+
+// Third Party Modules
+const THIRD_PARTY_MODULES = [NgxPermissionsModule.forChild(), TranslatePipe];
 
 @NgModule({
 	imports: [
-		NbBadgeModule,
+		FavoriteToggleModule,
+		...STANDALONE_MODULES,
+		...NB_MODULES,
+		...THIRD_PARTY_MODULES,
 		ExpensesRoutingModule,
-		ThemeModule,
 		SharedModule,
-		NbCardModule,
-		FormsModule,
-		NbButtonModule,
-		NbInputModule,
-		NbIconModule,
-		Ng2SmartTableModule,
-		NbDialogModule.forChild(),
 		ExpensesMutationModule,
+		RecordViewModule,
 		UserFormsModule,
 		TableComponentsModule,
 		CardGridModule,
-		TranslateModule,
-		NbSpinnerModule,
-		NbActionsModule,
 		TagsColorInputModule,
-		NgxPermissionsModule.forChild(),
-		HeaderTitleModule,
-		PaginationModule
+		SmartDataViewLayoutModule
 	],
-	declarations: [ExpensesComponent, ExpenseCategoriesComponent],
-	providers: [
-		ExpenseCategoriesStoreService,
-		OrganizationExpenseCategoriesService
-	]
+	declarations: [
+		ExpensesComponent,
+		ExpenseCategoriesComponent,
+		ExpenseCategoryMutationComponent,
+		ExpenseViewPageComponent
+	],
+	providers: [ExpenseCategoriesStoreService, OrganizationExpenseCategoriesService]
 })
 export class ExpensesModule {}

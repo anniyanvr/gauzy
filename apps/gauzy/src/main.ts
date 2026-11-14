@@ -1,10 +1,11 @@
 import { enableProdMode } from '@angular/core';
-import { platformBrowserDynamic } from '@angular/platform-browser-dynamic';
+import { platformBrowser } from '@angular/platform-browser';
+import { akitaConfig, enableAkitaProdMode, persistState } from '@datorama/akita';
+import { environment } from '@gauzy/ui-config';
+import { loadPluginUiConfig } from '@gauzy/plugin-ui';
+import { AppBootstrapModule } from './app/bootstrap.module';
 
-import { AppModule } from './app/app.module';
-import { environment } from './environments/environment';
-import { enableAkitaProdMode, persistState } from '@datorama/akita';
-import { akitaConfig } from '@datorama/akita';
+console.log('Environment Mode:', environment.production ? 'Production' : 'Development');
 
 if (environment.production) {
 	enableProdMode();
@@ -19,6 +20,7 @@ akitaConfig({
 	resettable: true
 });
 
-platformBrowserDynamic()
-	.bootstrapModule(AppModule)
+// Load plugin configuration first, then bootstrap Angular.
+loadPluginUiConfig(() => import('./plugin-ui.config'))
+	.then(() => platformBrowser().bootstrapModule(AppBootstrapModule))
 	.catch((err) => console.error(err));

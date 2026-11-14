@@ -1,12 +1,13 @@
-import { Component, Input, OnInit, Output, EventEmitter } from '@angular/core';
-import { ViewCell } from 'ng2-smart-table';
+import { Component, Input, OnInit, Output, EventEmitter, ChangeDetectionStrategy } from '@angular/core';
 import { RequestApprovalStatusTypesEnum } from '@gauzy/contracts';
 
 @Component({
-	selector: 'ngx-equipment-sharing-action',
-	templateUrl: './equipment-sharing-action.component.html'
+    selector: 'ngx-equipment-sharing-action',
+    templateUrl: './equipment-sharing-action.component.html',
+    changeDetection: ChangeDetectionStrategy.Eager,
+    standalone: false
 })
-export class EquipmentSharingActionComponent implements ViewCell, OnInit {
+export class EquipmentSharingActionComponent implements OnInit {
 	@Input() rowData: any;
 	@Output() updateResult = new EventEmitter<any>();
 	isApproval = true;

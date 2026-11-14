@@ -1,27 +1,51 @@
-import { Component, OnInit, ChangeDetectorRef } from '@angular/core';
-import { ElectronService } from 'ngx-electron';
+import { Component, Inject, OnInit, ChangeDetectionStrategy } from '@angular/core';
+import { DomSanitizer } from '@angular/platform-browser';
+import { UntilDestroy } from '@ngneat/until-destroy';
+import { GAUZY_ENV } from '../constants';
+import { ElectronService } from '../electron/services';
+import { LanguageElectronService } from '../language/language-electron.service';
+import { NbLayoutModule, NbCardModule, NbButtonModule, NbIconModule } from '@nebular/theme';
+import { SpinnerButtonDirective } from '../directives/spinner-button.directive';
+import { TranslatePipe } from '@ngx-translate/core';
+
+@UntilDestroy({ checkProperties: true })
 @Component({
-	selector: 'ngx-screen-capture',
-	templateUrl: './splash-screen.component.html',
-	styleUrls: ['./splash-screen.component.scss']
+    selector: 'ngx-splash-screen',
+    templateUrl: './splash-screen.component.html',
+    styleUrls: ['./splash-screen.component.scss'],
+    changeDetection: ChangeDetectionStrategy.Eager,
+    imports: [NbLayoutModule, NbCardModule, NbButtonModule, SpinnerButtonDirective, NbIconModule, TranslatePipe]
 })
 export class SplashScreenComponent implements OnInit {
-	screenCaptureUrl: string;
-	note: string;
+	private _application = {
+		name: 'gauzy-dev',
+		version: 'dev',
+		iconPath: null
+	};
 
 	constructor(
-		private readonly electronService: ElectronService,
-		private _cdr: ChangeDetectorRef
+		private readonly _electronService: ElectronService,
+		private readonly _languageElectronService: LanguageElectronService,
+		@Inject(GAUZY_ENV)
+		private readonly _environment: any,
+		private readonly _domSanitizer: DomSanitizer
 	) {
-		this.electronService.ipcRenderer.on(
-			'show_popup_screen_capture',
-			(event, arg) => {
-				this.screenCaptureUrl = arg.imgUrl;
-				this.note = arg.note;
-				this._cdr.detectChanges();
-			}
-		);
+		this._application = {
+			name: _electronService.remote.app
+				.getName()
+				.split('-')
+				.join(' ')
+				.replace(/(^\w{1})|(\s+\w{1})/g, (letter) => letter.toUpperCase()),
+			version: _electronService.remote.app.getVersion(),
+			iconPath: this._domSanitizer.bypassSecurityTrustResourceUrl(this._environment.PLATFORM_LOGO)
+		};
 	}
 
-	ngOnInit(): void {}
+	ngOnInit(): void {
+		this._languageElectronService.initialize<void>();
+	}
+
+	public get application() {
+		return this._application;
+	}
 }

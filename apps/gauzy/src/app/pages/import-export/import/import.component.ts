@@ -1,27 +1,28 @@
-import { AfterViewInit, Component, OnInit } from '@angular/core';
+import { AfterViewInit, Component, OnInit, ChangeDetectorRef, ChangeDetectionStrategy } from '@angular/core';
 import { FileUploader } from 'ng2-file-upload';
 import { NbToastrService, NbGlobalPhysicalPosition } from '@nebular/theme';
 import { TranslateService } from '@ngx-translate/core';
 import { filter, tap } from 'rxjs/operators';
 import { UntilDestroy, untilDestroyed } from '@ngneat/until-destroy';
-import { ActivatedRoute } from '@angular/router';
-import { IImportHistory, ImportTypeEnum, ImportHistoryStatusEnum } from '@gauzy/contracts';
+import { ActivatedRoute, Params } from '@angular/router';
+import { IImportHistory, ImportTypeEnum, ImportStatusEnum } from '@gauzy/contracts';
 import { Subject } from 'rxjs';
-import { Observable } from 'rxjs/internal/Observable';
-import { TranslationBaseComponent } from '../../../@shared/language-base/translation-base.component';
-import { API_PREFIX } from '../../../@core/constants';
-import { ImportService, Store } from '../../../@core/services';
+import { Observable } from 'rxjs';
+import { saveAs } from 'file-saver';
+import { environment } from '@gauzy/ui-config';
+import { TranslationBaseComponent } from '@gauzy/ui-core/i18n';
+import { API_PREFIX } from '@gauzy/ui-core/common';
+import { ImportService, Store } from '@gauzy/ui-core/core';
 
 @UntilDestroy({ checkProperties: true })
 @Component({
 	selector: 'ngx-import',
 	templateUrl: './import.component.html',
-	styleUrls: ['./import.component.scss']
+	styleUrls: ['./import.component.scss'],
+	changeDetection: ChangeDetectionStrategy.Eager,
+	standalone: false
 })
-export class ImportComponent
-	extends TranslationBaseComponent
-	implements AfterViewInit, OnInit {
-
+export class ImportComponent extends TranslationBaseComponent implements AfterViewInit, OnInit {
 	history$: Observable<IImportHistory[]> = this.importService.history$;
 
 	uploader: FileUploader;
@@ -30,16 +31,17 @@ export class ImportComponent
 	importDT: Date = new Date();
 	importTypeEnum = ImportTypeEnum;
 	importType = ImportTypeEnum.MERGE;
+	importStatus = ImportStatusEnum;
 	subject$: Subject<any> = new Subject();
 	loading: boolean;
-	importHistoryStatusEnum = ImportHistoryStatusEnum;
-	
+
 	constructor(
 		private readonly route: ActivatedRoute,
 		private readonly toastrService: NbToastrService,
 		private readonly store: Store,
 		readonly translateService: TranslateService,
 		private readonly importService: ImportService,
+		private readonly cdr: ChangeDetectorRef
 	) {
 		super(translateService);
 	}
@@ -49,13 +51,11 @@ export class ImportComponent
 			.pipe(
 				filter((user) => !!user),
 				tap(() => this.initUploader()),
-				tap(() => this.uploader.clearQueue()),
 				untilDestroyed(this)
 			)
 			.subscribe();
 		this.subject$
 			.pipe(
-				tap(() => this.loading = true),
 				tap(() => this.getImportHistory()),
 				untilDestroyed(this)
 			)
@@ -65,31 +65,42 @@ export class ImportComponent
 	ngAfterViewInit() {
 		this.route.queryParamMap
 			.pipe(
-				filter((params) => !!params && !!params.get('importType')),
-				tap((params) => this.importType = params.get('importType') as ImportTypeEnum),
+				filter((params: Params) => !!params && !!params.get('importType')),
+				tap((params: Params) => (this.importType = params.get('importType') as ImportTypeEnum)),
 				tap(() => this.initUploader()),
 				untilDestroyed(this)
 			)
 			.subscribe();
 		this.subject$.next(true);
+		this.cdr.detectChanges();
 	}
 
 	initUploader() {
 		this.uploader = new FileUploader({
-			url: `${API_PREFIX}/import`,
+			url: environment.API_BASE_URL + `${API_PREFIX}/import`,
 			itemAlias: 'file',
 			authTokenHeader: 'Authorization',
 			authToken: `Bearer ${this.store.token}`,
-			headers: [{ 
-				name: "Tenant-Id", 
-				value: `${this.store.user.tenantId}` 
-			}]
+			headers: [
+				{
+					name: 'Tenant-Id',
+					value: `${this.store.user.tenantId}`
+				},
+				{
+					name: 'Organization-Id',
+					value: `${this.store.selectedOrganization.id}`
+				}
+			]
 		});
+		this.uploader.onAfterAddingFile = (file) => {
+			file.withCredentials = false;
+		};
 		this.uploader.onBuildItemForm = (item, form) => {
 			form.append('importType', this.importType);
 		};
 		this.uploader.onCompleteItem = () => {
 			this.subject$.next(true);
+			this.initUploader();
 		};
 		this.hasBaseDropZoneOver = false;
 	}
@@ -120,16 +131,43 @@ export class ImportComponent
 
 	alert() {
 		this.toastrService.danger(
-			this.getTranslation('MENU.IMPORT_EXPORT.CORRECT_FILE_NAME'), 
+			this.getTranslation('MENU.IMPORT_EXPORT.CORRECT_FILE_NAME'),
 			this.getTranslation('MENU.IMPORT_EXPORT.WRONG_FILE_NAME'),
 			{ position: NbGlobalPhysicalPosition.TOP_RIGHT }
 		);
 	}
 
 	getImportHistory() {
-		this.importService.getHistory()
+		this.loading = true;
+		this.importService
+			.getHistory()
 			.pipe(
+				tap(() => (this.loading = false)),
 				untilDestroyed(this)
-			).subscribe();
+			)
+			.subscribe();
+		this.cdr.detectChanges();
+	}
+
+	/**
+	 * Downloads the archive an import was made from, through the authenticated API.
+	 *
+	 * @param item - The import-history row whose archive to save.
+	 */
+	public download(item: IImportHistory) {
+		if (!item?.id) {
+			return;
+		}
+		this.importService
+			.downloadArchive(item.id)
+			.pipe(untilDestroyed(this))
+			.subscribe({
+				next: (blob: Blob) => saveAs(blob, item.file),
+				error: () =>
+					this.toastrService.danger(
+						this.getTranslation('TOASTR.MESSAGE.SOMETHING_BAD_HAPPENED'),
+						this.getTranslation('TOASTR.TITLE.ERROR')
+					)
+			});
 	}
 }

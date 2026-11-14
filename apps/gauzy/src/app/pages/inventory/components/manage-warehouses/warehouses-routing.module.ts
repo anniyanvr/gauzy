@@ -1,28 +1,26 @@
 import { NgModule } from '@angular/core';
 import { RouterModule, Routes } from '@angular/router';
-import { NgxPermissionsGuard } from 'ngx-permissions';
+import { PermissionsGuard } from '@gauzy/ui-core/core';
 import { PermissionsEnum } from '@gauzy/contracts';
 import { WarehousesComponent } from './warehouses.component';
 import { WarehouseFormComponent } from './warehouse-form/warehouse-form.component';
 import { WarehousesTableComponent } from './warehouses-table/warehouses-table.component';
-
-const ORG_PERMISSIONS = [
-	PermissionsEnum.ALL_ORG_VIEW,
-	PermissionsEnum.ALL_ORG_EDIT
-];
+import { WarehouseFormResolver } from './warehouse-form/warehouse-form.resolver';
 
 const routes: Routes = [
 	{
 		path: '',
 		component: WarehousesComponent,
-		canActivate: [NgxPermissionsGuard],
+		canActivate: [PermissionsGuard],
 		data: {
 			permissions: {
-				only: [
-					...ORG_PERMISSIONS,
-					PermissionsEnum.ORG_INVENTORY_VIEW
-				],
+				only: [PermissionsEnum.ORG_INVENTORY_VIEW],
 				redirectTo: '/pages/dashboard'
+			},
+			selectors: {
+				date: false,
+				employee: false,
+				project: false
 			}
 		},
 		children: [
@@ -32,19 +30,37 @@ const routes: Routes = [
 			},
 			{
 				path: 'create',
-				component: WarehouseFormComponent
+				component: WarehouseFormComponent,
+				data: {
+					selectors: {
+						organization: false,
+						date: false,
+						employee: false,
+						project: false
+					}
+				}
 			},
 			{
 				path: 'edit/:id',
-				component: WarehouseFormComponent
+				component: WarehouseFormComponent,
+				data: {
+					selectors: {
+						organization: false,
+						date: false,
+						employee: false,
+						project: false
+					}
+				},
+				resolve: {
+					warehouse: WarehouseFormResolver
+				}
 			}
 		]
 	}
 ];
 
-
 @NgModule({
 	imports: [RouterModule.forChild(routes)],
 	exports: [RouterModule]
 })
-export class WarehousesRoutingModule { }
+export class WarehousesRoutingModule {}

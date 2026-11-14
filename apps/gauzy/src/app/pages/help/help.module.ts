@@ -1,20 +1,21 @@
 import { NgModule } from '@angular/core';
-import { ThemeModule } from '../../@theme/theme.module';
-import { NbCardModule, NbButtonModule, NbInputModule } from '@nebular/theme';
-import { FormsModule } from '@angular/forms';
+import { CommonModule } from '@angular/common';
+import { NbCardModule, NbButtonModule, NbIconModule, NbInputModule } from '@nebular/theme';
+import { TranslatePipe } from '@ngx-translate/core';
+import { SharedModule } from '@gauzy/ui-core/shared';
 import { HelpComponent } from './help.component';
 import { HelpRoutingModule } from './help-routing.module';
-import { TranslateModule } from '../../@shared/translate/translate.module';
 
 @NgModule({
 	imports: [
-		HelpRoutingModule,
-		ThemeModule,
-		NbCardModule,
-		FormsModule,
+		CommonModule,
 		NbButtonModule,
+		NbCardModule,
+		NbIconModule,
 		NbInputModule,
-		TranslateModule
+		TranslatePipe,
+		HelpRoutingModule,
+		SharedModule
 	],
 	declarations: [HelpComponent]
 })

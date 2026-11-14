@@ -1,43 +1,36 @@
 import { NgModule } from '@angular/core';
-import { CommonModule } from '@angular/common';
-
+import { NbButtonModule, NbCheckboxModule, NbDialogModule, NbIconModule, NbSpinnerModule } from '@nebular/theme';
+import { TranslatePipe } from '@ngx-translate/core';
+import { MomentModule } from 'ngx-moment';
+import {
+	DailyStatisticsModule,
+	GalleryModule,
+	GauzyFiltersModule,
+	NoDataMessageModule,
+	ScreenshotsItemModule,
+	SharedModule,
+	ViewTimeLogModalModule
+} from '@gauzy/ui-core/shared';
 import { ScreenshotRoutingModule } from './screenshot-routing.module';
 import { ScreenshotComponent } from './screenshot/screenshot.component';
-import { SharedModule } from 'apps/gauzy/src/app/@shared/shared.module';
-import { FiltersModule } from 'apps/gauzy/src/app/@shared/timesheet/filters/filters.module';
-import {
-	NbSpinnerModule,
-	NbButtonModule,
-	NbDialogModule,
-	NbIconModule,
-	NbCheckboxModule
-} from '@nebular/theme';
-import { MomentModule } from 'ngx-moment';
-import { TranslateModule } from '@ngx-translate/core';
-import { ViewTimeLogModalModule } from 'apps/gauzy/src/app/@shared/timesheet/view-time-log-modal/view-time-log-modal.module';
-import { ReactiveFormsModule, FormsModule } from '@angular/forms';
-import { ScreenshotsItemModule } from 'apps/gauzy/src/app/@shared/timesheet/screenshots/screenshots-item/screenshots-item.module';
-import { GalleryModule } from 'apps/gauzy/src/app/@shared/gallery/gallery.module';
+
+// Nebular Modules
+const NB_MODULES = [NbButtonModule, NbCheckboxModule, NbDialogModule.forChild(), NbIconModule, NbSpinnerModule];
 
 @NgModule({
 	declarations: [ScreenshotComponent],
 	imports: [
-		CommonModule,
-		ScreenshotRoutingModule,
-		SharedModule,
-		FiltersModule,
-		NbSpinnerModule,
+		...NB_MODULES,
 		MomentModule,
-		TranslateModule,
-		NbButtonModule,
-		NbDialogModule.forChild(),
-		ViewTimeLogModalModule,
-		NbIconModule,
-		NbCheckboxModule,
-		FormsModule,
-		ReactiveFormsModule,
+		TranslatePipe,
+		ScreenshotRoutingModule,
+		DailyStatisticsModule,
+		GalleryModule,
+		GauzyFiltersModule,
+		NoDataMessageModule,
 		ScreenshotsItemModule,
-		GalleryModule
+		SharedModule,
+		ViewTimeLogModalModule
 	]
 })
 export class ScreenshotModule {}

@@ -4,7 +4,7 @@
 	nbSpinnerStatus="primary"
 	nbSpinnerSize="large"
 >
-	<nb-card-header class="d-flex">
+	<nb-card-header class="d-flex align-items-start">
 		<ngx-back-navigation></ngx-back-navigation>
 		<h4>
 			{{ 'INVOICES_PAGE.PAYMENTS.HEADER' | translate }}
@@ -14,129 +14,230 @@
 	<nb-card-body class="body">
 		<div class="info-container">
 			<div class="date-and-value">
-				<div>
-					{{ 'INVOICES_PAGE.DUE_DATE' | translate }}:
-					{{ invoice ? (invoice.dueDate | dateFormat) : '' }}
-				</div>
-				<div>
-					{{ 'INVOICES_PAGE.PAYMENTS.TOTAL_VALUE' | translate }}:
-					{{ invoice ? invoice.currency + ' ' + invoice.totalValue : '' }}
-				</div>
-				<div>
-					{{ 'INVOICES_PAGE.PAYMENTS.LEFT_TO_PAY' | translate }}:
-					{{ invoice ? invoice.currency + ' ' + leftToPay: '' }}
+				<div class="block w-100">
+					<div class="row">
+						<div class="col-6 first-column">
+							<div>
+								{{ 'INVOICES_PAGE.DUE_DATE' | translate }}
+							</div>
+							<div>:</div>
+						</div>
+						<!-- `dueDate` is optional and `dateFormat` yields undefined for an
+						     unset one, so this label used to stand over a blank cell. -->
+						<div class="col-6 pr-0 pl-0">
+							{{ invoice ? (invoice.dueDate | dateFormat) || '—' : '—' }}
+						</div>
+					</div>
+					<div class="row">
+						<div class="col-6 first-column">
+							<div>
+								{{
+									'INVOICES_PAGE.PAYMENTS.TOTAL_VALUE'
+										| translate
+								}}
+							</div>
+							<div>:</div>
+						</div>
+						<div class="col-6 pr-0 pl-0">
+							{{
+								invoice?.totalValue || 0
+									| currency: $safeNavigationMigration(invoice?.currency)
+									| position: $safeNavigationMigration(organization?.currencyPosition)
+							}}
+						</div>
+					</div>
+					<div class="row">
+						<div class="col-6 first-column">
+							<div>
+								{{
+									'INVOICES_PAGE.PAYMENTS.LEFT_TO_PAY'
+										| translate
+								}}
+							</div>
+							<div>:</div>
+						</div>
+						<div class="col-6 pr-0 pl-0">
+							{{
+								leftToPay || 0
+									| currency: $safeNavigationMigration(invoice?.currency)
+									| position: $safeNavigationMigration(organization?.currencyPosition)
+							}}
+						</div>
+					</div>
+					<div class="row">
+						<div class="col-6 first-column">
+							<div>
+								{{
+									'INVOICES_PAGE.PAYMENTS.RECEIVED_FROM'
+										| translate
+								}}
+							</div>
+							<div>:</div>
+						</div>
+						<div class="col-6 pr-0 pl-0">
+							{{ invoice?.toContact?.name || '—' }}
+						</div>
+					</div>
+					<div class="row">
+						<div class="col-6 first-column">
+							<div>
+								{{
+									'INVOICES_PAGE.PAYMENTS.RECEIVER'
+										| translate
+								}}
+							</div>
+							<div>:</div>
+						</div>
+						<div class="col-6 pr-0 pl-0">
+							{{ invoice?.fromOrganization?.name || '—' }}
+						</div>
+					</div>
 				</div>
 			</div>
 			<div class="total-paid-label">
 				{{ 'INVOICES_PAGE.PAYMENTS.TOTAL_PAID' | translate }}:
-				{{ invoice ? invoice.currency : '' }}
-				{{ totalPaid ? totalPaid : 0 }}
+				{{
+					totalPaid || 0
+						| currency: $safeNavigationMigration(invoice?.currency)
+						| position: $safeNavigationMigration(organization?.currencyPosition)
+				}}
 				<span>
+					<!-- The "n% Paid" caption sits BESIDE the meter, not on top of it.
+					     Painted over the bar it was a hard-coded white, which is
+					     unreadable against the track's pale grey — i.e. for every
+					     invoice that is not already mostly paid. -->
 					<div class="progress-bar-container">
 						<div class="progress-bar">
-							<div class="paid-percent">
-								{{ barWidth }}%
-								{{ 'INVOICES_PAGE.PAYMENTS.PAID' | translate }}
-							</div>
 							<span
 								id="progress-bar-inner"
 								class="progress-bar-inner"
 								style="width: 0%"
 							></span>
 						</div>
+						<div class="paid-percent">
+							{{ barWidth }}%
+							{{ 'INVOICES_PAGE.PAYMENTS.PAID' | translate }}
+						</div>
 					</div>
 				</span>
 			</div>
 		</div>
-		<div class="mb-3 buttons">
+		<div class="custom-container">
+			<div class="gauzy-button-container">
+				<ngx-gauzy-button-action
+					[isDisable]="disableButton"
+					[buttonTemplate]="actionButtons"
+					[buttonTemplateVisible]="visibleButton"
+					[hasLayoutSelector]="false"
+				></ngx-gauzy-button-action>
+			</div>
+			<div class="table-scroll-container">
+				<angular2-smart-table
+					[class.ga-table-loading]="loading"
+					style="cursor: pointer"
+					[settings]="settingsSmartTable"
+					[source]="smartTableSource"
+					(userRowSelect)="selectPayment($event)"
+				></angular2-smart-table>
+			</div>
+		</div>
+	</nb-card-body>
+</nb-card>
+
+<ng-template #actionButtons>
+	<div class="btn-group actions">
+		<ng-template ngxPermissionsOnly="ORG_PAYMENT_ADD_EDIT">
 			<button
-				class="mr-2"
-				status="success"
-				(click)="recordPayment()"
 				nbButton
-				nbTooltip="Add"
-			>
-				<nb-icon icon="plus-outline"></nb-icon>
-			</button>
-			<button
-				class="mr-2"
-				status="info"
-				(click)="editPayment()"
-				[disabled]="disableButton"
-				nbButton
-				nbTooltip="Edit"
-			>
-				<nb-icon icon="edit-outline"></nb-icon>
-			</button>
-			<button
-				nbButton
-				status="info"
-				(click)="download()"
-				class="mr-2"
-				[disabled]="!payments?.length"
-				nbTooltip="Download"
-			>
-				<nb-icon icon="download-outline"></nb-icon>
-			</button>
-			<button
-				class="mr-2"
-				status="danger"
-				(click)="deletePayment()"
-				[disabled]="disableButton"
-				nbButton
-				nbTooltip="Delete"
-			>
-				<nb-icon icon="trash-2-outline"></nb-icon>
-			</button>
-			<button
-				class="mr-2"
-				nbButton
-				status="info"
-				[disabled]="disableButton"
+				size="small"
+				status="basic"
+				class="action info-text-1"
 				(click)="sendReceipt()"
 			>
 				<nb-icon icon="email-outline"></nb-icon>
 				{{ 'BUTTONS.SEND_RECEIPT' | translate }}
 			</button>
 			<button
-				class="mr-2"
+				size="small"
+				status="basic"
+				class="action primary"
+				(click)="editPayment()"
+				[disabled]="disableButton"
 				nbButton
-				status="info"
-				(click)="exportToCsv()"
-				[disabled]="payments ? payments.length <= 0 : true"
 			>
-				<nb-icon icon="file-text-outline"></nb-icon>
-				{{ 'BUTTONS.EXPORT_TO_CSV' | translate }}
+				<nb-icon icon="edit-outline"></nb-icon>
+				{{ 'BUTTONS.EDIT' | translate }}
 			</button>
 			<button
-				class="mr-2"
-				status="info"
-				(click)="recordFullPayment()"
-				[disabled]="isDisabled"
+				size="small"
+				status="basic"
+				class="action"
+				(click)="deletePayment()"
+				[disabled]="disableButton"
 				nbButton
+				[nbTooltip]="'BUTTONS.DELETE' | translate"
 			>
-				<nb-icon icon="credit-card-outline"></nb-icon>
-				{{ 'BUTTONS.RECORD_FULL_PAYMENT' | translate }}
+				<nb-icon status="danger" icon="trash-2-outline"></nb-icon>
 			</button>
-			<button
-				class="mr-2"
-				status="info"
-				(click)="invoiceRemainingAmount()"
-				[disabled]="isDisabled"
-				nbButton
-			>
-				<nb-icon icon="file-text-outline"></nb-icon>
-				{{ 'BUTTONS.INVOICE_REMAINING_AMOUNT' | translate }}
-			</button>
-		</div>
-		<ng2-smart-table
-			class="tags-table"
-			[settings]="settingsSmartTable"
-			[source]="smartTableSource"
-			(userRowSelect)="selectPayment($event)"
-			style="cursor: pointer"
-			#paymentsTable
+		</ng-template>
+	</div>
+</ng-template>
+<ng-template #visibleButton>
+	<ng-template ngxPermissionsOnly="ORG_PAYMENT_ADD_EDIT">
+		<button
+			status="success"
+			size="small"
+			(click)="recordPayment()"
+			nbButton
 		>
-		</ng2-smart-table>
-	</nb-card-body>
-</nb-card>
+			<nb-icon icon="plus-outline"></nb-icon>
+			{{ 'BUTTONS.ADD' | translate }}
+		</button>
+		<button
+			nbButton
+			size="small"
+			status="basic"
+			class="action info-text-1"
+			(click)="exportToCsv()"
+			[disabled]="payments ? payments.length <= 0 : true"
+		>
+			<nb-icon icon="file-text-outline"></nb-icon>
+			{{ 'BUTTONS.EXPORT_TO_CSV' | translate }}
+		</button>
+		<button
+			nbButton
+			size="small"
+			status="basic"
+			class="action primary"
+			(click)="download()"
+			[disabled]="!payments?.length"
+		>
+			<nb-icon icon="download-outline"></nb-icon>
+			{{ 'BUTTONS.DOWNLOAD' | translate }}
+		</button>
+		<button
+			status="basic"
+			class="action secondary"
+			size="small"
+			debounceClick
+			(throttledClick)="recordFullPayment()"
+			[debounceTime]="500"
+			[disabled]="isDisabled"
+			nbButton
+		>
+			<nb-icon icon="credit-card-outline"></nb-icon>
+			{{ 'BUTTONS.RECORD_FULL_PAYMENT' | translate }}
+		</button>
+		<button
+			status="basic"
+			class="action secondary"
+			size="small"
+			(click)="invoiceRemainingAmount()"
+			[disabled]="isDisabled"
+			nbButton
+		>
+			<nb-icon icon="file-text-outline"></nb-icon>
+			{{ 'BUTTONS.INVOICE_REMAINING_AMOUNT' | translate }}
+		</button>
+	</ng-template>
+</ng-template>

@@ -1,57 +1,48 @@
-import { Component, Input, OnDestroy } from '@angular/core';
+import { Component, Input, OnDestroy, ChangeDetectionStrategy } from '@angular/core';
 import { NbThemeService } from '@nebular/theme';
-import { Subject } from 'rxjs';
-import { takeUntil } from 'rxjs/operators';
-import {
-	ICandidate,
-	ICandidateInterview,
-	IEmployee,
-	ICandidateFeedback
-} from '@gauzy/contracts';
-import { CandidateFeedbacksService } from '../../../../../@core/services/candidate-feedbacks.service';
+import { UntilDestroy, untilDestroyed } from '@ngneat/until-destroy';
+import { ICandidate, ICandidateInterview, IEmployee, ICandidateFeedback } from '@gauzy/contracts';
+import { CandidateFeedbacksService } from '@gauzy/ui-core/core';
 
+@UntilDestroy({ checkProperties: true })
 @Component({
-	selector: 'ga-criterions-rating-chart',
-	templateUrl: './criterions-rating-chart.component.html',
-	styleUrls: ['./criterions-rating-chart.component.scss']
+    selector: 'ga-criterions-rating-chart',
+    templateUrl: './criterions-rating-chart.component.html',
+    styleUrls: ['./criterions-rating-chart.component.scss'],
+    changeDetection: ChangeDetectionStrategy.Eager,
+    standalone: false
 })
 export class CriterionsRatingChartComponent implements OnDestroy {
 	labels: string[] = [];
 	rating: number[] = [];
-	interviews = [];
 	currentEmployee: IEmployee[] = [];
 	disabledIds = [];
 	feedbacks: ICandidateFeedback[];
-	@Input() candidates: ICandidate[];
-	@Input() interviewList: ICandidateInterview[];
-	@Input() employeeList: IEmployee[];
+	@Input() candidates: ICandidate[] = [];
+	@Input() interviews: ICandidateInterview[] = [];
+	@Input() employees: IEmployee[] = [];
 	data: any;
 	options: any;
 	currentInterview: ICandidateInterview;
 	backgroundColor: string[] = [];
 	isResetSelect: boolean;
-	private _ngDestroy$ = new Subject<void>();
 
 	constructor(
-		private themeService: NbThemeService,
-		private candidateFeedbacksService: CandidateFeedbacksService
+		private readonly themeService: NbThemeService,
+		private readonly candidateFeedbacksService: CandidateFeedbacksService
 	) {}
 
 	async onMembersSelected(id: string) {
+		alert(id);
 		this.isResetSelect = false;
 		const ratings = [];
-		const res = await this.candidateFeedbacksService.getAll(
-			['interviewer', 'criterionsRating'],
-			{
-				candidateId: this.currentInterview.candidateId
-			}
-		);
+		const res = await this.candidateFeedbacksService.getAll(['interviewer', 'criterionsRating'], {
+			candidateId: this.currentInterview.candidateId
+		});
 
 		if (res) {
 			this.feedbacks = res.items.filter(
-				(item) =>
-					item.interviewId &&
-					item.interviewId === this.currentInterview.id
+				(item) => item.interviewId && item.interviewId === this.currentInterview.id
 			);
 			this.feedbacks.forEach((feedback) => {
 				if (id === 'all') {
@@ -80,18 +71,14 @@ export class CriterionsRatingChartComponent implements OnDestroy {
 			this.currentInterview.technologies.forEach((techItem) => {
 				if (techItem.id === crItem.technologyId) {
 					techItem.rating = crItem.rating;
-					rating
-						? rating.push(techItem.rating)
-						: this.rating.push(techItem.rating);
+					rating ? rating.push(techItem.rating) : this.rating.push(techItem.rating);
 					this.labels.push(techItem.name);
 				}
 			});
 			this.currentInterview.personalQualities.forEach((qualItem) => {
 				if (qualItem.id === crItem.personalQualityId) {
 					qualItem.rating = crItem.rating;
-					rating
-						? rating.push(qualItem.rating)
-						: this.rating.push(qualItem.rating);
+					rating ? rating.push(qualItem.rating) : this.rating.push(qualItem.rating);
 					this.labels.push(qualItem.name);
 				}
 			});
@@ -102,9 +89,7 @@ export class CriterionsRatingChartComponent implements OnDestroy {
 		const sumArr = [];
 		ratings.forEach((x: number[]) => (sumArr.length = x.length));
 		sumArr.fill(0);
-		ratings.forEach((x: number[]) =>
-			x.forEach((item, index) => (sumArr[index] += item))
-		);
+		ratings.forEach((x: number[]) => x.forEach((item, index) => (sumArr[index] += item)));
 		const result = [];
 		sumArr.forEach((x) => result.push((x / ratings.length).toFixed(2)));
 		return result;
@@ -113,25 +98,18 @@ export class CriterionsRatingChartComponent implements OnDestroy {
 	async onInterviewSelected(interview: ICandidateInterview) {
 		this.rating = [];
 		this.labels = [];
-		this.interviewList.forEach((interviewItem) =>
-			interviewItem.id === interview.id
-				? (this.currentInterview = interviewItem)
-				: null
+		this.interviews.forEach((interviewItem) =>
+			interviewItem.id === interview.id ? (this.currentInterview = interviewItem) : null
 		);
 		this.isResetSelect = true;
 		this.currentEmployee = [];
 		const allIds = [];
 		const allFbIds = [];
-		const res = await this.candidateFeedbacksService.getAll(
-			['interviewer', 'criterionsRating'],
-			{
-				candidateId: interview.candidateId
-			}
-		);
+		const res = await this.candidateFeedbacksService.getAll(['interviewer', 'criterionsRating'], {
+			candidateId: interview.candidateId
+		});
 		if (res) {
-			const feedbacks = res.items.filter(
-				(item) => item.interviewId && item.interviewId === interview.id
-			);
+			const feedbacks = res.items.filter((item) => item.interviewId && item.interviewId === interview.id);
 			if (feedbacks.length > 0) {
 				feedbacks.forEach((feedback) => {
 					if (feedback.interviewer) {
@@ -143,12 +121,11 @@ export class CriterionsRatingChartComponent implements OnDestroy {
 			if (this.currentInterview) {
 				for (const interviewer of this.currentInterview.interviewers) {
 					allIds.push(interviewer.employeeId);
-					if (this.employeeList) {
-						this.employeeList.forEach((item) => {
+					if (this.employees) {
+						this.employees.forEach((item) => {
 							if (interviewer.employeeId === item.id) {
 								interviewer.employeeName = item.user.name;
-								interviewer.employeeImageUrl =
-									item.user.imageUrl;
+								interviewer.employeeImageUrl = item.user.imageUrl;
 								this.currentEmployee.push(item);
 							}
 						});
@@ -162,7 +139,7 @@ export class CriterionsRatingChartComponent implements OnDestroy {
 	private loadChart() {
 		this.themeService
 			.getJsTheme()
-			.pipe(takeUntil(this._ngDestroy$))
+			.pipe(untilDestroyed(this))
 			.subscribe(() => {
 				this.data = {
 					labels: this.labels,
@@ -175,7 +152,6 @@ export class CriterionsRatingChartComponent implements OnDestroy {
 						}
 					]
 				};
-
 				this.options = {
 					responsive: true,
 					maintainAspectRatio: false,
@@ -196,17 +172,13 @@ export class CriterionsRatingChartComponent implements OnDestroy {
 				};
 			});
 	}
+
 	loadColor(feedback: ICandidateFeedback) {
 		for (let i = 0; i < feedback.criterionsRating.length; i++) {
-			const color =
-				i % 2 === 0
-					? 'rgba(255, 206, 86, 0.2)'
-					: 'rgba(255, 99, 132, 0.2)';
+			const color = i % 2 === 0 ? 'rgba(255, 206, 86, 0.2)' : 'rgba(255, 99, 132, 0.2)';
 			this.backgroundColor.push(color);
 		}
 	}
-	ngOnDestroy() {
-		this._ngDestroy$.next();
-		this._ngDestroy$.complete();
-	}
+
+	ngOnDestroy() {}
 }

@@ -7,54 +7,54 @@ import {
 	NbDialogModule,
 	NbIconModule,
 	NbInputModule,
+	NbListModule,
+	NbRadioModule,
 	NbRouteTabsetModule,
 	NbSelectModule,
-	NbTooltipModule,
-	NbRadioModule,
 	NbSpinnerModule,
-	NbListModule
+	NbTooltipModule
 } from '@nebular/theme';
-import { TagsComponent } from './tags.component';
-import { ThemeModule } from '../../@theme/theme.module';
-import { FormsModule, ReactiveFormsModule } from '@angular/forms';
-import { UserFormsModule } from '../../@shared/user/forms/user-forms.module';
-import { Ng2SmartTableModule } from 'ng2-smart-table';
+import { ColorPickerComponent, ColorPickerDirective } from 'ngx-color-picker';
 import { NgSelectModule } from '@ng-select/ng-select';
+import { NgxPermissionsModule } from 'ngx-permissions';
+import { TranslatePipe } from '@ngx-translate/core';
+import {
+	SmartDataViewLayoutModule,
+	CardGridModule,
+	SharedModule,
+	TagsMutationModule,
+	UserFormsModule
+} from '@gauzy/ui-core/shared';
+import { TagsComponent } from './tags.component';
 import { TagsRoutingModule } from './tags-routing.module';
-import { TagsMutationModule } from '../../@shared/tags/tags-mutation.module';
-import { ColorPickerModule } from 'ngx-color-picker';
 import { TagsColorComponent } from './tags-color/tags-color.component';
-import { CardGridModule } from '../../@shared/card-grid/card-grid.module';
-import { TranslateModule } from '../../@shared/translate/translate.module';
-import { HeaderTitleModule } from '../../@shared/components/header-title/header-title.module';
 
 @NgModule({
 	imports: [
-		NbListModule,
-		TagsRoutingModule,
-		ThemeModule,
-		UserFormsModule,
-		NbCardModule,
-		FormsModule,
-		ReactiveFormsModule,
+		NbBadgeModule,
 		NbButtonModule,
-		NbInputModule,
-		NbIconModule,
-		Ng2SmartTableModule,
+		NbCardModule,
+		NbCheckboxModule,
 		NbDialogModule.forChild(),
+		NbIconModule,
+		NbInputModule,
+		NbListModule,
+		NbRadioModule,
+		NbRouteTabsetModule,
+		NbSelectModule,
+		NbSpinnerModule,
 		NbTooltipModule,
 		NgSelectModule,
-		NbRadioModule,
-		NbSelectModule,
-		NbBadgeModule,
-		NbRouteTabsetModule,
-		NbCheckboxModule,
+		TranslatePipe,
+		NgxPermissionsModule.forChild(),
+		ColorPickerComponent,
+		ColorPickerDirective,
+		TagsRoutingModule,
+		SharedModule,
+		UserFormsModule,
 		TagsMutationModule,
-		ColorPickerModule,
 		CardGridModule,
-		TranslateModule,
-		NbSpinnerModule,
-		HeaderTitleModule
+		SmartDataViewLayoutModule
 	],
 	declarations: [TagsComponent, TagsColorComponent]
 })

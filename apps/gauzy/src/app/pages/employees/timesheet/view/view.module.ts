@@ -1,28 +1,39 @@
-// tslint:disable: nx-enforce-module-boundaries
 import { NgModule } from '@angular/core';
-import { CommonModule } from '@angular/common';
-import { NbCardModule, NbButtonModule, NbIconModule } from '@nebular/theme';
-import { MomentModule } from 'ngx-moment';
-import { ViewRoutingModule } from './view-routing.module';
-import { ViewComponent } from './view/view.component';
-import { EditTimeLogModalModule } from './../../../../@shared/timesheet';
-import { DialogsModule } from './../../../../@shared/dialogs';
-import { SharedModule } from './../../../../@shared/shared.module';
-import { TranslateModule } from './../../../../@shared/translate/translate.module';
+import { ROUTES } from '@angular/router';
+import { NbCardModule, NbButtonModule, NbIconModule, NbSpinnerModule, NbTooltipModule } from '@nebular/theme';
+import { TranslatePipe } from '@ngx-translate/core';
+import { PageRouteRegistryService } from '@gauzy/ui-core/core';
+import {
+	DialogsModule,
+	EditTimeLogModalModule,
+	GauzyButtonActionModule,
+	NoDataMessageModule,
+	SharedModule
+} from '@gauzy/ui-core/shared';
+import { createTimesheetDetailsRoutes } from './view.routes';
+import { TimesheetViewComponent } from './view/view.component';
+
+// Nebular Modules
+const NB_MODULES = [NbButtonModule, NbCardModule, NbIconModule, NbSpinnerModule, NbTooltipModule];
 
 @NgModule({
-	declarations: [ViewComponent],
+	declarations: [TimesheetViewComponent],
 	imports: [
-		CommonModule,
-		ViewRoutingModule,
-		NbCardModule,
-		NbButtonModule,
-		NbIconModule,
-		TranslateModule,
+		...NB_MODULES,
+		TranslatePipe,
 		SharedModule,
-		MomentModule,
 		DialogsModule,
-		EditTimeLogModalModule
+		EditTimeLogModalModule,
+		GauzyButtonActionModule,
+		NoDataMessageModule
+	],
+	providers: [
+		{
+			provide: ROUTES,
+			useFactory: (service: PageRouteRegistryService) => createTimesheetDetailsRoutes(service),
+			deps: [PageRouteRegistryService],
+			multi: true
+		}
 	]
 })
 export class ViewModule {}

@@ -1,26 +1,34 @@
-import { NgModule } from '@angular/core';
 import { CommonModule } from '@angular/common';
-import { ImageViewerComponent } from './image-viewer.component';
+import { NgModule } from '@angular/core';
 import {
-	NbLayoutModule,
+	NbButtonModule,
 	NbCardModule,
-	NbIconModule,
 	NbDialogModule,
 	NbDialogService,
-	NbButtonModule
+	NbIconModule,
+	NbLayoutModule,
+	NbSpinnerModule
 } from '@nebular/theme';
+import { TablerIconsModule } from '@gauzy/ui-core/icons';
+import { ImageCacheService, StorageService, Store } from '../services';
+import { PipeModule } from '../time-tracker/pipes/pipe.module';
+import { ImageViewerComponent } from './image-viewer.component';
+import { ImageViewerService } from './image-viewer.service';
 
 @NgModule({
-	declarations: [ImageViewerComponent],
 	imports: [
 		CommonModule,
 		NbLayoutModule,
 		NbCardModule,
 		NbIconModule,
+		TablerIconsModule,
 		NbDialogModule,
-		NbButtonModule
+		NbButtonModule,
+		NbSpinnerModule,
+		PipeModule,
+		ImageViewerComponent
 	],
 	exports: [ImageViewerComponent],
-	providers: [NbDialogService]
+	providers: [NbDialogService, ImageViewerService, ImageCacheService, StorageService, Store]
 })
 export class ImageViewerModule {}

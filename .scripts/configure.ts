@@ -2,26 +2,49 @@
 // We are using dotenv (.env) for consistency with other Platform projects
 // This is Angular app and all settings will be loaded into the client browser!
 
+import { existsSync, mkdirSync, unlinkSync, writeFile } from 'fs';
+import * as path from 'path';
+import * as yargs from 'yargs';
+import { hideBin } from 'yargs/helpers';
 import { env } from './env';
-import { writeFile, unlinkSync } from 'fs';
-import { argv } from 'yargs';
+
+// yargs 18 has no `argv` singleton: the process arguments are parsed explicitly.
+const argv = yargs(hideBin(process.argv)).parseSync();
 
 const environment = argv.environment;
 const isProd = environment === 'prod';
 
-let envFileContent;
+// Version + commit are interpolated into single-quoted TS string literals below.
+// They only ever come from `git tag` / `git describe` / a commit SHA, but strip
+// anything outside the safe charset defensively so a malformed value can never
+// break out of the quotes and corrupt the generated environment file.
+const safeAppVersion = (env.GAUZY_APP_VERSION || '').replace(/[^\w.\-/]/g, '');
+const safeAppCommit = (env.GAUZY_APP_COMMIT || '').replace(/[^\w.\-/]/g, '');
 
-if (!env.GOOGLE_MAPS_API_KEY) {
-	console.warn(
-		'WARNING: No Google Maps API Key defined in the .env file. Google Maps may not be working!'
-	);
-}
+/**
+ * The seeded-account passwords as shipped in `.scripts/env.ts` — published in this repository and
+ * therefore not secrets.
+ */
+const PUBLISHED_SEED_PASSWORDS: ReadonlyArray<string> = ['admin', '12345678'];
 
-if (!env.CLOUDINARY_CLOUD_NAME || !env.CLOUDINARY_API_KEY) {
-	console.warn('WARNING: No Cloudinary API keys defined in the .env file.');
-}
+/**
+ * Decides whether a seeded-account password may be written into the PUBLIC web bundle.
+ *
+ * The only reader is the demo login prefill (login.component.ts guards on `environment.DEMO`). An
+ * operator who points one `.env` at both the API and the web build must not ship the real Super Admin
+ * password in JavaScript (GHSA-4r2r-mv32-3468). A demo build may carry whatever it was given. Any
+ * other build carries the value only when it is one of the published defaults, which covers the
+ * Docker image: its `DEMO` flag is substituted at container START (`DOCKER_DEMO`), so a build-time
+ * `DEMO` gate alone would blank the prefill of a demo container built from a non-demo image — while
+ * the image CI publishes is built without these variables and so only ever holds the defaults.
+ *
+ * @param password - The configured password.
+ * @returns The password to embed, or an empty string.
+ */
+const publicSeedPassword = (password: string | undefined): string =>
+	env.DEMO || PUBLISHED_SEED_PASSWORDS.includes(String(password ?? '')) ? String(password ?? '') : '';
 
-envFileContent = `// NOTE: Auto-generated file
+let envFileContent = `// NOTE: Auto-generated file
 // The file contents for the current environment will overwrite these during build.
 // The build system defaults to the dev environment which uses 'environment.ts', but if you do
 // 'ng build --env=prod' then 'environment.prod.ts' will be used instead.
@@ -29,11 +52,28 @@ envFileContent = `// NOTE: Auto-generated file
 declare const window:any;
 
 import { Environment } from './model';
-import { CloudinaryConfiguration } from '@cloudinary/angular-5.x';
 
 `;
 
-if (!env.IS_DOCKER) {
+let isDocker = env.IS_DOCKER;
+
+console.log('Is Running in Docker: ', isDocker);
+
+if (!isDocker) {
+	if (!env.GOOGLE_MAPS_API_KEY) {
+		console.warn('WARNING: No Google Maps API Key defined in the .env file. Google Maps may not be working!');
+	}
+
+	if (!env.SENTRY_DSN) {
+		console.warn('WARNING: No Sentry DSN defined in the .env file. Sentry logging may not be working!');
+	}
+
+	if (!env.JITSU_BROWSER_URL || !env.JITSU_BROWSER_WRITE_KEY) {
+		console.warn(
+			'WARNING: No Jitsu keys defined for browser in the .env file. Jitsu analytics may not be working!'
+		);
+	}
+
 	envFileContent += `
 
 	let API_BASE_URL = '${env.API_BASE_URL}';
@@ -46,11 +86,20 @@ if (!env.IS_DOCKER) {
 	const userAgent = navigator.userAgent.toLowerCase();
 	if (userAgent.indexOf(' electron/') > -1) {
 		try {
-			const remote = window.require('@electron/remote');
-			const variableGlobal = remote.getGlobal('variableGlobal');
+			let variableGlobal: {
+				API_BASE_URL: string;
+				IS_INTEGRATED_DESKTOP: boolean;
+			} | any;
+
+			if (window.electronAPI && window.electronAPI.getGlobal) {
+				variableGlobal = window.electronAPI.getGlobal();
+			} else {
+				const remote = window.require('@electron/remote');
+				variableGlobal = remote.getGlobal('variableGlobal');
+			}
 			API_BASE_URL = variableGlobal.API_BASE_URL;
 			IS_ELECTRON = true;
-			IS_INTEGRATED_DESKTOP = variableGlobal.IS_INTEGRATED_DESKTOP
+			IS_INTEGRATED_DESKTOP = variableGlobal.IS_INTEGRATED_DESKTOP;
 		} catch(e) {
 			console.log(e);
 		}
@@ -60,31 +109,40 @@ if (!env.IS_DOCKER) {
 		if (window._env && window._env.api) {
 			API_BASE_URL= window._env.api;
 		}
-	
+
 		if (window._env && window._env.api) {
 			CLIENT_BASE_URL = window.location.origin;
 		}
 	} catch(e) {}
 
-	export const environment: Environment = 
+	export const environment: Environment =
 	{
 		production:  ${isProd},
 
+		version: '${safeAppVersion}',
+		commit: '${safeAppCommit}',
+
 		API_BASE_URL: API_BASE_URL,
 		CLIENT_BASE_URL: CLIENT_BASE_URL,
+		COOKIE_DOMAIN: '${env.COOKIE_DOMAIN}',
 
-		COMPANY_NAME: 'Ever Co. LTD',
-		COMPANY_SITE: 'Gauzy',
-		COMPANY_LINK: 'https://ever.co/',
-		COMPANY_SITE_LINK: 'https://gauzy.co',
-		COMPANY_GITHUB_LINK: 'https://github.com/ever-co',
-		COMPANY_GITLAB_LINK: 'https://gitlab.com/ever-co',
-		COMPANY_FACEBOOK_LINK: 'https://www.facebook.com/gauzyplatform',
-		COMPANY_TWITTER_LINK: 'https://twitter.com/gauzyplatform',
-		COMPANY_LINKEDIN_LINK: 'https://www.linkedin.com/company/ever-co.',
+		PLATFORM_WEBSITE_URL: '${env.PLATFORM_WEBSITE_URL}',
+		PLATFORM_WEBSITE_DOWNLOAD_URL: '${env.PLATFORM_WEBSITE_DOWNLOAD_URL}',
+		DESKTOP_APP_DOWNLOAD_LINK_APPLE: '${env.DESKTOP_APP_DOWNLOAD_LINK_APPLE}',
+		DESKTOP_APP_DOWNLOAD_LINK_WINDOWS: '${env.DESKTOP_APP_DOWNLOAD_LINK_WINDOWS}',
+		DESKTOP_APP_DOWNLOAD_LINK_LINUX: '${env.DESKTOP_APP_DOWNLOAD_LINK_LINUX}',
+		MOBILE_APP_DOWNLOAD_LINK: '${env.MOBILE_APP_DOWNLOAD_LINK}',
+		EXTENSION_DOWNLOAD_LINK: '${env.EXTENSION_DOWNLOAD_LINK}',
 
-		CLOUDINARY_CLOUD_NAME: '${env.CLOUDINARY_CLOUD_NAME}',
-		CLOUDINARY_API_KEY: '${env.CLOUDINARY_API_KEY}',
+		COMPANY_NAME: '${env.COMPANY_NAME}',
+		COMPANY_LINK: '${env.COMPANY_LINK}',
+		COMPANY_SITE_NAME: '${env.COMPANY_SITE_NAME}',
+		COMPANY_SITE_LINK: '${env.COMPANY_SITE_LINK}',
+		COMPANY_GITHUB_LINK: '${env.COMPANY_GITHUB_LINK}',
+		COMPANY_GITLAB_LINK: '${env.COMPANY_GITLAB_LINK}',
+		COMPANY_FACEBOOK_LINK: '${env.COMPANY_FACEBOOK_LINK}',
+		COMPANY_TWITTER_LINK: '${env.COMPANY_TWITTER_LINK}',
+		COMPANY_IN_LINK: '${env.COMPANY_IN_LINK}',
 
 		GOOGLE_AUTH_LINK: API_BASE_URL + '/api/auth/google',
 		FACEBOOK_AUTH_LINK: API_BASE_URL + '/api/auth/facebook',
@@ -93,12 +151,21 @@ if (!env.IS_DOCKER) {
 		TWITTER_AUTH_LINK: API_BASE_URL + '/api/auth/twitter',
 		MICROSOFT_AUTH_LINK: API_BASE_URL + '/api/auth/microsoft',
 		AUTH0_AUTH_LINK: API_BASE_URL + '/api/auth/auth0',
+		ZITADEL_AUTH_LINK: '${env.ZITADEL_AUTH_LINK}',
+		KEYCLOAK_AUTH_LINK: '${env.KEYCLOAK_AUTH_LINK}',
+		OIDC_AUTH_LINK: '${env.OIDC_AUTH_LINK}',
 
-		NO_INTERNET_LOGO: 'assets/images/logos/logo_Gauzy.svg',
+		NO_INTERNET_LOGO: '${env.NO_INTERNET_LOGO}',
 
 		SENTRY_DSN: '${env.SENTRY_DSN}',
+		SENTRY_TRACES_SAMPLE_RATE: '${env.SENTRY_TRACES_SAMPLE_RATE}',
 
-		HUBSTAFF_REDIRECT_URI: '${env.HUBSTAFF_REDIRECT_URI}',
+		POSTHOG_KEY: '${env.POSTHOG_KEY}',
+		POSTHOG_HOST: '${env.POSTHOG_HOST}',
+		POSTHOG_ENABLED: ${env.POSTHOG_ENABLED},
+		POSTHOG_FLUSH_INTERVAL: ${env.POSTHOG_FLUSH_INTERVAL},
+
+		HUBSTAFF_REDIRECT_URL: '${env.HUBSTAFF_REDIRECT_URL}',
 
 		IS_ELECTRON: IS_ELECTRON,
 		IS_INTEGRATED_DESKTOP: IS_INTEGRATED_DESKTOP,
@@ -113,10 +180,87 @@ if (!env.IS_DOCKER) {
 
 		DEMO: ${env.DEMO},
 
+		// Seeded-account passwords reach this PUBLIC bundle only on a demo build or when they are the
+		// published defaults - see publicSeedPassword() (GHSA-4r2r-mv32-3468).
+		DEMO_SUPER_ADMIN_EMAIL: '${env.DEMO_SUPER_ADMIN_EMAIL}',
+		DEMO_SUPER_ADMIN_PASSWORD: '${publicSeedPassword(env.DEMO_SUPER_ADMIN_PASSWORD)}',
+
+		DEMO_ADMIN_EMAIL: '${env.DEMO_ADMIN_EMAIL}',
+		DEMO_ADMIN_PASSWORD: '${publicSeedPassword(env.DEMO_ADMIN_PASSWORD)}',
+
+		DEMO_EMPLOYEE_EMAIL: '${env.DEMO_EMPLOYEE_EMAIL}',
+		DEMO_EMPLOYEE_PASSWORD: '${publicSeedPassword(env.DEMO_EMPLOYEE_PASSWORD)}',
+
 		CHATWOOT_SDK_TOKEN: '${env.CHATWOOT_SDK_TOKEN}',
 		CHAT_MESSAGE_GOOGLE_MAP: '${env.CHAT_MESSAGE_GOOGLE_MAP}',
-		GAUZY_CLOUD_APP: '${env.GAUZY_CLOUD_APP}'
-	};	
+		GAUZY_CLOUD_APP: '${env.GAUZY_CLOUD_APP}',
+
+		FILE_PROVIDER: '${env.FILE_PROVIDER}',
+
+		JITSU_BROWSER_URL: '${env.JITSU_BROWSER_URL}',
+		JITSU_BROWSER_WRITE_KEY: '${env.JITSU_BROWSER_WRITE_KEY}',
+
+		GAUZY_GITHUB_APP_NAME: '${env.GAUZY_GITHUB_APP_NAME}',
+		GAUZY_GITHUB_CLIENT_ID: '${env.GAUZY_GITHUB_CLIENT_ID}',
+		GAUZY_GITHUB_REDIRECT_URL: '${env.GAUZY_GITHUB_REDIRECT_URL}',
+		GAUZY_GITHUB_POST_INSTALL_URL: '${env.GAUZY_GITHUB_POST_INSTALL_URL}',
+
+		PLATFORM_LOGO: '${env.PLATFORM_LOGO}',
+		GAUZY_DESKTOP_LOGO_512X512: '${env.GAUZY_DESKTOP_LOGO_512X512}',
+		PLATFORM_PRIVACY_URL: '${env.PLATFORM_PRIVACY_URL}',
+		PLATFORM_TOS_URL: '${env.PLATFORM_TOS_URL}',
+		PROJECT_REPO: '${env.PROJECT_REPO}',
+
+		DESKTOP_TIMER_APP_NAME: '${env.DESKTOP_TIMER_APP_NAME}',
+		DESKTOP_TIMER_APP_DESCRIPTION: '${env.DESKTOP_TIMER_APP_DESCRIPTION}',
+		DESKTOP_TIMER_APP_ID: '${env.DESKTOP_TIMER_APP_ID}',
+		DESKTOP_TIMER_APP_REPO_NAME: '${env.DESKTOP_TIMER_APP_REPO_NAME}',
+		DESKTOP_TIMER_APP_REPO_OWNER: '${env.DESKTOP_TIMER_APP_REPO_OWNER}',
+		DESKTOP_TIMER_APP_WELCOME_TITLE: '${env.DESKTOP_TIMER_APP_WELCOME_TITLE}',
+		DESKTOP_TIMER_APP_WELCOME_CONTENT: '${env.DESKTOP_TIMER_APP_WELCOME_CONTENT}',
+		DESKTOP_TIMER_APP_PROTOCOL: '${env.DESKTOP_TIMER_APP_PROTOCOL}',
+
+		DESKTOP_APP_NAME: '${env.DESKTOP_APP_NAME}',
+		DESKTOP_APP_DESCRIPTION: '${env.DESKTOP_APP_DESCRIPTION}',
+		DESKTOP_APP_ID: '${env.DESKTOP_APP_ID}',
+		DESKTOP_APP_REPO_NAME: '${env.DESKTOP_APP_REPO_NAME}',
+		DESKTOP_APP_REPO_OWNER: '${env.DESKTOP_APP_REPO_OWNER}',
+		DESKTOP_APP_WELCOME_TITLE: '${env.DESKTOP_APP_WELCOME_TITLE}',
+		DESKTOP_APP_WELCOME_CONTENT: '${env.DESKTOP_APP_WELCOME_CONTENT}',
+		DESKTOP_APP_PROTOCOL: '${env.DESKTOP_APP_PROTOCOL}',
+
+		DESKTOP_SERVER_APP_NAME: '${env.DESKTOP_SERVER_APP_NAME}',
+		DESKTOP_SERVER_APP_DESCRIPTION: '${env.DESKTOP_SERVER_APP_DESCRIPTION}',
+		DESKTOP_SERVER_APP_ID: '${env.DESKTOP_SERVER_APP_ID}',
+		DESKTOP_SERVER_APP_REPO_NAME: '${env.DESKTOP_SERVER_APP_REPO_NAME}',
+		DESKTOP_SERVER_APP_REPO_OWNER: '${env.DESKTOP_SERVER_APP_REPO_OWNER}',
+		DESKTOP_SERVER_APP_WELCOME_TITLE: '${env.DESKTOP_SERVER_APP_WELCOME_TITLE}',
+		DESKTOP_SERVER_APP_WELCOME_CONTENT: '${env.DESKTOP_SERVER_APP_WELCOME_CONTENT}',
+		DESKTOP_SERVER_APP_PROTOCOL: '${env.DESKTOP_SERVER_APP_PROTOCOL}',
+
+		DESKTOP_API_SERVER_APP_NAME: '${env.DESKTOP_API_SERVER_APP_NAME}',
+		DESKTOP_API_SERVER_APP_DESCRIPTION: '${env.DESKTOP_API_SERVER_APP_DESCRIPTION}',
+		DESKTOP_API_SERVER_APP_ID: '${env.DESKTOP_API_SERVER_APP_ID}',
+		DESKTOP_API_SERVER_APP_REPO_NAME: '${env.DESKTOP_API_SERVER_APP_REPO_NAME}',
+		DESKTOP_API_SERVER_APP_REPO_OWNER: '${env.DESKTOP_API_SERVER_APP_REPO_OWNER}',
+		DESKTOP_API_SERVER_APP_WELCOME_TITLE: '${env.DESKTOP_API_SERVER_APP_WELCOME_TITLE}',
+		DESKTOP_API_SERVER_APP_WELCOME_CONTENT: '${env.DESKTOP_API_SERVER_APP_WELCOME_CONTENT}',
+		DESKTOP_API_SERVER_APP_PROTOCOL: '${env.DESKTOP_API_SERVER_APP_PROTOCOL}',
+
+		AGENT_APP_NAME: '${env.AGENT_APP_NAME}',
+		AGENT_APP_DESCRIPTION: '${env.AGENT_APP_DESCRIPTION}',
+		AGENT_APP_ID: '${env.AGENT_APP_ID}',
+		AGENT_APP_REPO_NAME: '${env.AGENT_APP_REPO_NAME}',
+		AGENT_APP_REPO_OWNER: '${env.AGENT_APP_REPO_OWNER}',
+		AGENT_APP_WELCOME_TITLE: '${env.AGENT_APP_WELCOME_TITLE}',
+		AGENT_APP_WELCOME_CONTENT: '${env.AGENT_APP_WELCOME_CONTENT}',
+		AGENT_APP_PROTOCOL: '${env.AGENT_APP_PROTOCOL}',
+
+		REGISTER_URL: '${env.REGISTER_URL}',
+		FORGOT_PASSWORD_URL: '${env.FORGOT_PASSWORD_URL}',
+
+		I18N_FILES_URL: '${env.I18N_FILES_URL}'
+	};
 	`;
 } else {
 	envFileContent += `
@@ -141,25 +285,34 @@ if (!env.IS_DOCKER) {
 		}
 	}
 
-	export const environment: Environment = 
+	export const environment: Environment =
 	{
 		production:  ${isProd},
 
+		version: '${safeAppVersion}',
+		commit: '${safeAppCommit}',
+
 		API_BASE_URL: API_BASE_URL,
 		CLIENT_BASE_URL: CLIENT_BASE_URL,
+		COOKIE_DOMAIN: 'DOCKER_COOKIE_DOMAIN',
 
-		COMPANY_NAME: 'Ever Co. LTD',
-		COMPANY_SITE: 'Gauzy',
-		COMPANY_LINK: 'https://ever.co/',
-		COMPANY_SITE_LINK: 'https://gauzy.co',
-		COMPANY_GITHUB_LINK: 'https://github.com/ever-co',
-		COMPANY_GITLAB_LINK: 'https://gitlab.com/ever-co',
-		COMPANY_FACEBOOK_LINK: 'https://www.facebook.com/gauzyplatform',
-		COMPANY_TWITTER_LINK: 'https://twitter.com/gauzyplatform',
-		COMPANY_LINKEDIN_LINK: 'https://www.linkedin.com/company/ever-co.',
+		PLATFORM_WEBSITE_URL: 'DOCKER_PLATFORM_WEBSITE_URL',
+		PLATFORM_WEBSITE_DOWNLOAD_URL: 'DOCKER_PLATFORM_WEBSITE_DOWNLOAD_URL',
+		DESKTOP_APP_DOWNLOAD_LINK_APPLE: 'DOCKER_DESKTOP_APP_DOWNLOAD_LINK_APPLE',
+		DESKTOP_APP_DOWNLOAD_LINK_WINDOWS: 'DOCKER_DESKTOP_APP_DOWNLOAD_LINK_WINDOWS',
+		DESKTOP_APP_DOWNLOAD_LINK_LINUX: 'DOCKER_DESKTOP_APP_DOWNLOAD_LINK_LINUX',
+		MOBILE_APP_DOWNLOAD_LINK: 'DOCKER_MOBILE_APP_DOWNLOAD_LINK',
+		EXTENSION_DOWNLOAD_LINK: 'DOCKER_EXTENSION_DOWNLOAD_LINK',
 
-		CLOUDINARY_CLOUD_NAME: 'DOCKER_CLOUDINARY_CLOUD_NAME',
-		CLOUDINARY_API_KEY: 'DOCKER_CLOUDINARY_API_KEY',
+		COMPANY_NAME: 'DOCKER_COMPANY_NAME',
+		COMPANY_LINK: 'DOCKER_COMPANY_LINK',
+		COMPANY_SITE_NAME: 'DOCKER_COMPANY_SITE_NAME',
+		COMPANY_SITE_LINK: 'DOCKER_COMPANY_SITE_LINK',
+		COMPANY_GITHUB_LINK: 'DOCKER_COMPANY_GITHUB_LINK',
+		COMPANY_GITLAB_LINK: 'DOCKER_COMPANY_GITLAB_LINK',
+		COMPANY_FACEBOOK_LINK: 'DOCKER_COMPANY_FACEBOOK_LINK',
+		COMPANY_TWITTER_LINK: 'DOCKER_COMPANY_TWITTER_LINK',
+		COMPANY_IN_LINK: 'DOCKER_COMPANY_IN_LINK',
 
 		GOOGLE_AUTH_LINK: API_BASE_URL + '/api/auth/google',
 		FACEBOOK_AUTH_LINK: API_BASE_URL + '/api/auth/facebook',
@@ -168,12 +321,23 @@ if (!env.IS_DOCKER) {
 		TWITTER_AUTH_LINK: API_BASE_URL + '/api/auth/twitter',
 		MICROSOFT_AUTH_LINK: API_BASE_URL + '/api/auth/microsoft',
 		AUTH0_AUTH_LINK: API_BASE_URL + '/api/auth/auth0',
+		ZITADEL_AUTH_LINK: 'DOCKER_ZITADEL_AUTH_LINK',
+		KEYCLOAK_AUTH_LINK: 'DOCKER_KEYCLOAK_AUTH_LINK',
+		OIDC_AUTH_LINK: 'DOCKER_OIDC_AUTH_LINK',
 
-		NO_INTERNET_LOGO: 'assets/images/logos/logo_Gauzy.svg',
+		NO_INTERNET_LOGO: 'DOCKER_NO_INTERNET_LOGO',
 
 		SENTRY_DSN: 'DOCKER_SENTRY_DSN',
+		SENTRY_TRACES_SAMPLE_RATE: 'DOCKER_SENTRY_TRACES_SAMPLE_RATE',
 
-		HUBSTAFF_REDIRECT_URI: '${env.HUBSTAFF_REDIRECT_URI}',
+		POSTHOG_KEY: 'DOCKER_POSTHOG_KEY',
+		POSTHOG_HOST: 'DOCKER_POSTHOG_HOST',
+		// @ts-ignore
+		POSTHOG_ENABLED: String('DOCKER_POSTHOG_ENABLED').toLowerCase() === 'true',
+		// @ts-ignore
+		POSTHOG_FLUSH_INTERVAL: parseInt('DOCKER_POSTHOG_FLUSH_INTERVAL'),
+
+		HUBSTAFF_REDIRECT_URL: 'DOCKER_HUBSTAFF_REDIRECT_URL',
 
 		IS_ELECTRON: IS_ELECTRON,
 		IS_INTEGRATED_DESKTOP: IS_INTEGRATED_DESKTOP,
@@ -181,31 +345,100 @@ if (!env.IS_DOCKER) {
 		GOOGLE_MAPS_API_KEY: 'DOCKER_GOOGLE_MAPS_API_KEY',
 
 		// @ts-ignore
-		GOOGLE_PLACE_AUTOCOMPLETE: 'DOCKER_GOOGLE_PLACE_AUTOCOMPLETE' == 'true',
+		GOOGLE_PLACE_AUTOCOMPLETE: String('DOCKER_GOOGLE_PLACE_AUTOCOMPLETE').toLowerCase() === 'true',
 
 		DEFAULT_LATITUDE: ${env.DEFAULT_LATITUDE},
 		DEFAULT_LONGITUDE: ${env.DEFAULT_LONGITUDE},
 		DEFAULT_CURRENCY: 'DOCKER_DEFAULT_CURRENCY',
-		DEFAULT_COUNTRY: '${env.DEFAULT_COUNTRY}',
+		DEFAULT_COUNTRY: 'DOCKER_DEFAULT_COUNTRY',
 
 		// @ts-ignore
-		DEMO: 'DOCKER_DEMO' == 'true',
+		DEMO: String('DOCKER_DEMO').toLowerCase() === 'true',
+
+		// Seeded-account passwords reach this PUBLIC bundle only on a demo build or when they are the
+		// published defaults - see publicSeedPassword() (GHSA-4r2r-mv32-3468).
+		DEMO_SUPER_ADMIN_EMAIL: '${env.DEMO_SUPER_ADMIN_EMAIL}',
+		DEMO_SUPER_ADMIN_PASSWORD: '${publicSeedPassword(env.DEMO_SUPER_ADMIN_PASSWORD)}',
+
+		DEMO_ADMIN_EMAIL: '${env.DEMO_ADMIN_EMAIL}',
+		DEMO_ADMIN_PASSWORD: '${publicSeedPassword(env.DEMO_ADMIN_PASSWORD)}',
+
+		DEMO_EMPLOYEE_EMAIL: '${env.DEMO_EMPLOYEE_EMAIL}',
+		DEMO_EMPLOYEE_PASSWORD: '${publicSeedPassword(env.DEMO_EMPLOYEE_PASSWORD)}',
 
 		CHATWOOT_SDK_TOKEN: 'DOCKER_CHATWOOT_SDK_TOKEN',
-		CHAT_MESSAGE_GOOGLE_MAP: '${env.CHAT_MESSAGE_GOOGLE_MAP}',
-		GAUZY_CLOUD_APP: '${env.GAUZY_CLOUD_APP}'
+		CHAT_MESSAGE_GOOGLE_MAP: 'DOCKER_CHAT_MESSAGE_GOOGLE_MAP',
+		GAUZY_CLOUD_APP: 'DOCKER_GAUZY_CLOUD_APP',
+
+		FILE_PROVIDER: 'DOCKER_FILE_PROVIDER',
+
+		JITSU_BROWSER_URL: 'DOCKER_JITSU_BROWSER_URL',
+		JITSU_BROWSER_WRITE_KEY: 'DOCKER_JITSU_BROWSER_WRITE_KEY',
+
+		GAUZY_GITHUB_APP_NAME: 'DOCKER_GAUZY_GITHUB_APP_NAME',
+		GAUZY_GITHUB_CLIENT_ID: 'DOCKER_GAUZY_GITHUB_CLIENT_ID',
+		GAUZY_GITHUB_REDIRECT_URL: 'DOCKER_GAUZY_GITHUB_REDIRECT_URL',
+		GAUZY_GITHUB_POST_INSTALL_URL: 'DOCKER_GAUZY_GITHUB_POST_INSTALL_URL',
+
+		PLATFORM_LOGO: 'DOCKER_PLATFORM_LOGO',
+		GAUZY_DESKTOP_LOGO_512X512: 'DOCKER_GAUZY_DESKTOP_LOGO_512X512',
+		PLATFORM_PRIVACY_URL: 'DOCKER_PLATFORM_PRIVACY_URL',
+		PLATFORM_TOS_URL: 'DOCKER_PLATFORM_TOS_URL',
+
+		PROJECT_REPO: 'DOCKER_PROJECT_REPO',
+
+		DESKTOP_TIMER_APP_NAME: '${env.DESKTOP_TIMER_APP_NAME}',
+		DESKTOP_TIMER_APP_DESCRIPTION: '${env.DESKTOP_TIMER_APP_DESCRIPTION}',
+		DESKTOP_TIMER_APP_ID: '${env.DESKTOP_TIMER_APP_ID}',
+		DESKTOP_TIMER_APP_REPO_NAME: '${env.DESKTOP_TIMER_APP_REPO_NAME}',
+		DESKTOP_TIMER_APP_REPO_OWNER: '${env.DESKTOP_TIMER_APP_REPO_OWNER}',
+		DESKTOP_TIMER_APP_WELCOME_TITLE: '${env.DESKTOP_TIMER_APP_WELCOME_TITLE}',
+		DESKTOP_TIMER_APP_WELCOME_CONTENT: '${env.DESKTOP_TIMER_APP_WELCOME_CONTENT}',
+		DESKTOP_TIMER_APP_PROTOCOL: '${env.DESKTOP_TIMER_APP_PROTOCOL}',
+
+		DESKTOP_APP_NAME: '${env.DESKTOP_APP_NAME}',
+		DESKTOP_APP_DESCRIPTION: '${env.DESKTOP_APP_DESCRIPTION}',
+		DESKTOP_APP_ID: '${env.DESKTOP_APP_ID}',
+		DESKTOP_APP_REPO_NAME: '${env.DESKTOP_APP_REPO_NAME}',
+		DESKTOP_APP_REPO_OWNER: '${env.DESKTOP_APP_REPO_OWNER}',
+		DESKTOP_APP_WELCOME_TITLE: '${env.DESKTOP_APP_WELCOME_TITLE}',
+		DESKTOP_APP_WELCOME_CONTENT: '${env.DESKTOP_APP_WELCOME_CONTENT}',
+		DESKTOP_APP_PROTOCOL: '${env.DESKTOP_APP_PROTOCOL}',
+
+		DESKTOP_SERVER_APP_NAME: '${env.DESKTOP_SERVER_APP_NAME}',
+		DESKTOP_SERVER_APP_DESCRIPTION: '${env.DESKTOP_SERVER_APP_DESCRIPTION}',
+		DESKTOP_SERVER_APP_ID: '${env.DESKTOP_SERVER_APP_ID}',
+		DESKTOP_SERVER_APP_REPO_NAME: '${env.DESKTOP_SERVER_APP_REPO_NAME}',
+		DESKTOP_SERVER_APP_REPO_OWNER: '${env.DESKTOP_SERVER_APP_REPO_OWNER}',
+		DESKTOP_SERVER_APP_WELCOME_TITLE: '${env.DESKTOP_SERVER_APP_WELCOME_TITLE}',
+		DESKTOP_SERVER_APP_WELCOME_CONTENT: '${env.DESKTOP_SERVER_APP_WELCOME_CONTENT}',
+		DESKTOP_SERVER_APP_PROTOCOL: '${env.DESKTOP_SERVER_APP_PROTOCOL}',
+
+		DESKTOP_API_SERVER_APP_NAME: '${env.DESKTOP_API_SERVER_APP_NAME}',
+		DESKTOP_API_SERVER_APP_DESCRIPTION: '${env.DESKTOP_API_SERVER_APP_DESCRIPTION}',
+		DESKTOP_API_SERVER_APP_ID: '${env.DESKTOP_API_SERVER_APP_ID}',
+		DESKTOP_API_SERVER_APP_REPO_NAME: '${env.DESKTOP_API_SERVER_APP_REPO_NAME}',
+		DESKTOP_API_SERVER_APP_REPO_OWNER: '${env.DESKTOP_API_SERVER_APP_REPO_OWNER}',
+		DESKTOP_API_SERVER_APP_WELCOME_TITLE: '${env.DESKTOP_API_SERVER_APP_WELCOME_TITLE}',
+		DESKTOP_API_SERVER_APP_WELCOME_CONTENT: '${env.DESKTOP_API_SERVER_APP_WELCOME_CONTENT}',
+		DESKTOP_API_SERVER_APP_PROTOCOL: '${env.DESKTOP_API_SERVER_APP_PROTOCOL}',
+
+		AGENT_APP_NAME: '${env.AGENT_APP_NAME}',
+		AGENT_APP_DESCRIPTION: '${env.AGENT_APP_DESCRIPTION}',
+		AGENT_APP_ID: '${env.AGENT_APP_ID}',
+		AGENT_APP_REPO_NAME: '${env.AGENT_APP_REPO_NAME}',
+		AGENT_APP_REPO_OWNER: '${env.AGENT_APP_REPO_OWNER}',
+		AGENT_APP_WELCOME_TITLE: '${env.AGENT_APP_WELCOME_TITLE}',
+		AGENT_APP_WELCOME_CONTENT: '${env.AGENT_APP_WELCOME_CONTENT}',
+		AGENT_APP_PROTOCOL: '${env.AGENT_APP_PROTOCOL}',
+
+		REGISTER_URL: '${env.REGISTER_URL}',
+		FORGOT_PASSWORD_URL: '${env.FORGOT_PASSWORD_URL}',
+
+		I18N_FILES_URL: 'DOCKER_I18N_FILES_URL'
 	};
 `;
 }
-
-envFileContent += `
-
-	export const cloudinaryConfiguration: CloudinaryConfiguration = {
-		cloud_name: environment.CLOUDINARY_CLOUD_NAME,
-		api_key: environment.CLOUDINARY_API_KEY
-	};
-
-`;
 
 if (!isProd) {
 	envFileContent += `
@@ -218,40 +451,53 @@ if (!isProd) {
 }
 
 // we always want first to remove old generated files (one of them is not needed for current build)
+// Use path relative to script location to ensure correct path regardless of working directory
+const scriptDir = __dirname;
+const workspaceRoot = path.resolve(scriptDir, '../');
+const environmentsFolder = path.resolve(workspaceRoot, 'packages/ui-config/src/lib/environments');
+
 try {
-	unlinkSync(`./apps/gauzy/src/environments/environment.ts`);
+	unlinkSync(path.join(environmentsFolder, 'environment.ts'));
 } catch {}
 try {
-	unlinkSync(`./apps/gauzy/src/environments/environment.prod.ts`);
+	unlinkSync(path.join(environmentsFolder, 'environment.prod.ts'));
 } catch {}
 
 const envFileDest: string = isProd ? 'environment.prod.ts' : 'environment.ts';
-const envFileDestOther: string = !isProd
-	? 'environment.prod.ts'
-	: 'environment.ts';
+const envFileDestOther: string = !isProd ? 'environment.prod.ts' : 'environment.ts';
 
-writeFile(
-	`./apps/gauzy/src/environments/${envFileDest}`,
-	envFileContent,
-	function (err) {
-		if (err) {
-			console.log(err);
-		} else {
-			console.log(`Generated Angular environment file: ${envFileDest}`);
-		}
-	}
-);
+console.log(`Generating Angular environment file: ${envFileDest}`);
+console.log(`Generating Second Angular environment file: ${envFileDestOther}`);
 
-writeFile(
-	`./apps/gauzy/src/environments/${envFileDestOther}`,
-	'',
-	function (err) {
-		if (err) {
-			console.log(err);
-		} else {
-			console.log(
-				`Generated Second Empty Angular environment file: ${envFileDestOther}`
-			);
-		}
+// Ensure the environments folder exists
+if (!existsSync(environmentsFolder)) {
+	mkdirSync(environmentsFolder, { recursive: true });
+	console.log(`Created environments folder: ${environmentsFolder}`);
+}
+
+// Paths to environment files
+const envFilePath = path.join(environmentsFolder, envFileDest);
+const envFileOtherPath = path.join(environmentsFolder, envFileDestOther);
+
+writeFile(envFilePath, envFileContent, (error) => {
+	if (error) {
+		console.error(`Error writing environment file: ${error}`);
+	} else {
+		// Paths to environment files
+		const envFilePath = path.resolve(`./packages/ui-config/src/lib/environments/${envFileDest}`);
+		console.log(`Generated Angular environment file: ${envFilePath}`);
 	}
-);
+});
+
+// Generate full content for the other file, but with the production flag toggled
+// This ensures TypeScript sees the complete Environment interface in both files
+let envFileContentOther = envFileContent.replace(`production:  ${isProd},`, `production:  ${!isProd},`);
+
+writeFile(envFileOtherPath, envFileContentOther, (error) => {
+	if (error) {
+		console.error(`Error writing environment file: ${error}`);
+	} else {
+		const envFileOtherPath = path.resolve(`./packages/ui-config/src/lib/environments/${envFileDestOther}`);
+		console.log(`Generated Second Angular environment file: ${envFileOtherPath}`);
+	}
+});

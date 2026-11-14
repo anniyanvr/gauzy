@@ -1,107 +1,116 @@
-import { RouterModule, Routes, ExtraOptions } from '@angular/router';
 import { NgModule } from '@angular/core';
+import { ExtraOptions, NoPreloading, RouterModule, Routes } from '@angular/router';
 import {
-	ImageViewerComponent,
-	SettingsComponent,
-	ScreenCaptureComponent,
-	TimeTrackerComponent,
-	SetupComponent,
-	UpdaterComponent,
-	SplashScreenComponent
+	AUTH_CONNECTION_GUARD_CONFIG,
+	authConnectionGuard,
+	authGuard,
+	DEFAULT_AUTH_CONNECTION_GUARD_CONFIG,
+	noAuthGuard
 } from '@gauzy/desktop-ui-lib';
-import {
-	NbAuthComponent,
-	NbLoginComponent,
-	NbLogoutComponent,
-	NbRegisterComponent,
-	NbRequestPasswordComponent,
-	NbResetPasswordComponent
-} from '@nebular/auth';
-import { AuthGuard } from './auth/auth.guard';
-import { NoAuthGuard } from './auth/no-auth.guard';
-import { ServerDownPage } from './server-down/server-down.page';
-import { AppModuleGuard } from './app.module.guards';
 
 const routes: Routes = [
 	{
+		path: '',
+		redirectTo: 'time-tracker',
+		pathMatch: 'full'
+	},
+	// Public routes (no authentication required)
+	{
 		path: 'setup',
-		component: SetupComponent
+		loadComponent: () => import('@gauzy/desktop-ui-lib').then((m) => m.SetupComponent)
 	},
 	{
-		path: 'auth',
-		component: NbAuthComponent,
-		children: [
-			{
-				path: '',
-				component: NbLoginComponent,
-				canActivate: [AppModuleGuard, NoAuthGuard]
-			},
-			{
-				path: 'login',
-				component: NbLoginComponent,
-				canActivate: [AppModuleGuard, NoAuthGuard]
-			},
-			{
-				path: 'register',
-				component: NbRegisterComponent,
-				canActivate: [NoAuthGuard]
-			},
-			{
-				path: 'logout',
-				component: NbLogoutComponent
-			},
-			{
-				path: 'request-password',
-				component: NbRequestPasswordComponent
-			},
-			{
-				path: 'reset-password',
-				component: NbResetPasswordComponent
-			}
-		]
-	},
-	{
-		path: 'time-tracker',
-		component: TimeTrackerComponent,
-		canActivate: [AppModuleGuard, AuthGuard]
-	},
-	{
-		path: 'screen-capture',
-		component: ScreenCaptureComponent
-	},
-	{
-		path: 'settings',
-		component: SettingsComponent
-	},
-	{
-		path: 'updater',
-		component: UpdaterComponent
-	},
-	{
-		path: 'viewer',
-		component: ImageViewerComponent
-	},
-	{
-		path: 'splash',
-		component: SplashScreenComponent
+		path: 'splash-screen',
+		loadComponent: () => import('@gauzy/desktop-ui-lib').then((m) => m.SplashScreenComponent)
 	},
 	{
 		path: 'server-down',
-		component: ServerDownPage
+		loadComponent: () => import('@gauzy/desktop-ui-lib').then((m) => m.ServerDownPage)
 	},
 	{
-		path: '',
-		component: TimeTrackerComponent,
-		canActivate: [AppModuleGuard, AuthGuard]
+		path: 'about',
+		loadComponent: () => import('@gauzy/desktop-ui-lib').then((m) => m.AboutComponent)
+	},
+	{
+		path: 'settings',
+		loadComponent: () => import('@gauzy/desktop-ui-lib').then((m) => m.SettingsComponent)
+	},
+
+	// Auth routes (only for logged-out users)
+	{
+		path: 'auth',
+		canActivate: [noAuthGuard],
+		loadChildren: () => import('@gauzy/desktop-ui-lib').then((m) => m.AuthModule)
+	},
+
+	// Protected routes (require authentication and connection)
+	{
+		path: 'time-tracker',
+		canActivate: [authGuard, authConnectionGuard],
+		loadComponent: () => import('@gauzy/desktop-ui-lib').then((m) => m.TimeTrackerComponent),
+		loadChildren: () => import('@gauzy/desktop-ui-lib').then((m) => m.RecapModule)
+	},
+	{
+		path: 'plugins',
+		canActivate: [authConnectionGuard],
+		loadChildren: () => import('@gauzy/desktop-ui-lib').then((m) => m.PluginRoutingModule)
+	},
+
+	// Utility routes (require authentication but may work offline)
+	{
+		path: 'screen-capture',
+		loadComponent: () => import('@gauzy/desktop-ui-lib').then((m) => m.ScreenCaptureComponent)
+	},
+	{
+		path: 'always-on',
+		loadComponent: () => import('@gauzy/desktop-ui-lib').then((m) => m.AlwaysOnComponent)
+	},
+	{
+		path: 'updater',
+		loadComponent: () => import('@gauzy/desktop-ui-lib').then((m) => m.UpdaterComponent)
+	},
+	{
+		path: 'viewer',
+		loadComponent: () => import('@gauzy/desktop-ui-lib').then((m) => m.ImageViewerComponent)
+	},
+	{
+		path: 'log-history',
+		loadComponent: () => import('@gauzy/desktop-ui-lib').then((m) => m.AuditTrailLoggerComponent)
+	},
+
+	// Wildcard - redirect to default
+	{
+		path: '**',
+		redirectTo: ''
 	}
 ];
 
+/**
+ * Configures the router for the application.
+ * Uses NoPreloading strategy to minimize memory usage on app load.
+ *
+ * Guard execution order:
+ * 1. AuthConnectionGuard - Checks server connection and basic auth state
+ * 2. AuthGuard - Validates authentication tokens
+ * 3. NoAuthGuard - Prevents authenticated users from accessing auth pages
+ *
+ * Note: AppModuleGuard is deprecated and replaced by AuthConnectionGuard
+ */
 const config: ExtraOptions = {
-	useHash: true
+	useHash: true,
+	preloadingStrategy: NoPreloading,
+	initialNavigation: 'enabledBlocking',
+	canceledNavigationResolution: 'replace'
 };
 
 @NgModule({
 	imports: [RouterModule.forRoot(routes, config)],
-	exports: [RouterModule]
+	exports: [RouterModule],
+	providers: [
+		{
+			provide: AUTH_CONNECTION_GUARD_CONFIG,
+			useValue: DEFAULT_AUTH_CONNECTION_GUARD_CONFIG
+		}
+	]
 })
 export class AppRoutingModule {}

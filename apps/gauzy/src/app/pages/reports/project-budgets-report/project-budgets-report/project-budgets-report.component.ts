@@ -1,54 +1,64 @@
+import { AfterViewInit, ChangeDetectorRef, Component, OnInit, ViewChild, ChangeDetectionStrategy } from '@angular/core';
+import { UntilDestroy, untilDestroyed } from '@ngneat/until-destroy';
+import { filter, tap } from 'rxjs/operators';
+import { Observable, BehaviorSubject } from 'rxjs';
+import { TranslateService } from '@ngx-translate/core';
 import {
-	AfterViewInit,
-	ChangeDetectorRef,
-	Component,
-	OnInit
-} from '@angular/core';
-import {
-	IGetPaymentInput,
 	IGetTimeLogReportInput,
 	IProjectBudgetLimitReport,
+	ITimeLogFilters,
 	OrganizationProjectBudgetTypeEnum,
 	ReportGroupByFilter,
 	ReportGroupFilterEnum
 } from '@gauzy/contracts';
-import { UntilDestroy, untilDestroyed } from '@ngneat/until-destroy';
-import { Store } from 'apps/gauzy/src/app/@core/services/store.service';
-import { TimesheetService } from 'apps/gauzy/src/app/@shared/timesheet/timesheet.service';
-import { debounceTime, tap } from 'rxjs/operators';
-import { ReportBaseComponent } from 'apps/gauzy/src/app/@shared/report/report-base/report-base.component';
-import { TranslateService } from '@ngx-translate/core';
+import { distinctUntilChange, isEmpty } from '@gauzy/ui-core/common';
+import { DateRangePickerBuilderService, Store, TimesheetFilterService, TimesheetService } from '@gauzy/ui-core/core';
+import { BaseSelectorFilterComponent, GauzyFiltersComponent, TimeZoneService } from '@gauzy/ui-core/shared';
 
-@UntilDestroy()
+@UntilDestroy({ checkProperties: true })
 @Component({
 	selector: 'ga-project-budgets-report',
 	templateUrl: './project-budgets-report.component.html',
-	styleUrls: ['./project-budgets-report.component.scss']
+	styleUrls: ['./project-budgets-report.component.scss'],
+	changeDetection: ChangeDetectionStrategy.Eager,
+	standalone: false
 })
-export class ProjectBudgetsReportComponent
-	extends ReportBaseComponent
-	implements OnInit, AfterViewInit {
-	logRequest: IGetPaymentInput = this.request;
-	loading: boolean;
-	groupBy: ReportGroupByFilter = ReportGroupFilterEnum.date;
-	filters: IGetPaymentInput;
-	OrganizationProjectBudgetTypeEnum = OrganizationProjectBudgetTypeEnum;
-	projects: IProjectBudgetLimitReport[];
+export class ProjectBudgetsReportComponent extends BaseSelectorFilterComponent implements OnInit, AfterViewInit {
+	public loading: boolean = false;
+	public groupBy: ReportGroupByFilter = ReportGroupFilterEnum.date;
+	public OrganizationProjectBudgetTypeEnum = OrganizationProjectBudgetTypeEnum;
+	public projects: IProjectBudgetLimitReport[] = [];
+	public filters: ITimeLogFilters;
+
+	@ViewChild(GauzyFiltersComponent) gauzyFiltersComponent: GauzyFiltersComponent;
+	datePickerConfig$: Observable<any> = this.dateRangePickerBuilderService.datePickerConfig$;
+	payloads$: BehaviorSubject<ITimeLogFilters> = new BehaviorSubject(null);
 
 	constructor(
-		private timesheetService: TimesheetService,
-		protected store: Store,
-		readonly translateService: TranslateService,
-		private cd: ChangeDetectorRef
+		private readonly cd: ChangeDetectorRef,
+		private readonly timesheetService: TimesheetService,
+		private readonly timesheetFilterService: TimesheetFilterService,
+		public readonly translateService: TranslateService,
+		protected readonly store: Store,
+		protected readonly dateRangePickerBuilderService: DateRangePickerBuilderService,
+		protected readonly timeZoneService: TimeZoneService
 	) {
-		super(store, translateService);
+		super(store, translateService, dateRangePickerBuilderService, timeZoneService);
 	}
 
 	ngOnInit() {
 		this.subject$
 			.pipe(
-				debounceTime(500),
-				tap(() => this.getReportData()),
+				filter(() => !!this.organization),
+				tap(() => this.prepareRequest()),
+				untilDestroyed(this)
+			)
+			.subscribe();
+		this.payloads$
+			.pipe(
+				distinctUntilChange(),
+				filter((payloads: ITimeLogFilters) => !!payloads),
+				tap(() => this.getProjectBudgetReport()),
 				untilDestroyed(this)
 			)
 			.subscribe();
@@ -58,27 +68,72 @@ export class ProjectBudgetsReportComponent
 		this.cd.detectChanges();
 	}
 
-	filtersChange($event) {
-		this.logRequest = $event;
-		this.filters = Object.assign({}, this.logRequest);
+	/**
+	 * Prepares the request by applying filters and updating the payloads observable.
+	 */
+	prepareRequest(): void {
+		// Check if either this.request or this.filters is empty, resolve without further action
+		if (isEmpty(this.request) || isEmpty(this.filters)) {
+			return;
+		}
+
+		// Create the request object of type IGetTimeLogReportInput
+		const request: IGetTimeLogReportInput = {
+			...this.getFilterRequest(this.request),
+			groupBy: this.groupBy
+		};
+
+		// Update the payloads observable with the new request
+		this.payloads$.next(request);
+	}
+
+	/**
+	 * Updates Gauzy timesheet default filters, saves the filters if configured to do so,
+	 * and notifies subscribers about the change.
+	 *
+	 * @param filters - An object representing time log filters (ITimeLogFilters).
+	 */
+	filtersChange(filters: ITimeLogFilters): void {
+		// Save filters to the timesheetFilterService if configured to do so
+		if (this.gauzyFiltersComponent.saveFilters) {
+			this.timesheetFilterService.filter = filters;
+		}
+
+		// Create a shallow copy of the filters and update the class property
+		this.filters = { ...filters };
+
+		// Notify subscribers about the filter change
 		this.subject$.next(true);
 	}
 
-	async getReportData() {
-		if (!this.organization || !this.logRequest) {
+	/**
+	 * Asynchronously retrieves project budget reports, updates the 'projects' property, and handles the loading state.
+	 *
+	 * @returns {Promise<void>}
+	 */
+	async getProjectBudgetReport(): Promise<void> {
+		// Check if organization or request is not provided, resolve the Promise without further action
+		if (!this.organization || isEmpty(this.request)) {
 			return;
 		}
-		const request: IGetTimeLogReportInput = {
-			...this.getFilterRequest(this.logRequest),
-			groupBy: this.groupBy
-		};
+
+		// Clear previous project data and set the loading flag to true
+		this.projects = [];
 		this.loading = true;
-		this.timesheetService
-			.getProjectBudgetLimit(request)
-			.then((logs: IProjectBudgetLimitReport[]) => {
-				this.projects = logs;
-			})
-			.catch(() => {})
-			.finally(() => (this.loading = false));
+
+		try {
+			// Get the current payloads from the observable
+			const payloads = this.payloads$.getValue();
+
+			// Fetch the project budget reports from the timesheetService
+			this.projects = await this.timesheetService.getProjectBudgetLimit(payloads);
+		} catch (error) {
+			// Log any errors during the process
+			console.error('Error while retrieving project budget chart:', error);
+			// Optionally: this.notificationService.showError('Failed to retrieve project budget reports.');
+		} finally {
+			// Set the loading flag to false, regardless of success or failure
+			this.loading = false;
+		}
 	}
 }

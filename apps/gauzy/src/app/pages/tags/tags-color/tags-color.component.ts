@@ -1,17 +1,14 @@
-import { Component, Input } from '@angular/core';
-import { ViewCell } from 'ng2-smart-table';
-import { getContrastColor } from '@gauzy/common-angular';
+import { Component, Input, ChangeDetectionStrategy } from '@angular/core';
+import { NotesWithTagsComponent } from '@gauzy/ui-core/shared';
 
 @Component({
-	selector: 'ngx-tags-color',
-	templateUrl: './tags-color.component.html',
-	styleUrls: ['./tags-color.component.scss']
+    selector: 'ngx-tags-color',
+    templateUrl: './tags-color.component.html',
+    styleUrls: ['./tags-color.component.scss'],
+    changeDetection: ChangeDetectionStrategy.Eager,
+    standalone: false
 })
-export class TagsColorComponent implements ViewCell {
-	@Input()
-	value: string | number;
-	rowData: any;
-	backgroundContrast(bgColor: string) {
-		return getContrastColor(bgColor);
-	}
+export class TagsColorComponent extends NotesWithTagsComponent {
+	@Input() value: string | number;
+	@Input() rowData: any;
 }

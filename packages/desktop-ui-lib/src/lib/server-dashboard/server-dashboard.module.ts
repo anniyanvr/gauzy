@@ -1,30 +1,33 @@
-import { NgModule } from '@angular/core';
 import { CommonModule } from '@angular/common';
-import { ServerDashboardComponent } from './server-dashboard.component';
+import { NgModule } from '@angular/core';
 import {
-	NbLayoutModule,
+	NbAccordionModule,
+	NbButtonModule,
 	NbCardModule,
-	NbIconModule,
 	NbDialogModule,
 	NbDialogService,
-	NbButtonModule,
-	NbSpinnerModule,
-	NbAccordionModule
+	NbIconModule,
+	NbLayoutModule,
+	NbSpinnerModule
 } from '@nebular/theme';
 
+import { LanguageModule } from '../language/language.module';
+import { ServerDashboardComponent } from './server-dashboard.component';
+
 @NgModule({
-	declarations: [ServerDashboardComponent],
-	imports: [
-		CommonModule,
-		NbLayoutModule,
-		NbCardModule,
-		NbIconModule,
-		NbDialogModule,
-		NbButtonModule,
-		NbSpinnerModule,
-		NbAccordionModule
-	],
-	exports: [ServerDashboardComponent],
-	providers: [NbDialogService]
+    imports: [
+    CommonModule,
+    NbLayoutModule,
+    NbCardModule,
+    NbIconModule,
+    NbDialogModule,
+    NbButtonModule,
+    NbSpinnerModule,
+    NbAccordionModule,
+    LanguageModule.forChild(),
+    ServerDashboardComponent
+],
+    exports: [ServerDashboardComponent],
+    providers: [NbDialogService]
 })
 export class ServerDashboardModule {}

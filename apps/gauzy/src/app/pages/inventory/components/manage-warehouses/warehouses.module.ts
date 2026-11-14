@@ -1,82 +1,81 @@
+import { CommonModule } from '@angular/common';
 import { NgModule } from '@angular/core';
 import { FormsModule, ReactiveFormsModule } from '@angular/forms';
-import { TranslateModule } from './../../../../@shared/translate/translate.module';
-import { WarehouseService } from '../../../../@core/services/warehouse.service';
-import { Ng2SmartTableModule } from 'ng2-smart-table';
-import { SharedModule } from '../../../../@shared/shared.module';
 import {
-    NbCardModule,
-    NbButtonModule,
-    NbIconModule,
-    NbSpinnerModule,
-    NbDialogModule,
-    NbCheckboxModule,
-    NbSelectModule,
-    NbTabsetModule,
-    NbInputModule,
-    NbStepperModule,
+	NbButtonModule,
+	NbCardModule,
+	NbCheckboxModule,
+	NbDialogModule,
+	NbIconModule,
+	NbInputModule,
+	NbSelectModule,
+	NbSpinnerModule,
+	NbStepperModule,
+	NbTabsetModule,
+	NbTooltipModule
 } from '@nebular/theme';
-import { CommonModule } from '@angular/common';
-import { HeaderTitleModule } from './../../../../@shared/components/header-title/header-title.module';
-import { ThemeModule } from './../../../../@theme/theme.module';
-import { WarehousesTableComponent } from './warehouses-table/warehouses-table.component';
+import { NgxPermissionsModule } from 'ngx-permissions';
+import { TranslatePipe } from '@ngx-translate/core';
+import {
+	SmartDataViewLayoutModule,
+	CardGridModule,
+	LeafletMapModule,
+	LocationFormModule,
+	SharedModule,
+	TagsColorInputModule
+} from '@gauzy/ui-core/shared';
+import { InventoryTableComponentsModule } from '../inventory-table-components';
+import { ManageQuantityComponent } from './manage-quantity/manage-quantity.component';
+import { ManageVariantsQuantityFormComponent } from './manage-variants-quantity-form/manage-variants-quantity-form.component';
+import { ManageVariantsQuantityComponent } from './manage-variants-quantity/manage-variants-quantity.component';
+import { SelectProductComponent } from './select-product-form/select-product-form.component';
 import { WarehouseFormComponent } from './warehouse-form/warehouse-form.component';
-import { WarehousesComponent } from './warehouses.component';
 import { WarehouseProductsTableComponent } from './warehouse-products-table/warehouse-products-table.component';
 import { WarehousesRoutingModule } from './warehouses-routing.module';
-import { SelectProductComponent } from './select-product-form/select-product-form.component';
-import { ManageQuantityComponent } from './manage-quantity/manage-quantity.component';
-import { ManageVariantsQuantityComponent } from './manage-variants-quantity/manage-variants-quantity.component';
-import { ManageVariantsQuantityFormComponent } from './manage-variants-quantity-form/manage-variants-quantity-form.component';
-import { LeafletMapModule, LocationFormModule } from './../../../../@shared/forms';
-import { TagsColorInputModule } from './../../../../@shared/tags/tags-color-input/tags-color-input.module';
-import { PaginationModule } from '../../../../@shared/pagination/pagination.module';
-import { CardGridModule } from '../../../../@shared/card-grid/card-grid.module';
-
+import { WarehousesTableComponent } from './warehouses-table/warehouses-table.component';
+import { WarehousesComponent } from './warehouses.component';
 
 const NB_MODULES = [
-    NbCardModule,
-    NbButtonModule,
-    NbIconModule,
-    NbSpinnerModule,
-    NbDialogModule,
-    NbCheckboxModule,
-    NbSelectModule,
-    NbTabsetModule,
-    NbInputModule,
-    NbStepperModule
+	NbCardModule,
+	NbButtonModule,
+	NbIconModule,
+	NbSpinnerModule,
+	NbDialogModule,
+	NbCheckboxModule,
+	NbSelectModule,
+	NbTabsetModule,
+	NbInputModule,
+	NbStepperModule,
+	NbTooltipModule
 ];
 
-
 @NgModule({
-    declarations: [
-        WarehousesTableComponent,
-        WarehouseFormComponent,
-        WarehousesComponent,
-        WarehouseProductsTableComponent,
-        SelectProductComponent,
-        ManageQuantityComponent,
-        ManageVariantsQuantityComponent,
-        ManageVariantsQuantityFormComponent,
-    ],
-    imports: [
-        WarehousesRoutingModule,
-        FormsModule,
-        ReactiveFormsModule,
-        TranslateModule,
-        Ng2SmartTableModule,
-        CommonModule,
-        TranslateModule,
-        ...NB_MODULES,
-        SharedModule,
-        HeaderTitleModule,
-        ThemeModule,
-        LocationFormModule,
-        LeafletMapModule,
-        TagsColorInputModule,
-        PaginationModule,
-        CardGridModule
-    ],
-    providers: [WarehouseService]
+	declarations: [
+		WarehousesTableComponent,
+		WarehouseFormComponent,
+		WarehousesComponent,
+		WarehouseProductsTableComponent,
+		SelectProductComponent,
+		ManageQuantityComponent,
+		ManageVariantsQuantityComponent,
+		ManageVariantsQuantityFormComponent
+	],
+	imports: [
+		CommonModule,
+		FormsModule,
+		ReactiveFormsModule,
+		...NB_MODULES,
+		NgxPermissionsModule.forChild(),
+		TranslatePipe,
+		WarehousesRoutingModule,
+		SharedModule,
+		LocationFormModule,
+		LeafletMapModule,
+		TagsColorInputModule,
+		SmartDataViewLayoutModule,
+		CardGridModule,
+		InventoryTableComponentsModule
+	],
+	providers: []
 })
-export class WarehousesModule { }
+export class WarehousesModule {}

@@ -1,22 +1,27 @@
-Gauzy Server with nstudio electron
+# Ever Gauzy Server Application
 
-how to:
+Ever Gauzy Server is a cross-platform application built with [nstudio/electron](https://github.com/nstudio/xplat).
 
--   install dependencies
+---
+
+## Prerequisites
+
+- [Node.js](https://nodejs.org/) (version 20 or later recommended)
+- [Yarn](https://yarnpkg.com/) (Package Manager)
+- [nstudio/electron](https://github.com/nstudio/xplat)
+---
+
+## How to:
+
+-   install dependencies & bootstrap solution
 
 ```bash
 
-yarn install
+yarn bootstrap
 
 ```
 
 **build executable for mac**
-
-rebuild sqlite3 for mac
-
-```bash
-yarn build:sqlite:mac
-```
 
 build desktop
 
@@ -31,11 +36,6 @@ build:desktop:mac:quick
 ```
 
 **build execute app for windows**
-rebuild sqlite3 for windows
-
-```bash
-yarn build:sqlite:windows
-```
 
 build desktop
 
